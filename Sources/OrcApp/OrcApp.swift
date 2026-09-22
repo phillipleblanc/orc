@@ -216,7 +216,7 @@ struct SessionWindow: View {
                 }.font(.callout)
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Workspace").font(.caption).foregroundStyle(.secondary)
+                    Text("Project").font(.caption).foregroundStyle(.secondary)
                     Text(session.worktreePath).font(.callout).textSelection(.enabled)
                 }
                 if let agent = session.agentIdentity {
@@ -291,22 +291,22 @@ struct CreateSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var workspace = ""
-    @State private var agent = "pi"
+    @State private var agent = "codex"
     @State private var customCommand = ""
     @State private var creating = false
     @State private var error: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("New Session").font(.title2.bold())
-            Text("Start an agent or shell in an existing Orca workspace.").foregroundStyle(.secondary)
+            Text("Start an agent or terminal in an existing Orca project.").foregroundStyle(.secondary)
             Form {
                 TextField("Name", text: $name).accessibilityIdentifier("session-name")
-                Picker("Workspace", selection: $workspace) {
+                Picker("Project", selection: $workspace) {
                     ForEach(model.workspaces) { Text("\($0.name) — \($0.path)").tag("id:" + $0.id) }
                 }
                 Picker("Run", selection: $agent) {
                     Text("Pi").tag("pi"); Text("Codex").tag("codex"); Text("Claude Code").tag("claude")
-                    Text("Shell").tag("shell"); Text("Custom command").tag("custom")
+                    Text("Terminal").tag("terminal"); Text("Custom command").tag("custom")
                 }
                 if agent == "custom" { TextField("Command", text: $customCommand) }
             }
@@ -319,12 +319,18 @@ struct CreateSessionView: View {
                     .disabled(creating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace.isEmpty || (agent == "custom" && customCommand.isEmpty))
             }
         }.padding(24).frame(width: 550)
-        .onAppear { workspace = model.workspaces.first.map { "id:" + $0.id } ?? "" }
+        .onAppear {
+            do {
+                agent = try OrcConfiguration.load().defaultSessionType.rawValue
+                let project = (try? SessionCreationDefaults.project(in: model.workspaces)) ?? model.workspaces.first
+                workspace = project.map { "id:" + $0.id } ?? ""
+            } catch { self.error = error.localizedDescription }
+        }
     }
     func create() async {
         creating = true; defer { creating = false }
         do {
-            let handle = try await model.service.create(name: name, worktree: workspace, command: agent == "shell" ? nil : agent == "custom" ? customCommand : agent)
+            let handle = try await model.service.create(name: name, worktree: workspace, command: agent == "terminal" ? nil : agent == "custom" ? customCommand : agent)
             await model.refresh(); model.selected = handle; dismiss()
         } catch { self.error = error.localizedDescription }
     }

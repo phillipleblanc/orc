@@ -194,12 +194,12 @@ finally:
             if prompt.poll() is None: prompt.kill(); prompt.wait(timeout=5)
     print('PASS pairing prompt hides credentials and restores echo on interruption', flush=True)
     suffix = uuid.uuid4().hex[:8]
-    created = json.loads(cli('new', 'orc-e2e-' + suffix, '--worktree', 'path:' + str(ROOT), '--json'))
+    created = json.loads(cli('new', 'terminal', '--name', 'orc-e2e-' + suffix, '--project', 'path:' + str(ROOT), '--json'))
     handle = created['handle']; handles.append(handle)
     listed = json.loads(cli('list', '--json'))
     assert any(s['handle'] == handle and s['connected'] for s in listed)
     print('PASS create and list the same live session', flush=True)
-    second = json.loads(cli('new', 'orc-e2e-' + suffix + '-second', '--worktree', 'path:' + str(ROOT), '--json'))['handle']
+    second = json.loads(cli('new', 'terminal', '--name', 'orc-e2e-' + suffix + '-second', '--project', 'path:' + str(ROOT), '--json'))['handle']
     handles.append(second)
     rpc('terminal.send', {'terminal': second, 'text': "printf '__PICKER_%s__\\n' SECOND", 'enter': True})
     non_tty = subprocess.run([CLI, 'attach'], capture_output=True, text=True, timeout=15)
@@ -298,7 +298,7 @@ finally:
     proxy.close()
     print('PASS automatic reconnect after real socket loss', flush=True)
     print('PASS switching preserves read-only and no-reconnect flags', flush=True)
-    handle = json.loads(cli('new', 'orc-tui-' + suffix, '--worktree', 'path:' + str(ROOT),
+    handle = json.loads(cli('new', '--name', 'orc-tui-' + suffix, '--project', 'path:' + str(ROOT),
                             '--command', 'python3 -u ' + shlex.quote(str(ROOT / 'scripts/tui-fixture.py')), '--json'))['handle']
     handles.append(handle)
     deadline = time.monotonic() + 15
@@ -327,7 +327,7 @@ finally:
     assert alternate_screen(t.transcript), 'reattaching a full-screen application must restore its alternate screen'
     assert keyboard_flags(t.transcript) == 3, 'reattaching must restore modified-key encoding'
     late_name = 'orc-switch-' + suffix
-    late = json.loads(cli('new', late_name, '--worktree', 'path:' + str(ROOT),
+    late = json.loads(cli('new', '--name', late_name, '--project', 'path:' + str(ROOT),
                           '--command', "printf '__SWITCH_%s__\\n' READY; exec /bin/sh", '--json'))['handle']
     handles.append(late)
     t.send('\x1b'); time.sleep(.02); t.send('[39;5u')

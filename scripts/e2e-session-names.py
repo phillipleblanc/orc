@@ -110,7 +110,7 @@ def attach_by_name(name):
 
 assert cli('list') == [], 'Use an empty disposable runtime'
 name = 'Restart name 한글 ' + uuid.uuid4().hex[:8]
-handle = cli('new', name, '--worktree', 'path:' + str(ROOT))['handle']
+handle = cli('new', 'terminal', '--name', name, '--project', 'path:' + str(ROOT))['handle']
 before = {}
 try:
     before = wait_name(name)

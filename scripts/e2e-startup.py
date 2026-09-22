@@ -138,6 +138,8 @@ with tempfile.TemporaryDirectory(prefix='orc-startup-', dir='/tmp') as directory
                     if method == 'terminal.create':
                         continue
                     result = dict(terminals=[], totalCount=0, truncated=False) if method == 'terminal.list' else dict(desktopWindowStatus='unavailable')
+                    if method == 'worktree.list':
+                        result = dict(worktrees=[dict(id='test', path='/test', hostId='local')])
                     client.sendall((json.dumps(dict(id=request['id'], ok=True, result=result,
                                                    _meta=dict(runtimeId='test-fault'))) + '\n').encode())
                 except Exception as error:
@@ -146,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix='orc-startup-', dir='/tmp') as directory
     worker = threading.Thread(target=serve)
     worker.start()
     try:
-        result = subprocess.run([CLI, 'new', 'uncertain-result', '--worktree', 'path:/test'],
+        result = subprocess.run([CLI, 'new', 'terminal', '--name', 'uncertain-result', '--project', 'path:/test'],
             env=dict(os.environ, ORCA_USER_DATA_PATH=str(directory), ORC_CONFIG_DIR=str(directory / 'client'),
                      ORCA_APP_EXECUTABLE='/missing/Orca'), capture_output=True, text=True, timeout=15)
         assert result.returncode != 0 and 'Check its result before retrying' in result.stderr

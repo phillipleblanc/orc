@@ -27,7 +27,7 @@ import COrcSupport
         }
         func value(_ name: String) throws -> String? {
             guard let index = options.firstIndex(of: name) else { return nil }
-            guard index + 1 < options.count else { throw OrcError("Missing value after \(name).") }
+            guard index + 1 < options.count, !options[index + 1].hasPrefix("--") else { throw OrcError("Missing value after \(name).") }
             options.remove(at: index); return options.remove(at: index)
         }
         let json = flag("--json")
@@ -39,22 +39,48 @@ import COrcSupport
             let result = try await service.list()
             if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(result.terminals))) }
             else {
-                print("SESSION\tSTATE\tHANDLE\tWORKSPACE")
+                print("SESSION\tSTATE\tHANDLE\tPROJECT")
                 for s in result.terminals { print("\(safe(s.name))\t\(s.connected ? "running" : "offline")\t\(s.handle)\t\(safe(s.worktreePath))") }
                 if result.truncated { FileHandle.standardError.write(Data("Warning: Orca returned a truncated session list.\n".utf8)) }
             }
-        case "workspaces":
-            guard options.isEmpty else { throw OrcError("Usage: orc workspaces [--json]") }
-            let workspaces = try await service.workspaces()
-            if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(workspaces))) }
-            else { for workspace in workspaces { print("\(safe(workspace.name))\t\(safe(workspace.path))\t\(workspace.id)") } }
+        case "projects", "workspaces":
+            guard options.isEmpty else { throw OrcError("Usage: orc projects [--json]") }
+            let projects = try await service.workspaces()
+            if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(projects))) }
+            else { for project in projects { print("\(safe(project.name))\t\(safe(project.path))\t\(project.id)") } }
         case "new", "create":
-            let worktree = try value("--worktree") ?? "path:\(FileManager.default.currentDirectoryPath)"
-            let startup = try value("--command")
-            guard options.count == 1 else { throw OrcError("Usage: orc new NAME [--worktree SELECTOR] [--command 'pi'] [--json]") }
-            let handle = try await service.create(name: options[0], worktree: worktree, command: startup)
-            if json { try emit(["handle": handle, "name": options[0], "attachCommand": "orc attach \(shellQuote(handle))"]) }
-            else { print("Created \(options[0])\norc attach \(shellQuote(handle))") }
+            let requestedProject = try value("--project")
+            let legacyProject = try value("--worktree")
+            let requestedName = try value("--name")
+            let customCommand = try value("--command")
+            guard options.count <= 1, options.first?.hasPrefix("--") != true else {
+                throw OrcError("Usage: orc new [codex|claude|pi|terminal] [--name NAME] [--project SELECTOR] [--json]")
+            }
+            guard requestedProject == nil || legacyProject == nil else { throw OrcError("Specify --project only once.") }
+            let type: SessionType
+            if let requestedType = options.first {
+                guard let parsed = SessionType(rawValue: requestedType) else {
+                    throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, or terminal; use --name NAME to name it.")
+                }
+                guard customCommand == nil else { throw OrcError("Choose a session type or --command, not both.") }
+                type = parsed
+            } else { type = try OrcConfiguration.load().defaultSessionType }
+            if let customCommand, customCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw OrcError("--command requires a non-empty command.")
+            }
+            let project = try SessionCreationDefaults.project(requestedProject ?? legacyProject, in: await service.workspaces())
+            let name: String
+            if let requestedName { name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines) }
+            else {
+                let listing = try await service.list()
+                guard !listing.truncated else { throw OrcError("Orca returned an incomplete session list. Supply a name with `orc new --name NAME`.") }
+                name = try SessionCreationDefaults.name(excluding: Set(listing.terminals.map(\.name)))
+            }
+            let handle = try await service.create(name: name, worktree: "id:" + project.id, command: customCommand ?? type.command)
+            let typeName = customCommand == nil ? type.rawValue : "custom"
+            if json { try emit(["handle": handle, "name": name, "type": typeName, "project": project.name,
+                               "attachCommand": "orc attach \(shellQuote(handle))"]) }
+            else { print("Created \(name) (\(typeName), \(project.name))\norc attach \(shellQuote(handle))") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
@@ -101,9 +127,11 @@ import COrcSupport
     orc — native clients for your running Orca sessions
 
     orc list [--json]                         List sessions and handles
-    orc workspaces [--json]                   List available workspaces
-    orc new NAME [--worktree SELECTOR]        Create a named session
-                 [--command 'pi'] [--json]   Start an agent or command
+    orc projects [--json]                    List available projects
+    orc new [codex|claude|pi|terminal]        Create a session (default: codex)
+            [--name NAME]                   Otherwise choose a short verb-noun name
+            [--project SELECTOR] [--json]    Default project: spiceai-project
+    orc new --command 'COMMAND'              Run a custom command instead
     orc attach [NAME-OR-HANDLE]              Choose a session, or attach by name
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
@@ -112,8 +140,9 @@ import COrcSupport
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
     Orc reuses Orca when running, or starts its installed backend headlessly.
-    Workspace selectors include path:/absolute/path and id:<workspace-id>.
-    The current directory is used when --worktree is omitted.
-    ORCA_USER_DATA_PATH selects an Orca profile; ORC_CONFIG_DIR selects Orc credentials.
+    Project selectors accept a name, absolute path, path:/absolute/path, or id:ID.
+    Set defaultSessionType in ~/.config/orc/config.json to change the default agent.
+    Use terminal for a session without an agent.
+    ORCA_USER_DATA_PATH selects an Orca profile; ORC_CONFIG_DIR selects Orc settings and credentials.
     """
 }
