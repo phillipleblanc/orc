@@ -1,0 +1,4 @@
+module CGhostty [system] {
+    header "shim.h"
+    export *
+}

@@ -1,0 +1,85 @@
+# Orc
+
+Native macOS clients for sessions owned by a running Orca instance. The SwiftUI app lists and creates sessions, embeds libghostty, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
+
+Orca continues owning PTYs, agents, workspaces, persistence, remote hosts, and mobile access. Keep Orca running; its window can stay closed. Orc does not patch Orca, replace its executable, or start a second backend during normal use.
+
+## Use
+
+```sh
+orc list
+orc workspaces
+orc new my-task --worktree path:/absolute/path/to/registered/workspace --command pi
+orc attach my-task
+orc attach my-task --read-only
+```
+
+`orc new` uses the current directory when `--worktree` is omitted. Omit `--command` to create a shell. Workspaces must already be registered in Orca. Both `list` and `new` support `--json`.
+
+**Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal; **Detach** returns to details while the session continues in Orca. Create a session with **⌘N**. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
+
+Press **Ctrl-]** to detach. Closing an inline view or the app also detaches; the agent continues in Orca. Attach reconnects after a transport interruption and checks that the terminal's process incarnation has not changed. Use `--no-reconnect` to exit on interruption. Read-only attachment neither sends input nor claims the terminal size.
+
+### One-time terminal connection
+
+Listing and creation work over Orca's authenticated local Unix socket. Interactive streams additionally require an Orca **runtime access link**:
+
+1. In Orca, open **Settings → Remote Orca Servers**, create an access link for this computer, and copy it. Use runtime sharing, not mobile pairing.
+2. Paste it into Orc's **Connection Settings**, or run `orc connect` and paste at its hidden-input prompt.
+3. Select a session and click **Attach** in Orc, or run `orc attach NAME` in Ghostty.
+
+The app and CLI share `~/.config/orc/connection.json`, written with owner-only permissions. Treat runtime access links as credentials. Revoke Orc's dedicated link in Orca to remove its access. Existing phone pairing remains independent. When the phone owns a live terminal, Orca may refuse desktop typing; leave that phone terminal before resuming desktop input.
+
+## Build and install
+
+Requires Apple Silicon, macOS 14+, Python 3.12+, and Xcode with its command-line tools and Metal toolchain. Install the Metal component if necessary:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+bash scripts/build.sh
+bash scripts/install.sh
+open ~/Applications/Orc.app
+```
+
+Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`. It builds the full embedded libghostty C API, statically links both libraries, bundles Ghostty resources, and ad-hoc signs `dist/Orc.app`. Installation copies the app to `~/Applications/Orc.app` and links `~/.local/bin/orc`. Add `~/.local/bin` to your shell's PATH if needed. No Homebrew library is required at runtime.
+
+For CLI-only development:
+
+```sh
+bash scripts/bootstrap-sodium.sh
+ORC_CLI_ONLY=1 swift build --product orc
+ORC_CLI_ONLY=1 swift test
+```
+
+The Ghostty build creates a private SDK overlay to normalize arm64e TBD entries for Zig 0.15 and repacks Zig archive members before Apple's `libtool` indexes them. It leaves Xcode's SDK untouched. Builds produce an arm64 application for this Mac; release signing/notarization and Intel builds are separate distribution work.
+
+## Architecture and compatibility
+
+`OrcKit` contains session models, local RPC, NaCl-authenticated WebSocket streaming, and terminal attachment. Both frontends use the same session service. Each libghostty surface launches the app's bundled `orc attach` in a local PTY; libghostty handles rendering, input, selection, scrolling, and clipboard operations. The remote PTY remains in Orca.
+
+The adapter requires Orca's `terminal.binary-stream.v1` capability. It uses internal runtime protocols, which are not a stable third-party SDK. Protocol changes in Orca can require updating this adapter. Ghostty's full embedding API is also pinned rather than assumed stable.
+
+`ORCA_USER_DATA_PATH` selects the local Orca profile, and `ORC_CONFIG_DIR` selects Orc's credentials. The WebSocket endpoint follows that runtime's metadata, while the saved server public key pins its identity. Remote workspaces are accessed through the local Orca runtime; this is not a standalone remote-runtime client.
+
+## End-to-end tests
+
+Use a disposable instance of the **installed** Orca executable with `--user-data-dir=/absolute/test/profile --serve --serve-json --serve-port PORT --serve-pairing-address 127.0.0.1`. Its JSON ready event contains a runtime pairing URL: keep that output private. Set `ORCA_USER_DATA_PATH` to the same profile for CLI commands, register a test workspace with `orca repo add --path PATH`, and connect `orc` using a separate `ORC_CONFIG_DIR`.
+
+With those two environment variables set:
+
+```sh
+python3 scripts/e2e.py
+ORC_CLI_ONLY=1 ORC_LIVE_TESTS=1 ORC_TEST_WORKTREE="$PWD" swift test
+```
+
+The PTY suite creates and cleans up only its own sessions. It tests actual stream encryption, input, viewport changes, detach/reattach, concurrent read-only viewing, signal cleanup, and transport reconnection. The opt-in live Swift test exercises mobile input ownership and desktop viewing against the same real runtime; it does not substitute for testing a physical phone.
+
+Never point integration tests at your daily Orca profile. Normal `swift test` skips live mutation tests.
+
+## Upstream
+
+- [Orca CLI](https://www.onorca.dev/docs/cli/reference) and [runtime sharing](https://www.onorca.dev/docs/remote-servers)
+- [Ghostty source and embedding API](https://github.com/ghostty-org/ghostty/tree/v1.3.1)
+- [libsodium](https://doc.libsodium.org/)
+
+Upstream licenses are included in the built app's `Contents/Resources/licenses` directory.
