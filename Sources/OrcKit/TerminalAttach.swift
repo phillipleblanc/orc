@@ -29,6 +29,7 @@ public struct InputDecoder {
     private var snapshot = Data()
     private var collectingSnapshot = false
     private var snapshotUnavailable = false
+    private var snapshotKeyboardFlags: Int?
     private var requestedScrollback = false
     private var savedTermios = termios()
     private var raw = false
@@ -72,7 +73,7 @@ public struct InputDecoder {
         var attempts = 0
         while !stopping && !ended {
             failure = nil; streamID = nil; ready = false; snapshot.removeAll(); collectingSnapshot = false
-            requestedScrollback = false; snapshotUnavailable = false
+            requestedScrollback = false; snapshotUnavailable = false; snapshotKeyboardFlags = nil
             do {
                 let conn = try StreamConnection(pairing: pairing)
                 connection = conn
@@ -219,7 +220,11 @@ public struct InputDecoder {
                 try writeAll(STDOUT_FILENO, Data(text.utf8))
             case 2:
                 collectingSnapshot = true; snapshot.removeAll()
-                snapshotUnavailable = try jsonObject(frame.payload)["unavailable"] != nil
+                let metadata = try jsonObject(frame.payload)
+                snapshotUnavailable = metadata["unavailable"] != nil
+                snapshotKeyboardFlags = (metadata["kittyKeyboardFlags"] as? Int).flatMap {
+                    (0...31).contains($0) ? $0 : nil
+                }
             case 3:
                 guard collectingSnapshot, snapshot.count + frame.payload.count <= 8 * 1024 * 1024 else { throw OrcError("Invalid or oversized terminal snapshot.") }
                 snapshot += frame.payload
@@ -234,6 +239,9 @@ public struct InputDecoder {
                 // that exited during a disconnect. Its replay selects the screen.
                 output("\u{1b}[?2026h\u{1b}[?1049l\u{1b}[0m\u{1b}[2J\u{1b}[H")
                 try writeAll(STDOUT_FILENO, snapshot)
+                // Keyboard mode is separate from snapshot ANSI. Restore it on
+                // the replay's active screen before accepting modified keys.
+                if let flags = snapshotKeyboardFlags { output("\u{1b}[=\(flags)u") }
                 output("\u{1b}[?2026l")
                 snapshot.removeAll(); collectingSnapshot = false; ready = true
                 snapshotDeadline?.cancel(); snapshotDeadline = nil
@@ -275,7 +283,9 @@ public struct InputDecoder {
         signalSources.forEach { $0.cancel() }; signalSources.removeAll()
         previousSignals.forEach { _ = signal($0.0, $0.1) }; previousSignals.removeAll()
         connection?.close(); connection = nil
-        output("\u{1b}[?2026l\u{1b}[<u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l\u{1b}[r\u{1b}[?6l\u{1b}[999;1H\r\n")
+        // Keyboard modes are per screen; neither the picker nor the shell
+        // should inherit the attached application's extended key encoding.
+        output("\u{1b}[?2026l\u{1b}[<u\u{1b}[=0u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l\u{1b}[=0u\u{1b}[r\u{1b}[?6l\u{1b}[999;1H\r\n")
         if raw { _ = tcsetattr(STDIN_FILENO, TCSANOW, &savedTermios); raw = false }
     }
 }

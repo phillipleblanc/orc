@@ -14,7 +14,7 @@ def size(*_):
 try:
     tty.setraw(0)
     signal.signal(signal.SIGWINCH, size)
-    sys.stdout.write('\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h\x1b[32m__TUI_READY__ 🌊 한글\x1b[0m\r\n')
+    sys.stdout.write('\x1b[?1049h\x1b[>3u\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h\x1b[32m__TUI_READY__ 🌊 한글\x1b[0m\r\n')
     sys.stdout.flush()
     pending = b''
     while True:
@@ -26,6 +26,6 @@ try:
             print('\r\n__TUI_INPUT_' + line.hex() + '__', end='', flush=True)
             size()
 finally:
-    sys.stdout.write('\x1b[?2004l\x1b[?25h\x1b[?1049l\r\n__TUI_DONE__\r\n')
+    sys.stdout.write('\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l\r\n__TUI_DONE__\r\n')
     sys.stdout.flush()
     termios.tcsetattr(0, termios.TCSANOW, original)

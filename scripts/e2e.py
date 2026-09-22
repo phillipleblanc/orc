@@ -56,6 +56,29 @@ def alternate_screen(data):
             active = action == b'h'
     return active
 
+def keyboard_flags(data):
+    """Track the terminal's separate normal/alternate Kitty keyboard stacks."""
+    stacks, screen = [[0], [0]], 0
+    for match in re.finditer(rb'\x1b\[\?([0-9;]+)([hl])|\x1b\[([<=>])([0-9;]*)u', data):
+        modes, action, operation, values = match.groups()
+        if modes:
+            if any(mode in (b'47', b'1047', b'1049') for mode in modes.split(b';')):
+                screen = int(action == b'h')
+            continue
+        fields = values.split(b';')
+        value = int(fields[0] or (b'1' if operation == b'<' else b'0'))
+        stack = stacks[screen]
+        if operation == b'>': stack.append(value)
+        elif operation == b'<':
+            stacks[screen] = stack[:-value] if value else stack
+            if not stacks[screen]: stacks[screen] = [0]
+        else:
+            mode = int(fields[1]) if len(fields) > 1 else 1
+            if mode == 1: stack[-1] = value
+            elif mode == 2: stack[-1] |= value
+            elif mode == 3: stack[-1] &= ~value
+    return stacks[screen][-1]
+
 class Terminal:
     def __init__(self, handle=None, cols=100, rows=30, extra=(), env=None):
         self.master, self.slave = pty.openpty()
@@ -106,6 +129,7 @@ class Terminal:
         assert self.before == after, 'attach did not restore terminal settings'
         assert self.process.returncode == expected_code, f'attach exit {self.process.returncode}'
         assert not alternate_screen(self.transcript), 'detach must restore the normal terminal screen'
+        assert keyboard_flags(self.transcript) == 0, 'detach must restore ordinary keyboard encoding'
         os.close(self.master); os.close(self.slave)
 
 class Proxy:
@@ -277,17 +301,23 @@ finally:
     handle = json.loads(cli('new', 'orc-tui-' + suffix, '--worktree', 'path:' + str(ROOT),
                             '--command', 'python3 -u ' + shlex.quote(str(ROOT / 'scripts/tui-fixture.py')), '--json'))['handle']
     handles.append(handle)
+    deadline = time.monotonic() + 15
+    while '__TUI_READY__' not in json.dumps(rpc('terminal.read', {'terminal': handle})):
+        assert time.monotonic() < deadline, 'TUI did not start before attach'
+        time.sleep(.1)
     t = Terminal(handle); terminals.append(t)
     t.read_until('\x1b[?2026l')
     if b'__TUI_READY__' not in t.transcript: t.read_until('__TUI_READY__')
     assert alternate_screen(t.transcript), 'remote full-screen applications must retain their alternate screen'
-    keystrokes = "'\x1b[A🌊한글\x03\x1b[200~pasted '\x1b[39;5u\x1d\x1b[201~"
+    assert keyboard_flags(t.transcript) == 3, 'initial snapshot must restore modified-key encoding'
+    keystrokes = "'\x1b[A🌊한글\x03\x1b[13;2u\x1b[13;5u\x1b[200~pasted '\x1b[39;5u\x1d\x1b[201~"
     t.send(keystrokes + '\r')
     t.read_until('__TUI_INPUT_' + keystrokes.encode().hex() + '__')
     t.resize(110, 40); t.read_until('__TUI_SIZE_40_110__')
     t.close(); terminals.remove(t)
     embedded = Terminal(handle, extra=('--no-session-switch',)); terminals.append(embedded)
     embedded.read_until('\x1b[?2026l')
+    assert keyboard_flags(embedded.transcript) == 3, 'embedded terminals also need snapshot keyboard mode'
     embedded.send('\x1b[39;5u\r'); embedded.read_until('__TUI_INPUT_1b5b33393b3575__')
     embedded.send('\x1b[93;5u'); embedded.close(None); terminals.remove(embedded)
     print('PASS embedded views keep their session and extended Ctrl-] detaches', flush=True)
@@ -295,25 +325,46 @@ finally:
     t.read_until('\x1b[?2026l')
     assert b'__TUI_READY__' in t.transcript
     assert alternate_screen(t.transcript), 'reattaching a full-screen application must restore its alternate screen'
+    assert keyboard_flags(t.transcript) == 3, 'reattaching must restore modified-key encoding'
     late_name = 'orc-switch-' + suffix
     late = json.loads(cli('new', late_name, '--worktree', 'path:' + str(ROOT),
                           '--command', "printf '__SWITCH_%s__\\n' READY; exec /bin/sh", '--json'))['handle']
     handles.append(late)
     t.send('\x1b'); time.sleep(.02); t.send('[39;5u')
     picker_screen = t.read_until('Orc — Attach to a session')
+    assert keyboard_flags(t.transcript) == 0, 'the picker must use ordinary keyboard encoding'
     assert late_name.encode() in picker_screen, 'Returning to the picker must refresh sessions'
-    assert f'{len(handles)}/{len(handles)} · {handle}'.encode() in picker_screen, 'The previous session must stay selected'
+    assert re.search(rb'\d+/\d+ \xc2\xb7 ' + re.escape(handle.encode()), picker_screen), 'The previous session must stay selected'
     t.send(late_name + '\r'); t.attached(late_name)
     if b'__SWITCH_READY__' not in t.transcript: t.read_until('__SWITCH_READY__')
+    assert keyboard_flags(t.transcript) == 0, 'switching to a shell must clear the TUI keyboard mode'
     t.send("printf '__SWITCH_%s__\\n' SHELL\r"); t.read_until('__SWITCH_SHELL__')
     t.send('\x1b[27;5;39~'); t.read_until('Orc — Attach to a session')
     t.send('orc-tui-' + suffix + '\r'); t.attached('orc-tui-' + suffix)
+    assert keyboard_flags(t.transcript) == 3, 'switching back must restore modified-key encoding'
     t.send('\r'); t.read_until('__TUI_INPUT___')
     t.send('\x1b'); time.sleep(.2); t.send('q\r'); t.read_until('__TUI_INPUT_1b71__')
     t.send('\x1b[39;5u'); t.read_until('Orc — Attach to a session')
     t.send('\x1b'); t.close(None); terminals.remove(t)
     assert all(s['connected'] for s in json.loads(cli('list', '--json')) if s['handle'] in handles)
     print('PASS repeated switching, refreshed picker, selected session, shortcut isolation, bare Escape, and cancel cleanup', flush=True)
+    proxy = Proxy(target)
+    try:
+        with tempfile.TemporaryDirectory(prefix='orc-keyboard-proxy-') as directory:
+            proxy_meta = json.loads(json.dumps(meta))
+            for transport in proxy_meta['transports']:
+                if transport['kind'] == 'websocket': transport['endpoint'] = f'ws://127.0.0.1:{proxy.port}'
+            p = Path(directory) / 'orca-runtime.json'; p.write_text(json.dumps(proxy_meta)); p.chmod(0o600)
+            t = Terminal(handle, env=dict(os.environ, ORCA_USER_DATA_PATH=directory)); terminals.append(t)
+            t.read_until('\x1b[?2026l')
+            assert keyboard_flags(t.transcript) == 3
+            proxy.drop(); t.read_until('Reconnecting')
+            replay = t.read_until('\x1b[?2026l')
+            assert keyboard_flags(replay) == 3, 'reconnect snapshot must restore keyboard mode independently'
+            t.send('\x1b[13;2u\r'); t.read_until('__TUI_INPUT_1b5b31333b3275__')
+            t.close(); terminals.remove(t)
+    finally: proxy.close()
+    print('PASS snapshot keyboard mode on attach, reattach, reconnect, embedded views, and session switches', flush=True)
     t = Terminal(handle, 110, 40); terminals.append(t)
     t.read_until('\x1b[?2026l')
     t.send('\x18'); t.read_until('__TUI_DONE__')
