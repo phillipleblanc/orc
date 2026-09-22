@@ -21,7 +21,7 @@ orc attach my-task --read-only
 
 `orc new` uses the current directory when `--worktree` is omitted. Omit `--command` to create a shell. Workspaces must already be registered in Orca. Both `list` and `new` support `--json`.
 
-**Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal; **Detach** returns to details while the session continues in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
+**Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal. While attached, selecting another running session switches the terminal to it automatically. **Detach** returns to details and restores selection without automatic attachment; sessions continue running in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
 
 The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
 

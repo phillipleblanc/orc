@@ -115,7 +115,12 @@ struct SessionWindow: View {
             pendingAttach = nil
             pendingChat = nil
         }) { ConnectionView().frame(width: 500) }
-        .onChange(of: model.selected) { _, _ in attachedSession = nil; chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil }
+        .onChange(of: model.selected) { previous, _ in
+            let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
+                && model.sessions.contains { $0.id == previous && $0.connected }
+            attachedSession = nil; chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
+            if wasAttached, let session = selected, session.connected { attach(session) }
+        }
         .task {
             while !Task.isCancelled {
                 await model.refresh()
