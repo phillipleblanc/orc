@@ -57,30 +57,22 @@ import COrcSupport
                 throw OrcError("Usage: orc new [codex|claude|pi|terminal] [--name NAME] [--project SELECTOR] [--json]")
             }
             guard requestedProject == nil || legacyProject == nil else { throw OrcError("Specify --project only once.") }
-            let type: SessionType
+            let type: SessionType?
             if let requestedType = options.first {
                 guard let parsed = SessionType(rawValue: requestedType) else {
                     throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, or terminal; use --name NAME to name it.")
                 }
                 guard customCommand == nil else { throw OrcError("Choose a session type or --command, not both.") }
                 type = parsed
-            } else { type = try OrcConfiguration.load().defaultSessionType }
+            } else { type = nil }
             if let customCommand, customCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 throw OrcError("--command requires a non-empty command.")
             }
-            let project = try SessionCreationDefaults.project(requestedProject ?? legacyProject, in: await service.workspaces())
-            let name: String
-            if let requestedName { name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines) }
-            else {
-                let listing = try await service.list()
-                guard !listing.truncated else { throw OrcError("Orca returned an incomplete session list. Supply a name with `orc new --name NAME`.") }
-                name = try SessionCreationDefaults.name(excluding: Set(listing.terminals.map(\.name)))
-            }
-            let handle = try await service.create(name: name, worktree: "id:" + project.id, command: customCommand ?? type.command)
-            let typeName = customCommand == nil ? type.rawValue : "custom"
-            if json { try emit(["handle": handle, "name": name, "type": typeName, "project": project.name,
-                               "attachCommand": "orc attach \(shellQuote(handle))"]) }
-            else { print("Created \(name) (\(typeName), \(project.name))\norc attach \(shellQuote(handle))") }
+            let created = try await createSession(using: service, type: type, name: requestedName,
+                project: requestedProject ?? legacyProject, command: customCommand)
+            if json { try emit(["handle": created.handle, "name": created.name, "type": created.type, "project": created.project,
+                               "attachCommand": "orc attach \(shellQuote(created.handle))"]) }
+            else { print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
@@ -93,7 +85,15 @@ import COrcSupport
                 if let selector { terminal = try resolveSession(selector, in: listing.terminals) }
                 else {
                     guard let picked = try await SessionPicker(sessions: listing.terminals, selectedHandle: selectedHandle).run() else { return }
-                    terminal = picked
+                    switch picked {
+                    case .session(let session): terminal = session
+                    case .create:
+                        print("[orc] Creating a session…")
+                        let created = try await createSession(using: service)
+                        print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))")
+                        selector = created.handle
+                        continue
+                    }
                 }
                 guard terminal.connected else { throw OrcError("This session is offline.") }
                 let result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
@@ -117,6 +117,21 @@ import COrcSupport
         default: throw OrcError("Unknown command '\(command)'. Run `orc --help`.")
         }
     }
+    @MainActor private static func createSession(using service: SessionService, type requestedType: SessionType? = nil,
+        name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil
+    ) async throws -> (handle: String, name: String, type: String, project: String) {
+        let type = try requestedType ?? OrcConfiguration.load().defaultSessionType
+        let project = try SessionCreationDefaults.project(requestedProject, in: await service.workspaces())
+        let name: String
+        if let requestedName { name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines) }
+        else {
+            let listing = try await service.list()
+            guard !listing.truncated else { throw OrcError("Orca returned an incomplete session list. Supply a name with `orc new --name NAME`.") }
+            name = try SessionCreationDefaults.name(excluding: Set(listing.terminals.map(\.name)))
+        }
+        let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command)
+        return (handle, name, command == nil ? type.rawValue : "custom", project.name)
+    }
     static func safe(_ text: String) -> String { String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }) }
     static func readPairingLink() -> String? {
         var buffer = [CChar](repeating: 0, count: 32769)
@@ -139,6 +154,8 @@ import COrcSupport
     orc status [--json]                      Connect to or start the Orca runtime
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
+    In the picker, n creates and attaches using the same defaults as orc new.
+    Type to filter; / starts a search (including names beginning with n).
     Orc reuses Orca when running, or starts its installed backend headlessly.
     Project selectors accept a name, absolute path, path:/absolute/path, or id:ID.
     Set defaultSessionType in ~/.config/orc/config.json to change the default agent.

@@ -2,11 +2,13 @@ import Foundation
 import Darwin
 import OrcKit
 
-/// A terminal chooser that returns a stable session handle before attachment
-/// takes ownership of the terminal. No input is sent to a session while choosing.
+/// A terminal chooser that returns an existing session or a creation request.
+/// No input is sent to a session while choosing.
 @MainActor final class SessionPicker {
+    enum Selection { case session(Session), create }
     private let sessions: [Session]
     private var query = ""
+    private var filtering = false
     private var selected = 0
     private var offset = 0
     private var input: [UInt8] = []
@@ -17,7 +19,7 @@ import OrcKit
     private var signals: [DispatchSourceSignal] = []
     private var previousSignals: [(Int32, sig_t?)] = []
     private var escapeTimeout: Task<Void, Never>?
-    private var continuation: CheckedContinuation<Session?, Error>?
+    private var continuation: CheckedContinuation<Selection?, Error>?
     private var finished = false
 
     init(sessions: [Session], selectedHandle: String? = nil) {
@@ -31,11 +33,10 @@ import OrcKit
         sessions.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
             || $0.worktreePath.localizedCaseInsensitiveContains(query) || $0.handle.localizedCaseInsensitiveContains(query) }
     }
-    func run() async throws -> Session? {
+    func run() async throws -> Selection? {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
             throw OrcError("The session picker needs an interactive terminal. Run `orc list --json` to list sessions.")
         }
-        guard !sessions.isEmpty else { throw OrcError("No running sessions. Create one with `orc new NAME`.") }
         guard tcgetattr(STDIN_FILENO, &original) == 0 else { throw OrcError("Cannot read terminal settings.") }
         var raw = original; cfmakeraw(&raw)
         guard tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 else { throw OrcError("Cannot enter raw terminal mode.") }
@@ -112,13 +113,15 @@ import OrcKit
             input.removeFirst()
             switch byte {
             case 3, 4, 0x1d: finish(nil)
+            case 0x6e where !filtering: finish(.create)
+            case 0x2f where !filtering: filtering = true
             case 10, 13:
                 let list = matches
-                if list.indices.contains(selected) { finish(list[selected]) }
+                if list.indices.contains(selected) { finish(.session(list[selected])) }
             case 8, 0x7f:
                 decoder = InputDecoder()
                 if !query.isEmpty { query.removeLast(); selected = 0; offset = 0 }
-            case 0x15: query = ""; decoder = InputDecoder(); selected = 0; offset = 0
+            case 0x15: query = ""; filtering = false; decoder = InputDecoder(); selected = 0; offset = 0
             case 0x10: move(-1)
             case 0x0e, 9: move(1)
             case 0x20...0xff: appendText(byte)
@@ -127,6 +130,7 @@ import OrcKit
         }
     }
     private func appendText(_ byte: UInt8) {
+        filtering = true
         let text = decoder.append(Data([byte]))
         guard query.utf8.count + text.utf8.count <= 512 else { return }
         query += String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
@@ -160,8 +164,11 @@ import OrcKit
         if selected >= offset + pageSize { offset = selected - pageSize + 1 }
         var lines = ["\u{1b}[1;36m" + fit("Orc — Attach to a session", width: cols) + "\u{1b}[0m", "",
                      fit("Filter: " + (query.isEmpty ? "type to search…" : query), width: cols),
-                     "\u{1b}[2m" + fit("↑/↓ Move · Enter Attach · Esc Cancel · Ctrl-U Clear", width: cols) + "\u{1b}[0m", ""]
-        if list.isEmpty { lines.append(fit("No matching sessions.", width: cols)) }
+                     "\u{1b}[2m" + fit(filtering ? "↑/↓ Move · Enter Attach · Esc Cancel · Ctrl-U Clear"
+                         : "n New · / Search · ↑/↓ Move · Enter Attach · Esc Cancel", width: cols) + "\u{1b}[0m", ""]
+        if list.isEmpty {
+            lines.append(fit(sessions.isEmpty ? "No running sessions." : "No matching sessions.", width: cols))
+        }
         else {
             for index in offset..<min(list.count, offset + pageSize) {
                 let session = list[index]
@@ -178,9 +185,9 @@ import OrcKit
         do { try writeAll(STDOUT_FILENO, Data(("\u{1b}[?2026h\u{1b}[H\u{1b}[2J" + lines.joined(separator: "\r\n") + "\u{1b}[?2026l").utf8)) }
         catch { finished = true; continuation?.resume(throwing: error); continuation = nil }
     }
-    private func finish(_ session: Session?) {
+    private func finish(_ selection: Selection?) {
         guard !finished else { return }; finished = true
-        continuation?.resume(returning: session); continuation = nil
+        continuation?.resume(returning: selection); continuation = nil
     }
     private func restore() {
         escapeTimeout?.cancel(); reader?.cancel(); reader = nil
