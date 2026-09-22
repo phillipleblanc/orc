@@ -114,7 +114,7 @@ public struct InputDecoder {
             retryDelay = Task { try? await Task.sleep(nanoseconds: UInt64(min(8, attempts * 2)) * 1_000_000_000) }
             await retryDelay?.value; retryDelay = nil
         }
-        if ended { note("Session ended.") }
+        if ended, !stopping { note("Session ended."); return .ended }
         return exitReason
     }
     private var viewport: [String: Int] {

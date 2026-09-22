@@ -163,6 +163,62 @@ class Proxy:
 
 handles, terminals = [], []
 try:
+    exit_suffix = uuid.uuid4().hex[:8]
+
+    def exit_test_session(label):
+        name = 'orc-exit-' + exit_suffix + '-' + label
+        handle = json.loads(cli('new', '--name', name, '--project', 'path:' + str(ROOT),
+                                '--command', "exec /bin/sh -c 'PS1=$(printf \"__EXIT_%s__ \" READY); export PS1; exec /bin/sh -i'",
+                                '--json'))['handle']
+        handles.append(handle)
+        return name, handle
+
+    survivor_name, survivor = exit_test_session('survivor')
+    for choose_first in (False, True):
+        name, exiting = exit_test_session('picker' if choose_first else 'direct')
+        flags = ('--read-only', '--no-reconnect') if choose_first else ()
+        t = Terminal(None if choose_first else exiting, extra=flags); terminals.append(t)
+        if choose_first:
+            t.read_until('Orc — Attach to a session')
+            t.send(name + '\r')
+        t.attached(name)
+        if b'__EXIT_READY__' not in t.transcript: t.read_until('__EXIT_READY__')
+        if choose_first:
+            rpc('terminal.close', {'terminal': exiting})
+            handles.remove(exiting)
+        else:
+            t.send('exit\r')
+        screen = t.read_until('Orc — Attach to a session').split('Orc — Attach to a session'.encode(), 1)[1]
+        assert t.process.poll() is None, 'Session exit must keep the CLI running in the picker'
+        assert name.encode() not in screen and exiting.encode() not in screen, 'The picker must omit the ended session'
+        assert survivor_name.encode() in screen, 'The picker must refresh remaining sessions'
+        assert keyboard_flags(t.transcript) == 0, 'Session exit must restore ordinary picker keyboard mode'
+        t.send(survivor_name + '\r'); t.attached(survivor_name)
+        if choose_first:
+            with tempfile.TemporaryDirectory(prefix='orc-exit-readonly-') as directory:
+                marker = Path(directory) / 'must-not-exist'
+                t.send('touch ' + shlex.quote(str(marker)) + '\r')
+                rpc('terminal.send', {'terminal': survivor, 'text': "printf '__EXIT_%s__\\n' READONLY", 'enter': True})
+                t.read_until('__EXIT_READONLY__')
+                assert not marker.exists(), 'Returning after session exit must preserve --read-only'
+            t.send('\x1b[39;5u'); t.read_until('Orc — Attach to a session')
+            t.send('\x1b'); t.close(None)
+        else:
+            t.send("printf '__EXIT_%s__\\n' SWITCHED\r"); t.read_until('__EXIT_SWITCHED__')
+            t.close()
+        terminals.remove(t)
+        assert next(s for s in json.loads(cli('list', '--json')) if s['handle'] == survivor)['connected']
+    print('PASS shell exit and remote closure return to a refreshed picker; next attach, flags, detach, and cancel work', flush=True)
+    name, exiting = exit_test_session('embedded')
+    t = Terminal(exiting, extra=('--no-session-switch',)); terminals.append(t)
+    t.attached(name)
+    if b'__EXIT_READY__' not in t.transcript: t.read_until('__EXIT_READY__')
+    t.send('exit\r')
+    t.read_until('Session ended.')
+    t.close(None); terminals.remove(t)
+    assert 'Orc — Attach to a session'.encode() not in t.transcript, 'Embedded views must finish when their session ends'
+    print('PASS embedded session exit ends attachment without opening a picker', flush=True)
+
     for exit_signal in (signal.SIGINT, signal.SIGTERM):
         master, slave = pty.openpty()
         # Keep a session leader alive to inspect the tty after the CLI exits.

@@ -97,7 +97,7 @@ import COrcSupport
                 }
                 guard terminal.connected else { throw OrcError("This session is offline.") }
                 let result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
-                guard result == .picker else { return }
+                guard result == .picker || (sessionSwitching && result == .ended) else { return }
                 selector = nil; selectedHandle = terminal.handle
             }
         case "connect":
@@ -155,6 +155,7 @@ import COrcSupport
     orc status [--json]                      Connect to or start the Orca runtime
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
+    When a session ends, attach returns to the picker. Esc closes the picker.
     In the picker, n creates and attaches using the same defaults as orc new.
     Type to filter; / starts a search (including names beginning with n).
     Orc reuses Orca when running, or starts its installed backend headlessly.

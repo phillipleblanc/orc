@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AttachExit: Equatable { case detached, picker }
+public enum AttachExit: Equatable { case detached, picker, ended }
 
 /// Recognizes local shortcuts without forwarding them to an agent. CSI keys and
 /// bracketed paste delimiters can span reads; pasted bytes are always literal.
