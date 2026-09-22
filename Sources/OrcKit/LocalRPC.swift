@@ -5,6 +5,7 @@ import COrcSupport
 public struct RuntimeMetadata: Decodable {
     public struct Transport: Decodable { public let kind: String; public let endpoint: String }
     public let runtimeId: String
+    public let pid: Int32?
     public let authToken: String
     public let transports: [Transport]?
     public let transport: Transport?
@@ -13,8 +14,10 @@ public struct RuntimeMetadata: Decodable {
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/orca")
     }
     public static func load() throws -> RuntimeMetadata {
-        do { return try JSONDecoder().decode(Self.self, from: Data(contentsOf: directory.appendingPathComponent("orca-runtime.json"))) }
-        catch { throw OrcError("Start Orca first. Its runtime metadata is unavailable at \(directory.path).") }
+        try load(from: directory)
+    }
+    static func load(from directory: URL) throws -> RuntimeMetadata {
+        try JSONDecoder().decode(Self.self, from: Data(contentsOf: directory.appendingPathComponent("orca-runtime.json")))
     }
     public func endpoint(_ kind: String) throws -> String {
         guard let endpoint = (transports ?? transport.map { [$0] } ?? []).first(where: { $0.kind == kind })?.endpoint else {
@@ -26,13 +29,14 @@ public struct RuntimeMetadata: Decodable {
 
 public enum LocalRPC {
     public static func call(_ method: String, _ params: [String: Any] = [:], timeout: Int = 15) async throws -> [String: Any] {
-        try await Task.detached { try callSync(method, params, timeout: timeout) }.value
+        try await Task.detached {
+            let connection = try RuntimeStarter().connect(timeout: timeout)
+            defer { Darwin.close(connection.fd) }
+            return try exchange(method, params, connection: connection, timeout: timeout)
+        }.value
     }
-    private static func callSync(_ method: String, _ params: [String: Any], timeout: Int) throws -> [String: Any] {
-        let meta = try RuntimeMetadata.load()
-        let fd = try meta.endpoint("unix").withCString { orc_connect_unix($0, Int32(timeout)) }
-        guard fd >= 0 else { throw OrcError("Cannot connect to Orca: \(String(cString: strerror(errno))).") }
-        defer { Darwin.close(fd) }
+    static func exchange(_ method: String, _ params: [String: Any], connection: RuntimeSocket, timeout: Int) throws -> [String: Any] {
+        let meta = connection.metadata, fd = connection.fd
         let id = UUID().uuidString
         var request = try jsonData(["id": id, "authToken": meta.authToken, "method": method, "params": params])
         request.append(10)

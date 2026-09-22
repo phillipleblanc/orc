@@ -101,9 +101,10 @@ import COrcSupport
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
     orc connect                             Save a runtime access link from stdin
-    orc status [--json]                      Check the existing Orca runtime
+    orc status [--json]                      Connect to or start the Orca runtime
 
     Press Ctrl-] to detach. The Orca session keeps running.
+    Orc reuses Orca when running, or starts its installed backend headlessly.
     Workspace selectors include path:/absolute/path and id:<workspace-id>.
     The current directory is used when --worktree is omitted.
     ORCA_USER_DATA_PATH selects an Orca profile; ORC_CONFIG_DIR selects Orc credentials.

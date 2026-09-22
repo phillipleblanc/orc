@@ -43,9 +43,9 @@ public struct Pairing: Codable {
             throw OrcError("Cannot save the Orc connection.")
         }
     }
-    public func localEndpoint() throws -> URL {
+    public func localEndpoint(metadata: RuntimeMetadata) throws -> URL {
         // The key pins the host; the runtime metadata follows its current listening port.
-        var components = URLComponents(string: try RuntimeMetadata.load().endpoint("websocket"))
+        var components = URLComponents(string: try metadata.endpoint("websocket"))
         if components?.host == "0.0.0.0" || components?.host == "::" || components?.host == "[::]" { components?.host = "127.0.0.1" }
         guard let url = components?.url else { throw OrcError("Invalid local Orca WebSocket endpoint.") }
         return url

@@ -6,6 +6,44 @@
 #include <errno.h>
 #include <string.h>
 #include <readpassphrase.h>
+#include <spawn.h>
+#include <libproc.h>
+#include <fcntl.h>
+
+int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int log_fd, int *pid) {
+    posix_spawnattr_t attrs;
+    posix_spawn_file_actions_t actions;
+    int result = posix_spawnattr_init(&attrs);
+    if (result) return result;
+    result = posix_spawn_file_actions_init(&actions);
+    if (result) { posix_spawnattr_destroy(&attrs); return result; }
+    // A separate session survives the app/CLI and its terminal.
+    if (!(result = posix_spawnattr_setflags(&attrs, POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT)) &&
+        !(result = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, log_fd, STDOUT_FILENO)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, log_fd, STDERR_FILENO)) &&
+        !(result = posix_spawn_file_actions_addchdir_np(&actions, cwd))) {
+        pid_t child;
+        result = posix_spawn(&child, executable, &actions, &attrs, argv, envp);
+        if (!result) *pid = child;
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attrs);
+    return result;
+}
+
+uint64_t orc_process_start_time(int pid) {
+    struct proc_bsdinfo info;
+    if (pid <= 0 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info)) return 0;
+    return info.pbi_start_tvsec * 1000000ULL + info.pbi_start_tvusec;
+}
+
+int orc_is_orca_process(int pid) {
+    char path[PROC_PIDPATHINFO_MAXSIZE];
+    if (pid <= 0 || proc_pidpath(pid, path, sizeof(path)) <= 0) return 0;
+    const char *name = strrchr(path, '/');
+    return name && strcmp(name + 1, "Orca") == 0;
+}
 
 char *orc_read_pairing(char *buffer, size_t capacity) {
     // The system reader restores terminal echo before forwarding exit signals.

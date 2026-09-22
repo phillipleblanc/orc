@@ -46,6 +46,22 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    func testUnreachableLiveRuntimeIsNotReplaced() throws {
+        _ = try isolatedWorktree()
+        let meta = try RuntimeMetadata.load()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("orc-starting-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try jsonData(["runtimeId": meta.runtimeId, "pid": try XCTUnwrap(meta.pid), "authToken": "test-only",
+                      "transports": [["kind": "unix", "endpoint": "/tmp/orc-nonexistent-" + UUID().uuidString]]])
+            .write(to: root.appendingPathComponent("orca-runtime.json"))
+        let starter = RuntimeStarter(profile: root, config: root.appendingPathComponent("client"),
+                                     environment: ["ORCA_APP_EXECUTABLE": "/missing/Orca"], startupTimeout: 0.3)
+        XCTAssertThrowsError(try starter.connect()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("running but its local API is unavailable"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: starter.state.appendingPathComponent("launch.json").path))
+    }
     @MainActor func testNativeChatTranscriptStreamingAndGuardedInput() async throws {
         let worktree = try isolatedWorktree()
         let sessionID = UUID().uuidString

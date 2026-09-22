@@ -2,9 +2,11 @@
 
 <img src="Resources/AppIcon.png" alt="Orc: an orca with a terminal-chevron tail on an ocean-blue tile" width="128" height="128">
 
-Native macOS clients for sessions owned by a running Orca instance. The SwiftUI app lists and creates sessions, offers native chat and embedded libghostty views, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
+Native macOS clients for sessions owned by Orca. The SwiftUI app lists and creates sessions, offers native chat and embedded libghostty views, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
 
-Orca continues owning PTYs, agents, workspaces, persistence, remote hosts, and mobile access. Keep Orca running; its window can stay closed. Orc does not patch Orca, replace its executable, or start a second backend during normal use.
+Orca owns PTYs, agents, workspaces, persistence, remote hosts, and mobile access. Orc reuses the selected profile's running runtime. When it is unavailable, Orc starts the installed Orca backend headlessly and waits for it to become ready; no Orca window is needed. The backend stays alive when Orc closes or the CLI exits. Orc does not patch Orca or replace its executable.
+
+Install Orca.app in `/Applications` or `~/Applications`, or set `ORCA_APP_EXECUTABLE` to the absolute path of its `Contents/MacOS/Orca` executable. Concurrent Orc clients coordinate startup per profile, and Orca's own single-instance lock also applies. An existing runtime that is still starting is given time to recover. Orc does not terminate an unresponsive runtime or replay a mutation after sending it. Startup failures include the private log path under `~/.config/orc/runtimes/` (or `ORC_CONFIG_DIR`).
 
 ## Use
 
@@ -46,6 +48,8 @@ Listing and creation work over Orca's authenticated local Unix socket. Interacti
 1. In Orca, open **Settings → Remote Orca Servers**, create an access link for this computer, and copy it. Use runtime sharing, not mobile pairing.
 2. Paste it into Orc's **Connection Settings**, or run `orc connect` and paste at its hidden-input prompt.
 3. Select a session and click **Attach** in Orc, or run `orc attach NAME` in Ghostty.
+
+Automatic headless startup uses the same Orca profile and existing pairing identity. It does not create a new access link. First-time setup still requires the runtime access link above.
 
 The app and CLI share `~/.config/orc/connection.json`, written with owner-only permissions. Treat runtime access links as credentials. Revoke Orc's dedicated link in Orca to remove its access. Existing phone pairing remains independent. When the phone owns a live terminal, Orca may refuse desktop typing; leave that phone terminal before resuming desktop input.
 
@@ -98,6 +102,8 @@ Run `npm --prefix WebDiff ci` and `npm --prefix WebDiff test` to check edit/patc
 An optional live-agent test sends a small prompt and tests interruption against an authenticated disposable Codex session. Set `ORC_LIVE_AGENT_TESTS=1`, `ORC_CHAT_TEST_HANDLE` to an `orc-chat-e2e…` fixture, and `ORC_CHAT_TEST_PROVIDER_FILE` to a private JSON file containing that fixture's verified provider `id` and `transcriptPath`. This isolates message transport from hook discovery; it does not test automatic session identification.
 
 Never point integration tests at your daily Orca profile. Normal `swift test` skips live mutation tests.
+
+For automatic-startup coverage, use an empty disposable runtime profile and isolated client credentials, then run `python3 scripts/e2e-startup.py --restart-test-runtime`. This suite starts and stops that headless runtime, refuses profiles with existing sessions, checks concurrent cold starts and stale discovery files, and verifies that a lost mutation reply does not trigger replay. It leaves the final test runtime running for the other integration suites. Stop that specific test runtime when validation is complete.
 
 ## Upstream
 
