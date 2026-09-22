@@ -212,6 +212,9 @@ struct ChatView: View {
     }
     private var emptyDescription: String {
         if model.target?.supported == false { return "Use Attach to interact with this agent." }
+        if model.target?.agent == "pi", model.target?.identity == nil {
+            return "Orca hasn't published this Pi session's local chat history yet. Use Attach to continue in its terminal."
+        }
         if model.target?.identity == nil { return "Orca hasn't published this agent's conversation ID yet. Use Attach for startup prompts and terminal access." }
         return "Messages and tool activity appear here. The session stays available in Orca and on your phone."
     }

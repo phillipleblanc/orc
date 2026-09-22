@@ -212,7 +212,7 @@ struct SessionWindow: View {
                         Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
                     }
                     if model.chatTargets[session.id]?.supported != true {
-                        Text("Chat supports Claude, Codex, Grok, and OMP sessions.").font(.caption).foregroundStyle(.secondary)
+                        Text("Chat requires a supported agent with history available to this Orca runtime.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)

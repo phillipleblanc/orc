@@ -110,6 +110,77 @@ final class LiveRuntimeTests: XCTestCase {
         _ = try await LocalRPC.call("terminal.close", ["terminal": handle])
     }
     /// Run only against a disposable Orca --serve profile, never the daily driver.
+    @MainActor func testPiTranscriptThroughOmpDecoder() async throws {
+        _ = try isolatedWorktree()
+        let sessionID = UUID().uuidString
+        let file = RuntimeMetadata.directory.appendingPathComponent("orc-pi-test-" + sessionID + ".jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        func record(_ value: [String: Any]) throws -> Data {
+            var bytes = try jsonData(value); bytes.append(10); return bytes
+        }
+        func message(_ id: String, _ parent: String?, _ role: String, _ content: Any, isError: Bool = false) throws -> Data {
+            try record(["type": "message", "id": id, "parentId": parent as Any? ?? NSNull(),
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": ["role": role, "content": content, "isError": isError]])
+        }
+        var bytes = try record(["type": "session", "version": 3, "id": sessionID, "cwd": "/test"])
+        bytes += try message("pi-user", nil, "user", [["type": "text", "text": "Read 한글.txt"]])
+        bytes += try message("pi-call", "pi-user", "assistant", [
+            ["type": "thinking", "thinking": "Inspect the file"],
+            ["type": "toolCall", "id": "call-1", "name": "read", "arguments": ["path": "한글.txt"]]])
+        bytes += try message("pi-result", "pi-call", "toolResult", [["type": "text", "text": "File unavailable"]], isError: true)
+        bytes += try record(["type": "compaction", "id": "bookkeeping", "summary": "Hidden bookkeeping"])
+        try bytes.write(to: file)
+
+        let target = try XCTUnwrap(ChatTarget(tab: ["type": "terminal", "terminal": "term_pi_fixture", "agentStatus": [
+            "agentType": "pi", "state": "done", "providerSession": ["id": sessionID, "transcriptPath": file.path]]]))
+        XCTAssertEqual(target.agent, "pi")
+        var params = target.params; params["limit"] = 2
+        let page = try await LocalRPC.call("nativeChat.readSession", params)
+        XCTAssertNil(page["error"])
+        let messages = (page["messages"] as? [[String: Any]] ?? []).compactMap(ChatMessage.init)
+        XCTAssertEqual(messages.map(\.id), ["pi-call", "pi-result"])
+        XCTAssertEqual(messages.first?.blocks.map(\.type), ["text", "tool-call"])
+        XCTAssertTrue(messages.first?.blocks.last?.body.contains("한글.txt") == true)
+        XCTAssertEqual(messages.last?.role, "tool")
+        XCTAssertEqual(messages.last?.blocks.first?.isError, true)
+        XCTAssertEqual(page["hasMore"] as? Bool, true)
+        var earlier = params; earlier["beforeOffset"] = try XCTUnwrap(page["beforeOffset"])
+        let previous = try await LocalRPC.call("nativeChat.readSession", earlier)
+        XCTAssertEqual((previous["messages"] as? [[String: Any]])?.map { $0["id"] as? String }, ["pi-user"])
+
+        let connection = try StreamConnection(pairing: Pairing.load())
+        defer { connection.close() }
+        try await connection.connect()
+        let initial = expectation(description: "Pi history arrives through the OMP subscription")
+        let appended = expectation(description: "Pi reply arrives as a live transcript append")
+        var gotInitial = false, gotAppend = false
+        connection.onStreamEvent = { id, event in
+            guard id == "pi-chat" else { return }
+            let messages = (event["messages"] as? [[String: Any]] ?? []).compactMap(ChatMessage.init)
+            if event["type"] as? String == "snapshot", !gotInitial {
+                XCTAssertNil(event["error"])
+                XCTAssertEqual(messages.map(\.id), ["pi-call", "pi-result"])
+                gotInitial = true; initial.fulfill()
+            }
+            if event["type"] as? String == "appended", messages.contains(where: { $0.id == "pi-reply" }), !gotAppend {
+                XCTAssertEqual(messages.last?.blocks.last?.body, "Pi live reply")
+                gotAppend = true; appended.fulfill()
+            }
+        }
+        params["subscriptionId"] = "pi-chat"
+        try await connection.subscribe("nativeChat.subscribe", params, id: "pi-chat")
+        await fulfillment(of: [initial], timeout: 15)
+        guard gotInitial else { return }
+        let output = try FileHandle(forWritingTo: file)
+        try output.seekToEnd()
+        try output.write(contentsOf: message("pi-reply", "pi-result", "assistant", [["type": "text", "text": "Pi live reply"]]))
+        try output.close()
+        await fulfillment(of: [appended], timeout: 15)
+        _ = try await connection.request("nativeChat.unsubscribe", ["subscriptionId": "pi-chat"])
+    }
+
+    /// Run only against a disposable Orca --serve profile, never the daily driver.
     @MainActor func testMobileControlAndDesktopCoexistence() async throws {
         let worktree = try isolatedWorktree()
         let pairing = try Pairing.load()

@@ -21,7 +21,7 @@ public struct ChatTarget: Equatable {
         self.handle = handle
         agent = status["agentType"] as? String ?? tab["launchAgent"] as? String
         sessionID = (provider["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        transcriptPath = provider["transcriptPath"] as? String
+        transcriptPath = (provider["transcriptPath"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         state = status["state"] as? String
         interactivePrompt = status["interactivePrompt"] as? String
         hasLiveAgent = status["agentType"] as? String != nil && status["restoredUnconfirmed"] as? Bool != true
@@ -29,18 +29,25 @@ public struct ChatTarget: Equatable {
         streamingText = state == "working" && status["lastAssistantMessageIsToolOutput"] as? Bool != true
             ? status["lastAssistantMessage"] as? String : nil
         let local = status["connectionId"] == nil || status["connectionId"] is NSNull
-        supported = ["claude", "openclaude", "codex", "grok", "omp"].contains(agent ?? "")
-            && (local || !["grok", "omp"].contains(agent ?? ""))
+        supported = ["claude", "openclaude", "codex", "grok", "omp", "pi"].contains(agent ?? "")
+            && (local || !["grok", "omp", "pi"].contains(agent ?? ""))
     }
     public var identity: String? {
         guard supported, let agent, let sessionID else { return nil }
+        // Pi shares OMP's record format, but not its session directory. Only
+        // the hook-reported absolute JSONL path can identify its transcript.
+        if agent == "pi" {
+            guard let transcriptPath, (transcriptPath as NSString).isAbsolutePath,
+                  (transcriptPath as NSString).pathExtension == "jsonl" else { return nil }
+        }
         return agent + "\0" + sessionID + "\0" + (transcriptPath ?? "")
     }
     public var requiresTerminal: Bool { state == "blocked" || state == "waiting" || interactivePrompt?.isEmpty == false }
     public var canSend: Bool { supported && hasLiveAgent && identity != nil && !requiresTerminal }
     public var isWorking: Bool { state == "working" }
     public var params: [String: Any] {
-        var result: [String: Any] = ["agent": agent == "openclaude" ? "claude" : agent ?? "", "sessionId": sessionID ?? "", "limit": 60]
+        let decoder = agent == "pi" ? "omp" : agent == "openclaude" ? "claude" : agent ?? ""
+        var result: [String: Any] = ["agent": decoder, "sessionId": sessionID ?? "", "limit": 60]
         if let transcriptPath { result["transcriptPath"] = transcriptPath }
         return result
     }
@@ -78,7 +85,7 @@ public struct ChatBlock: Equatable {
         switch type {
         case "text": title = ""; body = value["text"] as? String ?? ""
         case "tool-call":
-            title = (value["name"] as? String ?? "Tool") + " · " + (value["state"] as? String ?? "running")
+            title = (value["name"] as? String ?? "Tool") + ((value["state"] as? String).map { " · " + $0 } ?? "")
             body = Self.display(value["input"])
         case "tool-result": title = isError ? "Tool error" : "Tool result"; body = Self.display(value["output"])
         case "image-ref": title = "Image"; body = value["alt"] as? String ?? value["path"] as? String ?? "Image attachment — open the terminal to view."
@@ -163,6 +170,8 @@ public struct ChatHistory {
         guard target.canSend, target.isWorking else { throw OrcError("The agent is not working, or needs a response in its terminal.") }
         // Escape interrupts the agent without exiting its terminal process.
         try await write(["text": "\u{1b}", "enter": false], target: target, connection: connection, clientID: clientID)
+        // Pi aborts on one Escape; further Escapes belong to its tree picker.
+        if target.agent == "pi" { return }
         // Match Orca mobile's paced Escape pair: a queued turn can consume the
         // first Escape before the foreground response receives it.
         try await Task.sleep(for: .milliseconds(80))

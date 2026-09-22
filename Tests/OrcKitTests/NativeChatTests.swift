@@ -9,7 +9,7 @@ final class NativeChatTests: XCTestCase {
         XCTAssertEqual(target.params["sessionId"] as? String, "provider-id")
         XCTAssertTrue(target.canSend)
         let pi = try XCTUnwrap(ChatTarget(tab: ["type": "terminal", "terminal": "term_pi", "launchAgent": "codex", "agentStatus": ["agentType": "pi"]]))
-        XCTAssertFalse(pi.supported)
+        XCTAssertTrue(pi.supported)
         XCTAssertNil(pi.identity)
         let pending = try XCTUnwrap(ChatTarget(tab: ["type": "terminal", "terminal": "term_pending", "launchAgent": "codex"]))
         XCTAssertTrue(pending.supported)
@@ -22,6 +22,35 @@ final class NativeChatTests: XCTestCase {
             "agentType": "codex", "state": "waiting", "providerSession": ["id": "session"]]]))
         XCTAssertTrue(permission.requiresTerminal)
         XCTAssertFalse(permission.canSend)
+    }
+    func testPiUsesOmpDecoderWithoutChangingAgentOrTranscriptIdentity() throws {
+        let path = "/sessions/pi/한글 session.jsonl"
+        func target(path: String?, connection: String? = nil, state: String = "done") throws -> ChatTarget {
+            var provider: [String: Any] = ["id": "pi-provider-id"]
+            if let path { provider["transcriptPath"] = path }
+            var status: [String: Any] = ["agentType": "pi", "state": state, "providerSession": provider]
+            if let connection { status["connectionId"] = connection }
+            return try XCTUnwrap(ChatTarget(tab: ["type": "terminal", "terminal": "term_pi", "agentStatus": status]))
+        }
+        let pi = try target(path: path)
+        XCTAssertTrue(pi.supported)
+        XCTAssertTrue(pi.canSend)
+        XCTAssertEqual(pi.agent, "pi")
+        XCTAssertEqual(pi.handle, "term_pi")
+        XCTAssertEqual(pi.identity, "pi\0pi-provider-id\0" + path)
+        XCTAssertEqual(pi.params["agent"] as? String, "omp")
+        XCTAssertEqual(pi.params["sessionId"] as? String, "pi-provider-id")
+        XCTAssertEqual(pi.params["transcriptPath"] as? String, path)
+        for invalid in [nil, "", "relative.jsonl", "/sessions/not-jsonl.txt"] as [String?] {
+            let missing = try target(path: invalid)
+            XCTAssertNil(missing.identity, "Pi must not fall back to looking up an OMP transcript")
+            XCTAssertFalse(missing.canSend)
+        }
+        let remote = try target(path: path, connection: "ssh-remote")
+        XCTAssertFalse(remote.supported)
+        XCTAssertNil(remote.identity)
+        XCTAssertFalse(try target(path: path, state: "blocked").canSend)
+        XCTAssertFalse(try target(path: path, state: "waiting").canSend)
     }
     func testHistoryHandlesPendingSnapshotsUpdatesAndReplacement() {
         var history = ChatHistory()
@@ -70,6 +99,8 @@ final class NativeChatTests: XCTestCase {
         let tool = ChatBlock(["type": "tool-call", "name": "Read", "input": ["path": "README.md"], "state": "completed"])
         XCTAssertTrue(tool.title.contains("Read"))
         XCTAssertTrue(tool.body.contains("README.md"))
+        XCTAssertEqual(ChatBlock(["type": "tool-call", "name": "read", "input": [:]]).title, "read",
+                       "A transcript tool call without status must not be presented as still running")
         XCTAssertTrue(ChatBlock(["type": "tool-result", "output": "failed", "isError": true]).isError)
         XCTAssertTrue(ChatBlock(["type": "future-block", "detail": "preserved"]).body.contains("preserved"))
     }
