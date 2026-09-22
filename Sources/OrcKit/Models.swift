@@ -63,17 +63,14 @@ public struct SessionListing: Decodable {
     public let totalCount: Int
     public let truncated: Bool
 
-    init(response: [String: Any], preferTabTitles: Bool) throws {
+    init(response: [String: Any], savedNames: [SessionTab: String] = [:]) throws {
         // terminal.rename changes the parent tab name. Per-pane terminal titles
         // remain controlled by shell/agent OSC updates, so use the layout's tab
-        // title for every handle it contains. Headless terminals keep their title.
+        // title for every handle it contains, including headless layouts.
         var titles: [String: String] = [:]
         func visit(_ node: [String: Any], title: String? = nil) {
             switch node["type"] as? String {
             case "group":
-                // Synthetic headless layouts can retain an old tab title after
-                // a rename; their live terminal record owns the saved name.
-                guard !(node["groupId"] as? String ?? "").hasPrefix("headless-terminals:") else { return }
                 for tab in node["tabs"] as? [[String: Any]] ?? [] {
                     if let panes = tab["panes"] as? [String: Any] {
                         visit(panes, title: tab["title"] as? String)
@@ -91,7 +88,7 @@ public struct SessionListing: Decodable {
             default: break
             }
         }
-        for layout in preferTabTitles ? response["visualLayouts"] as? [[String: Any]] ?? [] : [] {
+        for layout in response["visualLayouts"] as? [[String: Any]] ?? [] {
             if let root = layout["root"] as? [String: Any] { visit(root) }
         }
         var listing = response
@@ -99,6 +96,10 @@ public struct SessionListing: Decodable {
             listing["terminals"] = terminals.map { terminal in
                 var terminal = terminal
                 if let handle = terminal["handle"] as? String, let title = titles[handle] {
+                    terminal["title"] = title
+                }
+                if let worktree = terminal["worktreeId"] as? String, let tab = terminal["tabId"] as? String,
+                   let title = savedNames[SessionTab(host: terminal["executionHostId"] as? String ?? "local", worktree: worktree, tab: tab)] {
                     terminal["title"] = title
                 }
                 return terminal
@@ -113,7 +114,9 @@ public struct SessionService {
     public func list() async throws -> SessionListing {
         async let status = LocalRPC.call("status.get")
         let response = try await LocalRPC.call("terminal.list", ["limit": 10000, "includeVisualLayouts": true])
-        return try await SessionListing(response: response, preferTabTitles: status["desktopWindowStatus"] as? String == "available")
+        let headless = try await status["desktopWindowStatus"] as? String != "available"
+        let names = headless ? await Task.detached { SavedSessionNames.load() }.value : [:]
+        return try SessionListing(response: response, savedNames: names)
     }
     public func workspaces() async throws -> [Workspace] {
         let result = try await LocalRPC.call("worktree.list", ["limit": 10000])
@@ -133,7 +136,7 @@ public struct SessionService {
         guard let handle = result["handle"] as? String else { throw OrcError("Orca did not return the created session handle. Check `orc list` before retrying.") }
         // Creation sets the initial process title. Rename pins the user's tab title
         // so shell OSC title updates cannot erase the name used by `orc attach`.
-        do { _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name]) }
+        do { try await setName(handle: handle, name: name) }
         catch { throw OrcError("Created \(handle), but could not set its permanent name: \(error.localizedDescription). Use that handle; do not create it again.") }
         return handle
     }
@@ -146,7 +149,18 @@ public struct SessionService {
         guard !existing.terminals.contains(where: { $0.handle != handle && $0.name == name }) else {
             throw OrcError("A session named '\(name)' already exists.")
         }
+        try await setName(handle: handle, name: name)
+    }
+    private func setName(handle: String, name: String) async throws {
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
+        // The desktop notification and headless disk flush are asynchronous.
+        // Wait for the readable name without replaying an accepted mutation.
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        repeat {
+            if try await list().terminals.contains(where: { $0.handle == handle && $0.name == name }) { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        throw OrcError("Orca accepted the rename but has not published the saved name yet. Refresh the session list.")
     }
     private func validatedName(_ name: String) throws -> String {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)

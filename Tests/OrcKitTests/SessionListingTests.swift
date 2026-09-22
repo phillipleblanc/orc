@@ -2,18 +2,18 @@ import XCTest
 @testable import OrcKit
 
 final class SessionListingTests: XCTestCase {
-    private func terminal(_ handle: String, title: String) -> [String: Any] {
-        ["handle": handle, "title": title, "worktreeId": "workspace", "worktreePath": "/tmp",
+    private func terminal(_ handle: String, title: String?) -> [String: Any] {
+        ["handle": handle, "title": title as Any? ?? NSNull(), "worktreeId": "workspace", "worktreePath": "/tmp",
          "connected": true, "writable": true, "agentIdentity": "pi", "incarnationId": "process-1"]
     }
     private func pane(_ handle: String) -> [String: Any] { ["type": "terminal", "handle": handle] }
     private func group(_ title: Any, panes: [String: Any]) -> [String: Any] {
         ["type": "group", "tabs": [["title": title, "panes": panes]]]
     }
-    private func listing(_ terminals: [[String: Any]], root: [String: Any]? = nil, preferTabTitles: Bool = true) throws -> SessionListing {
+    private func listing(_ terminals: [[String: Any]], root: [String: Any]? = nil, savedNames: [SessionTab: String] = [:]) throws -> SessionListing {
         var response: [String: Any] = ["terminals": terminals, "totalCount": terminals.count, "truncated": false]
         if let root { response["visualLayouts"] = [["root": root]] }
-        return try SessionListing(response: response, preferTabTitles: preferTabTitles)
+        return try SessionListing(response: response, savedNames: savedNames)
     }
     func testSavedRenameSurvivesAgentTitleChangesAndResolvesForAttach() throws {
         for title in ["Pi ready", "⠋ Pi working", "Shell"] {
@@ -47,13 +47,26 @@ final class SessionListingTests: XCTestCase {
             XCTAssertEqual(try listing(terminals, root: root).terminals, original)
         }
     }
-    func testHeadlessRenamesIgnoreStaleLayoutTitles() throws {
-        let terminals = [terminal("term_headless", title: "Renamed background session")]
+    func testHeadlessRestorationUsesSavedTabsWhenTerminalTitlesAreMissingOrTransient() throws {
+        for title in [nil, "⠋ Pi working"] {
+            var root = group("Saved before quitting Orca", panes: pane("term_headless"))
+            root["groupId"] = "headless-terminals:workspace"
+            let sessions = try listing([terminal("term_headless", title: title)], root: root).terminals
+            XCTAssertEqual(try resolveSession("Saved before quitting Orca", in: sessions).handle, "term_headless")
+        }
+    }
+    func testHeadlessRenameUsesPersistedCustomNameUntilLayoutCatchesUp() throws {
+        var renamed = terminal("term_headless", title: "⠋ Pi working")
+        renamed["tabId"] = "tab-1"
         var root = group("Old tab name", panes: pane("term_headless"))
-        XCTAssertEqual(try listing(terminals, root: root, preferTabTitles: false).terminals.first?.name,
-                       "Renamed background session")
         root["groupId"] = "headless-terminals:workspace"
-        XCTAssertEqual(try listing(terminals, root: root).terminals.first?.name,
+        let key = SessionTab(host: "local", worktree: "workspace", tab: "tab-1")
+        XCTAssertEqual(try listing([renamed], root: root, savedNames: [key: "Renamed background session"]).terminals.first?.name,
                        "Renamed background session")
+        for other in [SessionTab(host: "ssh:other", worktree: "workspace", tab: "tab-1"),
+                      SessionTab(host: "local", worktree: "other", tab: "tab-1"),
+                      SessionTab(host: "local", worktree: "workspace", tab: "other")] {
+            XCTAssertEqual(try listing([renamed], root: root, savedNames: [other: "Wrong name"]).terminals.first?.name, "Old tab name")
+        }
     }
 }
