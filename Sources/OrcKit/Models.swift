@@ -62,12 +62,58 @@ public struct SessionListing: Decodable {
     public let terminals: [Session]
     public let totalCount: Int
     public let truncated: Bool
+
+    init(response: [String: Any], preferTabTitles: Bool) throws {
+        // terminal.rename changes the parent tab name. Per-pane terminal titles
+        // remain controlled by shell/agent OSC updates, so use the layout's tab
+        // title for every handle it contains. Headless terminals keep their title.
+        var titles: [String: String] = [:]
+        func visit(_ node: [String: Any], title: String? = nil) {
+            switch node["type"] as? String {
+            case "group":
+                // Synthetic headless layouts can retain an old tab title after
+                // a rename; their live terminal record owns the saved name.
+                guard !(node["groupId"] as? String ?? "").hasPrefix("headless-terminals:") else { return }
+                for tab in node["tabs"] as? [[String: Any]] ?? [] {
+                    if let panes = tab["panes"] as? [String: Any] {
+                        visit(panes, title: tab["title"] as? String)
+                    }
+                }
+            case "split", "pane-split":
+                for child in ["first", "second"] {
+                    if let child = node[child] as? [String: Any] { visit(child, title: title) }
+                }
+            case "terminal":
+                if let handle = node["handle"] as? String, let title,
+                   !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    titles[handle] = title
+                }
+            default: break
+            }
+        }
+        for layout in preferTabTitles ? response["visualLayouts"] as? [[String: Any]] ?? [] : [] {
+            if let root = layout["root"] as? [String: Any] { visit(root) }
+        }
+        var listing = response
+        if let terminals = response["terminals"] as? [[String: Any]] {
+            listing["terminals"] = terminals.map { terminal in
+                var terminal = terminal
+                if let handle = terminal["handle"] as? String, let title = titles[handle] {
+                    terminal["title"] = title
+                }
+                return terminal
+            }
+        }
+        self = try decode(listing)
+    }
 }
 
 public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
-        try decode(await LocalRPC.call("terminal.list", ["limit": 10000, "includeVisualLayouts": false]))
+        async let status = LocalRPC.call("status.get")
+        let response = try await LocalRPC.call("terminal.list", ["limit": 10000, "includeVisualLayouts": true])
+        return try await SessionListing(response: response, preferTabTitles: status["desktopWindowStatus"] as? String == "available")
     }
     public func workspaces() async throws -> [Workspace] {
         let result = try await LocalRPC.call("worktree.list", ["limit": 10000])

@@ -21,6 +21,8 @@ orc attach my-task --read-only
 
 **Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal; **Detach** returns to details while the session continues in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
 
+The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
+
 Session indicators show Orca's reported agent activity: green means idle, a yellow spinner means active, and an orange exclamation mark means the agent needs attention. Gray indicates no agent, unavailable activity, or an offline terminal; hover for the status. The list refreshes every two seconds. Chat activity updates through its live metadata stream. Reduce Motion keeps the active indicator yellow without spinning.
 
 Choose **Open Chat** for a supported agent's conversation, without starting an embedded terminal. Chat displays messages and expandable tool activity, loads earlier history, and sends with **⌘Return**. **Stop** interrupts the current response; **Attach** switches to its terminal. Closing chat leaves the Orca session running.
