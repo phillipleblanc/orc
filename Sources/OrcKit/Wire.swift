@@ -32,7 +32,9 @@ public struct TerminalFrame {
     private var pending: [String: CheckedContinuation<[String: Any], Error>] = [:]
     private var deadlines: [String: Task<Void, Never>] = [:]
     private var closed = false
+    private var streams: Set<String> = []
     public var onEvent: (([String: Any]) -> Void)?
+    public var onStreamEvent: ((String, [String: Any]) -> Void)?
     public var onBinary: ((Data) -> Void)?
     public var onClose: ((Error?) -> Void)?
 
@@ -80,8 +82,9 @@ public struct TerminalFrame {
             }
         }
     }
-    public func subscribe(_ method: String, _ params: [String: Any]) async throws {
-        try await sendJSON(["id": "orc-stream", "method": method, "params": params, "deviceToken": pairing.deviceToken])
+    public func subscribe(_ method: String, _ params: [String: Any], id: String = "orc-stream") async throws {
+        streams.insert(id)
+        try await sendJSON(["id": id, "method": method, "params": params, "deviceToken": pairing.deviceToken])
     }
     public func send(_ frame: TerminalFrame) async throws { try await task.send(.data(crypto.seal(frame.encoded))) }
     private func finish(_ id: String, _ result: Result<[String: Any], Error>) {
@@ -98,7 +101,12 @@ public struct TerminalFrame {
                     let response = try jsonObject(crypto.open(data))
                     if response["_keepalive"] as? Bool == true { continue }
                     guard let id = response["id"] as? String else { throw OrcError("Missing Orca response ID.") }
-                    if id == "orc-stream" { onEvent?(try rpcResult(response)) }
+                    if streams.contains(id) {
+                        let event = try rpcResult(response)
+                        if id == "orc-stream" { onEvent?(event) }
+                        onStreamEvent?(id, event)
+                        if event["type"] as? String == "end" { streams.remove(id) }
+                    }
                     else { finish(id, Result { try rpcResult(response) }) }
                 @unknown default: throw OrcError("Unsupported WebSocket message.")
                 }

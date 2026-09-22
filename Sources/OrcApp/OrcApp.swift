@@ -19,6 +19,7 @@ import OrcKit
 @MainActor final class SessionModel: ObservableObject {
     @Published var sessions: [Session] = []
     @Published var workspaces: [Workspace] = []
+    @Published var chatTargets: [String: ChatTarget] = [:]
     @Published var selected: String?
     @Published var error: String?
     @Published var showCreate = false
@@ -32,9 +33,11 @@ import OrcKit
         do {
             async let listing = service.list()
             async let spaces = service.workspaces()
+            async let tabs = try? LocalRPC.call("session.tabs.listAll")
             let result = try await listing
             workspaces = try await spaces
             sessions = result.terminals
+            chatTargets = ChatTarget.targets(in: await tabs ?? [:])
             error = result.truncated ? "Orca returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
         } catch { self.error = error.localizedDescription }
@@ -42,12 +45,13 @@ import OrcKit
 }
 
 enum SessionWindowMode: Equatable {
-    case compact, details, attached
+    case compact, details, attached, chat
     var size: NSSize {
         switch self {
         case .compact: return NSSize(width: 380, height: 560)
         case .details: return NSSize(width: 760, height: 560)
         case .attached: return NSSize(width: 1200, height: 780)
+        case .chat: return NSSize(width: 1060, height: 780)
         }
     }
     var minimumWidth: CGFloat { self == .compact ? 340 : self == .details ? 680 : 900 }
@@ -59,11 +63,15 @@ struct SessionWindow: View {
     @State private var copied = false
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
+    @State private var chatSession: String?
+    @State private var pendingChat: String?
+    @State private var chatDrafts: [String: String] = [:]
     @State private var terminalGeneration = UUID()
     @State private var renamingSession: Session?
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     var attached: Bool { selected != nil && attachedSession == selected?.id }
-    var mode: SessionWindowMode { selected == nil ? .compact : attached ? .attached : .details }
+    var chatting: Bool { selected != nil && chatSession == selected?.id }
+    var mode: SessionWindowMode { selected == nil ? .compact : attached ? .attached : chatting ? .chat : .details }
     var filtered: [Session] { model.sessions.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.worktreePath.localizedCaseInsensitiveContains(search) } }
     var body: some View {
         VStack(spacing: 0) {
@@ -88,9 +96,11 @@ struct SessionWindow: View {
         .sheet(isPresented: $model.showConnection, onDismiss: {
             model.connected = Pairing.isConfigured
             if pendingAttach == model.selected, pendingAttach != nil, model.connected { attachedSession = pendingAttach }
+            if pendingChat == model.selected, pendingChat != nil, model.connected { chatSession = pendingChat }
             pendingAttach = nil
+            pendingChat = nil
         }) { ConnectionView().frame(width: 500) }
-        .onChange(of: model.selected) { _, _ in attachedSession = nil; copied = false; pendingAttach = nil }
+        .onChange(of: model.selected) { _, _ in attachedSession = nil; chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil }
         .task {
             while !Task.isCancelled {
                 await model.refresh()
@@ -136,12 +146,29 @@ struct SessionWindow: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     @ViewBuilder private func detail(_ session: Session) -> some View {
-        if attached, model.connected, session.connected {
+        if chatting, model.connected {
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Button { chatSession = nil } label: { Label("Close Chat", systemImage: "chevron.left") }
+                    Text(session.name).font(.headline).lineLimit(1)
+                    Spacer()
+                    copyButton(session)
+                    Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
+                }.padding(14)
+                Divider()
+                ChatView(session: session, draft: Binding(get: { chatDrafts[session.id] ?? "" }, set: { chatDrafts[session.id] = $0 })) {
+                    attach(session)
+                }.id(session.id)
+            }
+        } else if attached, model.connected, session.connected {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Button { attachedSession = nil } label: { Label("Detach", systemImage: "rectangle.compress.vertical") }
                     Text(session.name).font(.headline).lineLimit(1)
                     Spacer()
+                    if model.chatTargets[session.id]?.supported == true {
+                        Button("Chat", systemImage: "bubble.left.and.bubble.right") { attachedSession = nil; chatSession = session.id }
+                    }
                     copyButton(session)
                     Button { terminalGeneration = UUID() } label: { Image(systemName: "arrow.clockwise") }
                         .help("Reconnect Terminal").accessibilityLabel("Reconnect Terminal")
@@ -174,16 +201,27 @@ struct SessionWindow: View {
                     }
                 }
                 Spacer()
-                Text("Copy the command for Ghostty, or attach here.").font(.callout).foregroundStyle(.secondary)
-                HStack(spacing: 10) {
+                Text("Open chat, attach here, or copy the command for Ghostty.").font(.callout).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
                     copyButton(session)
-                    Button("Attach", systemImage: "terminal") {
-                        if Pairing.isConfigured { attachedSession = session.id }
-                        else { pendingAttach = session.id; model.showConnection = true }
-                    }.buttonStyle(.borderedProminent).disabled(!session.connected)
+                    HStack {
+                        Button("Open Chat", systemImage: "bubble.left.and.bubble.right") {
+                            if Pairing.isConfigured { chatSession = session.id }
+                            else { pendingChat = session.id; model.showConnection = true }
+                        }.buttonStyle(.borderedProminent).disabled(model.chatTargets[session.id]?.supported != true)
+                        Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
+                    }
+                    if model.chatTargets[session.id]?.supported != true {
+                        Text("Chat supports Claude, Codex, Grok, and OMP sessions.").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
+    }
+    private func attach(_ session: Session) {
+        chatSession = nil
+        if Pairing.isConfigured { attachedSession = session.id }
+        else { pendingAttach = session.id; model.showConnection = true }
     }
     private func copyButton(_ session: Session) -> some View {
         Button { copy(session) } label: { Label(copied ? "Copied" : "Copy Attach Command", systemImage: copied ? "checkmark" : "doc.on.doc") }

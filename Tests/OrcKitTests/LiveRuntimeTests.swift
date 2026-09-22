@@ -46,6 +46,69 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    @MainActor func testNativeChatTranscriptStreamingAndGuardedInput() async throws {
+        let worktree = try isolatedWorktree()
+        let sessionID = UUID().uuidString
+        let file = RuntimeMetadata.directory.appendingPathComponent("orc-chat-test-" + sessionID + ".jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        func record(_ id: String, _ role: String, _ text: String) throws -> Data {
+            var data = try jsonData(["type": role, "uuid": id, "sessionId": sessionID,
+                "timestamp": "2026-01-01T00:00:00Z", "message": ["role": role, "content": [["type": "text", "text": text]]]])
+            data.append(10); return data
+        }
+        var bytes = try record("user-1", "user", "Hello")
+        bytes += try record("assistant-1", "assistant", "First reply")
+        try bytes.write(to: file)
+        let params: [String: Any] = ["agent": "claude", "sessionId": sessionID, "transcriptPath": file.path, "limit": 1]
+        let page = try await LocalRPC.call("nativeChat.readSession", params)
+        XCTAssertNil(page["error"])
+        XCTAssertEqual((page["messages"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(page["hasMore"] as? Bool, true)
+        var earlierParams = params
+        earlierParams["beforeOffset"] = try XCTUnwrap(page["beforeOffset"])
+        let earlier = try await LocalRPC.call("nativeChat.readSession", earlierParams)
+        XCTAssertEqual((earlier["messages"] as? [[String: Any]])?.first?["role"] as? String, "user")
+
+        let connection = try StreamConnection(pairing: Pairing.load())
+        defer { connection.close() }
+        try await connection.connect()
+        let tabs = expectation(description: "Session inventory stream")
+        let initial = expectation(description: "Native chat snapshot")
+        let appended = expectation(description: "Live transcript append")
+        var gotTabs = false, gotInitial = false, gotAppend = false
+        connection.onStreamEvent = { id, event in
+            if id == "test-tabs", !gotTabs { gotTabs = true; tabs.fulfill() }
+            if id == "test-chat", event["type"] as? String == "snapshot", !gotInitial {
+                gotInitial = true; initial.fulfill()
+            }
+            if id == "test-chat", event["type"] as? String == "appended",
+               (event["messages"] as? [[String: Any]])?.contains(where: { $0["id"] as? String == "assistant-2" }) == true,
+               !gotAppend { gotAppend = true; appended.fulfill() }
+        }
+        try await connection.subscribe("session.tabs.subscribe", ["worktree": "path:" + worktree], id: "test-tabs")
+        var streamingParams = params; streamingParams["subscriptionId"] = "test-chat"
+        try await connection.subscribe("nativeChat.subscribe", streamingParams, id: "test-chat")
+        await fulfillment(of: [tabs, initial], timeout: 15)
+        let output = try FileHandle(forWritingTo: file)
+        try output.seekToEnd()
+        try output.write(contentsOf: record("assistant-2", "assistant", "Streamed reply"))
+        try output.close()
+        await fulfillment(of: [appended], timeout: 15)
+        _ = try await connection.request("nativeChat.unsubscribe", ["subscriptionId": "test-chat"])
+
+        let handle = try await SessionService().create(name: "orc-chat-guard-" + sessionID, worktree: "path:" + worktree, command: nil)
+        do {
+            let target = try XCTUnwrap(ChatTarget(tab: ["type": "terminal", "terminal": handle,
+                "agentStatus": ["agentType": "codex", "state": "done", "providerSession": ["id": "stale-provider"]]]))
+            do {
+                try await ChatWriter.send("echo ORC_MUST_NOT_EXECUTE", target: target, connection: connection, clientID: "orc-test-chat")
+                XCTFail("A shell must refuse input even when a cached agent status says it is sendable")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("refused")) }
+            let terminal = try await LocalRPC.call("terminal.read", ["terminal": handle, "lines": 30])
+            XCTAssertFalse(String(decoding: try jsonData(terminal), as: UTF8.self).contains("ORC_MUST_NOT_EXECUTE"))
+        } catch { _ = try? await LocalRPC.call("terminal.close", ["terminal": handle]); throw error }
+        _ = try await LocalRPC.call("terminal.close", ["terminal": handle])
+    }
     /// Run only against a disposable Orca --serve profile, never the daily driver.
     @MainActor func testMobileControlAndDesktopCoexistence() async throws {
         let worktree = try isolatedWorktree()
