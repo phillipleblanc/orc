@@ -65,7 +65,7 @@ import OrcKit
 struct GhosttyTerminal: NSViewRepresentable {
     let session: Session
     func makeNSView(context: Context) -> GhosttyView { GhosttyView(session: session) }
-    func updateNSView(_ view: GhosttyView, context: Context) {}
+    func updateNSView(_ view: GhosttyView, context: Context) { view.setAccessibilityLabel("Terminal — \(session.name)") }
     static func dismantleNSView(_ view: GhosttyView, coordinator: ()) { view.detach() }
 }
 

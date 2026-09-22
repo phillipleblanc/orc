@@ -2,8 +2,7 @@ import XCTest
 @testable import OrcKit
 
 final class LiveRuntimeTests: XCTestCase {
-    /// Run only against a disposable Orca --serve profile, never the daily driver.
-    @MainActor func testMobileControlAndDesktopCoexistence() async throws {
+    private func isolatedWorktree() throws -> String {
         let env = ProcessInfo.processInfo.environment
         guard env["ORC_LIVE_TESTS"] == "1", env["ORCA_USER_DATA_PATH"] != nil,
               env["ORC_CONFIG_DIR"] != nil, let worktree = env["ORC_TEST_WORKTREE"] else {
@@ -11,6 +10,45 @@ final class LiveRuntimeTests: XCTestCase {
         }
         let daily = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/orca").standardizedFileURL
         guard RuntimeMetadata.directory.standardizedFileURL != daily else { throw OrcError("Live tests refuse the daily Orca profile.") }
+        return worktree
+    }
+    @MainActor func testRenamePreservesSessionAndRejectsDuplicates() async throws {
+        let worktree = try isolatedWorktree()
+        let service = SessionService()
+        let suffix = UUID().uuidString
+        var handles: [String] = []
+        do {
+            let first = try await service.create(name: "rename-first-" + suffix, worktree: "path:" + worktree, command: nil)
+            handles.append(first)
+            let second = try await service.create(name: "rename-second-" + suffix, worktree: "path:" + worktree, command: nil)
+            handles.append(second)
+            let before = try await service.list().terminals.first { $0.handle == first }
+            let name = "renamed-한글-" + suffix
+            try await service.rename(handle: first, name: name)
+            let after = try await service.list().terminals.first { $0.name == name }
+            XCTAssertEqual(after?.handle, first)
+            XCTAssertEqual(after?.incarnationId, before?.incarnationId)
+            XCTAssertEqual(after?.attachCommand, before?.attachCommand)
+            XCTAssertEqual(after?.connected, true)
+            do {
+                try await service.rename(handle: first, name: "rename-second-" + suffix)
+                XCTFail("Duplicate name should be rejected")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("already exists")) }
+            do {
+                try await service.rename(handle: first, name: "bad\u{1b}[31m")
+                XCTFail("Control characters should be rejected")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("control characters")) }
+            let unchanged = try await service.list().terminals.first { $0.handle == first }
+            XCTAssertEqual(unchanged?.name, name)
+        } catch {
+            for handle in handles { _ = try? await LocalRPC.call("terminal.close", ["terminal": handle]) }
+            throw error
+        }
+        for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
+    }
+    /// Run only against a disposable Orca --serve profile, never the daily driver.
+    @MainActor func testMobileControlAndDesktopCoexistence() async throws {
+        let worktree = try isolatedWorktree()
         let pairing = try Pairing.load()
         let handle = try await SessionService().create(name: "orc-mobile-test-" + UUID().uuidString,
                                                        worktree: "path:" + worktree, command: nil)

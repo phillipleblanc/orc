@@ -60,6 +60,7 @@ struct SessionWindow: View {
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
     @State private var terminalGeneration = UUID()
+    @State private var renamingSession: Session?
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     var attached: Bool { selected != nil && attachedSession == selected?.id }
     var mode: SessionWindowMode { selected == nil ? .compact : attached ? .attached : .details }
@@ -83,6 +84,7 @@ struct SessionWindow: View {
         .background(SessionWindowSizer(mode: mode).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar { ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") } }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
+        .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .sheet(isPresented: $model.showConnection, onDismiss: {
             model.connected = Pairing.isConfigured
             if pendingAttach == model.selected, pendingAttach != nil, model.connected { attachedSession = pendingAttach }
@@ -113,7 +115,11 @@ struct SessionWindow: View {
                         }
                         Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 5).tag(session.id)
-                    .contextMenu { Button("Copy Attach Command") { copy(session) } }
+                    .contextMenu {
+                        Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
+                        Divider()
+                        Button("Copy Attach Command") { copy(session) }
+                    }
                 }
             }.listStyle(.sidebar)
             if model.sessions.isEmpty, !model.loading {
@@ -257,6 +263,43 @@ struct CreateSessionView: View {
         do {
             let handle = try await model.service.create(name: name, worktree: workspace, command: agent == "shell" ? nil : agent == "custom" ? customCommand : agent)
             await model.refresh(); model.selected = handle; dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct RenameSessionView: View {
+    @ObservedObject var model: SessionModel
+    let session: Session
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+    @State private var name: String
+    @State private var saving = false
+    @State private var error: String?
+    init(model: SessionModel, session: Session) {
+        self.model = model; self.session = session
+        _name = State(initialValue: session.name)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Rename Session").font(.title2.bold())
+            TextField("Name", text: $name).textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Session name").focused($focused).disabled(saving)
+            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
+                Button(saving ? "Renaming…" : "Rename") { Task { await rename() } }
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .disabled(saving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(24).frame(width: 380).interactiveDismissDisabled(saving)
+        .onAppear { focused = true }
+    }
+    private func rename() async {
+        saving = true; defer { saving = false }
+        do {
+            try await model.service.rename(handle: session.handle, name: name)
+            await model.refresh(); dismiss()
         } catch { self.error = error.localizedDescription }
     }
 }

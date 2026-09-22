@@ -74,10 +74,7 @@ public struct SessionService {
         return try decode(result["worktrees"] ?? [])
     }
     public func create(name: String, worktree: String, command: String?) async throws -> String {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.utf8.count <= 200, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            throw OrcError("Choose a session name of 1–200 bytes without control characters.")
-        }
+        let name = try validatedName(name)
         let existing = try await list()
         guard !existing.terminals.contains(where: { $0.name == name }) else {
             throw OrcError("A session named '\(name)' already exists.")
@@ -93,5 +90,23 @@ public struct SessionService {
         do { _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name]) }
         catch { throw OrcError("Created \(handle), but could not set its permanent name: \(error.localizedDescription). Use that handle; do not create it again.") }
         return handle
+    }
+    public func rename(handle: String, name: String) async throws {
+        let name = try validatedName(name)
+        let existing = try await list()
+        guard existing.terminals.contains(where: { $0.handle == handle }) else {
+            throw OrcError("This session is no longer available. Refresh the session list.")
+        }
+        guard !existing.terminals.contains(where: { $0.handle != handle && $0.name == name }) else {
+            throw OrcError("A session named '\(name)' already exists.")
+        }
+        _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
+    }
+    private func validatedName(_ name: String) throws -> String {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.utf8.count <= 200, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw OrcError("Choose a session name of 1–200 bytes without control characters.")
+        }
+        return name
     }
 }

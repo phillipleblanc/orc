@@ -48,11 +48,12 @@ def cli(*args):
     return subprocess.check_output([CLI, *args], text=True, timeout=30)
 
 class Terminal:
-    def __init__(self, handle, cols=100, rows=30, extra=(), env=None):
+    def __init__(self, handle=None, cols=100, rows=30, extra=(), env=None):
         self.master, self.slave = pty.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
         self.before = termios.tcgetattr(self.slave)
-        self.process = subprocess.Popen([CLI, 'attach', handle, *extra], stdin=self.slave, stdout=self.slave, stderr=self.slave,
+        selector = [] if handle is None else [handle]
+        self.process = subprocess.Popen([CLI, 'attach', *selector, *extra], stdin=self.slave, stdout=self.slave, stderr=self.slave,
                                         env=env, start_new_session=True)
         self.transcript = b''
     def read_until(self, text, timeout=15):
@@ -74,8 +75,8 @@ class Terminal:
         os.kill(self.process.pid, signal.SIGWINCH)
     def close(self, graceful=True):
         if self.process.poll() is None:
-            if graceful: self.send('\x1d')
-            else: self.process.send_signal(signal.SIGTERM)
+            if graceful is True: self.send('\x1d')
+            elif graceful is False: self.process.send_signal(signal.SIGTERM)
             # A real terminal continues consuming output while its command exits.
             # Waiting without draining the PTY can deadlock on a full output buffer.
             deadline = time.monotonic() + 10
@@ -158,6 +159,36 @@ finally:
     listed = json.loads(cli('list', '--json'))
     assert any(s['handle'] == handle and s['connected'] for s in listed)
     print('PASS create and list the same live session', flush=True)
+    second = json.loads(cli('new', 'orc-e2e-' + suffix + '-second', '--worktree', 'path:' + str(ROOT), '--json'))['handle']
+    handles.append(second)
+    rpc('terminal.send', {'terminal': second, 'text': "printf '__PICKER_%s__\\n' SECOND", 'enter': True})
+    non_tty = subprocess.run([CLI, 'attach'], capture_output=True, text=True, timeout=15)
+    assert non_tty.returncode != 0 and 'interactive terminal' in non_tty.stderr
+    picker = Terminal(); terminals.append(picker)
+    picker.read_until('Orc — Attach to a session')
+    picker.send('orc-e2e-' + suffix); picker.read_until('Filter: orc-e2e-' + suffix)
+    picker.send('\x1b'); time.sleep(0.02); picker.send('[B')
+    picker.read_until('2/2 · ' + second)
+    picker.send('\r'); picker.read_until('__PICKER_SECOND__')
+    picker.send("printf '__PICKER_%s__\\n' INPUT\r"); picker.read_until('__PICKER_INPUT__')
+    picker.close(); terminals.remove(picker)
+    readonly = Terminal(extra=('--read-only', '--no-reconnect')); terminals.append(readonly)
+    readonly.read_until('Orc — Attach to a session')
+    readonly.send(second); readonly.read_until('1/1 · ' + second)
+    readonly.send('\r'); readonly.read_until('__PICKER_INPUT__')
+    readonly.close(); terminals.remove(readonly)
+    for cancellation in ('escape', 'signal'):
+        picker = Terminal(); terminals.append(picker)
+        picker.read_until('Orc — Attach to a session')
+        picker.send('no-match-' + suffix); picker.read_until('No matching sessions.')
+        picker.send('\r'); picker.resize(65, 15); picker.read_until('No matching sessions.')
+        assert picker.process.poll() is None, 'Enter with no matches must not attach or exit'
+        picker.send('\x15'); picker.send('orc-e2e-' + suffix); picker.read_until('Filter: orc-e2e-' + suffix)
+        if cancellation == 'escape': picker.send('\x1b'); picker.close(None)
+        else: picker.close(False)
+        terminals.remove(picker)
+    assert all(next(s for s in json.loads(cli('list', '--json')) if s['handle'] == h)['connected'] for h in (handle, second))
+    print('PASS picker filtering, split arrow sequence, selection, flags, empty results, resize, Escape/SIGTERM, and tty restoration', flush=True)
     t = Terminal('orc-e2e-' + suffix); terminals.append(t)
     t.read_until('\x1b[?2026l')
     t.send("printf '__ORC_%s__\\n' INPUT\r")

@@ -1,5 +1,7 @@
 # Orc
 
+<img src="Resources/AppIcon.png" alt="Orc: an orca with a terminal-chevron tail on an ocean-blue tile" width="128" height="128">
+
 Native macOS clients for sessions owned by a running Orca instance. The SwiftUI app lists and creates sessions, embeds libghostty, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
 
 Orca continues owning PTYs, agents, workspaces, persistence, remote hosts, and mobile access. Keep Orca running; its window can stay closed. Orc does not patch Orca, replace its executable, or start a second backend during normal use.
@@ -8,6 +10,7 @@ Orca continues owning PTYs, agents, workspaces, persistence, remote hosts, and m
 
 ```sh
 orc list
+orc attach
 orc workspaces
 orc new my-task --worktree path:/absolute/path/to/registered/workspace --command pi
 orc attach my-task
@@ -16,7 +19,9 @@ orc attach my-task --read-only
 
 `orc new` uses the current directory when `--worktree` is omitted. Omit `--command` to create a shell. Workspaces must already be registered in Orca. Both `list` and `new` support `--json`.
 
-**Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal; **Detach** returns to details while the session continues in Orca. Create a session with **⌘N**. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
+**Orc.app** opens as a compact session list. Selecting a session reveals its details and **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal; **Detach** returns to details while the session continues in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
+
+Run **`orc attach`** without a name to open a terminal session picker. Type to filter names, workspace paths, or handles; use **↑/↓** to select and **Enter** to attach. **Esc** cancels and **Ctrl-U** clears the filter. Only running sessions appear. `--read-only` and `--no-reconnect` also work with the picker.
 
 Press **Ctrl-]** to detach. Closing an inline view or the app also detaches; the agent continues in Orca. Attach reconnects after a transport interruption and checks that the terminal's process incarnation has not changed. Use `--no-reconnect` to exit on interruption. Read-only attachment neither sends input nor claims the terminal size.
 

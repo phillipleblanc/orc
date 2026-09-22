@@ -57,8 +57,14 @@ import COrcSupport
             else { print("Created \(options[0])\norc attach \(shellQuote(handle))") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
-            guard options.count == 1, !json else { throw OrcError("Usage: orc attach NAME-OR-HANDLE [--read-only] [--no-reconnect]") }
-            let terminal = try resolveSession(options[0], in: await service.list().terminals)
+            guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME-OR-HANDLE] [--read-only] [--no-reconnect]") }
+            let listing = try await service.list()
+            let terminal: Session
+            if let selector = options.first { terminal = try resolveSession(selector, in: listing.terminals) }
+            else {
+                guard let picked = try await SessionPicker(sessions: listing.terminals).run() else { return }
+                terminal = picked
+            }
             guard terminal.connected else { throw OrcError("This session is offline.") }
             try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect).run()
         case "connect":
@@ -91,7 +97,7 @@ import COrcSupport
     orc workspaces [--json]                   List available workspaces
     orc new NAME [--worktree SELECTOR]        Create a named session
                  [--command 'pi'] [--json]   Start an agent or command
-    orc attach NAME-OR-HANDLE                Attach in this terminal
+    orc attach [NAME-OR-HANDLE]              Choose a session, or attach by name
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
     orc connect                             Save a runtime access link from stdin
