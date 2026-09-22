@@ -19,4 +19,5 @@ cp .build/deps/libsodium-1.0.22/LICENSE "$ORC_APP/Contents/Resources/licenses/li
 rsync -a .build/deps/ghostty-1.3.1/zig-out/share/ghostty/ "$ORC_APP/Contents/Resources/ghostty/"
 codesign --force --sign - "$ORC_APP/Contents/Resources/orc"
 codesign --force --sign - "$ORC_APP"
+touch "$ORC_APP"
 printf 'Built %s\n' "$ORC_APP"

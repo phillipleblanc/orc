@@ -3,6 +3,7 @@ import AppKit
 import OrcKit
 
 @main struct OrcApplication: App {
+    @NSApplicationDelegateAdaptor(OrcApplicationDelegate.self) private var appDelegate
     @StateObject private var model = SessionModel()
     var body: some Scene {
         WindowGroup("Orc") { SessionWindow(model: model) }
@@ -13,6 +14,14 @@ import OrcKit
                 CommandGroup(after: .newItem) { Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r") }
             }
         Settings { ConnectionView().frame(width: 480) }
+    }
+}
+
+@MainActor final class OrcApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let url = Bundle.main.url(forResource: "Orc", withExtension: "icns"),
+              let icon = NSImage(contentsOf: url) else { return }
+        NSApplication.shared.applicationIconImage = icon
     }
 }
 
