@@ -202,12 +202,12 @@ finally:
         connection.chmod(0o600)
         env = dict(os.environ, ORC_CONFIG_DIR=directory)
 
-        def created_in_picker(picker, expected_type):
+        def created_in_picker(picker, expected_type, project='spiceai-project'):
             start = len(picker.transcript)
             picker.send('nnn')
             picker.read_until('[orc] Attaching to ')
             output = picker.transcript[start:]
-            created = re.search(rb"Created ([a-z]{3,5}-[a-z]{3,5}) \((\w+), spiceai-project\).*?orc attach '(term_[^']+)'", output, re.S)
+            created = re.search(rb"Created ([a-z]{3,5}-[a-z]{3,5}) \((\w+), " + re.escape(project.encode()) + rb"\).*?orc attach '(term_[^']+)'", output, re.S)
             assert created, output[-2000:]
             name, agent, handle = [value.decode() for value in created.groups()]
             handles.append(handle)
@@ -217,7 +217,7 @@ finally:
                 picker.read_until('\x1b[?2026l')
             session = next(s for s in json.loads(cli('list', '--json')) if s['handle'] == handle)
             assert session['title'] == name and session['connected']
-            assert Path(session['worktreePath']).name == 'spiceai-project'
+            assert Path(session['worktreePath']).name == project
             return handle
 
         picker = Terminal(env=env); terminals.append(picker)
@@ -235,16 +235,16 @@ finally:
         while next(s for s in json.loads(cli('list', '--json')) if s['handle'] == default_handle).get('agentIdentity') != 'codex':
             assert time.monotonic() < deadline, 'Default Codex agent did not start'
             time.sleep(.1)
-        config.write_text('{"defaultSessionType":"terminal"}')
+        config.write_text(json.dumps(dict(defaultSessionType='terminal', defaultProject=ROOT.name)))
         picker.send('\x1b[39;5u'); picker.read_until('Orc — Attach to a session')
-        new_handle = created_in_picker(picker, 'terminal')
+        new_handle = created_in_picker(picker, 'terminal', project=ROOT.name)
         assert new_handle != default_handle
         picker.send("printf '__PICKER_NEW_%s__\\n' SHELL\r"); picker.read_until('__PICKER_NEW_SHELL__')
         picker.close(); terminals.remove(picker)
         assert all(s['connected'] for s in json.loads(cli('list', '--json')) if s['handle'] in (default_handle, new_handle))
         readonly = Terminal(extra=('--read-only', '--no-reconnect'), env=env); terminals.append(readonly)
         readonly.read_until('Orc — Attach to a session')
-        readonly_handle = created_in_picker(readonly, 'terminal')
+        readonly_handle = created_in_picker(readonly, 'terminal', project=ROOT.name)
         marker = Path(directory) / 'must-not-write'
         readonly.send('touch ' + shlex.quote(str(marker)) + '\r')
         rpc('terminal.send', {'terminal': readonly_handle, 'text': "printf '__NEW_%s__\\n' READONLY", 'enter': True})
@@ -252,6 +252,12 @@ finally:
         assert not marker.exists(), 'Creation must preserve read-only attachment'
         readonly.close(); terminals.remove(readonly)
         before_error = {s['handle'] for s in json.loads(cli('list', '--json'))}
+        config.write_text('{"defaultSessionType":"terminal","defaultProject":"unknown-project"}')
+        missing = Terminal(env=env); terminals.append(missing)
+        missing.read_until('Orc — Attach to a session')
+        missing.send('n'); missing.read_until('not registered')
+        missing.close(None, expected_code=1); terminals.remove(missing)
+        assert {s['handle'] for s in json.loads(cli('list', '--json'))} == before_error, 'Missing configured project must not create a session elsewhere'
         config.write_text('{')
         failed = Terminal(env=env); terminals.append(failed)
         failed.read_until('Orc — Attach to a session')

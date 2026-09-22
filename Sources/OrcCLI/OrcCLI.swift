@@ -120,8 +120,9 @@ import COrcSupport
     @MainActor private static func createSession(using service: SessionService, type requestedType: SessionType? = nil,
         name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil
     ) async throws -> (handle: String, name: String, type: String, project: String) {
-        let type = try requestedType ?? OrcConfiguration.load().defaultSessionType
-        let project = try SessionCreationDefaults.project(requestedProject, in: await service.workspaces())
+        let config = try requestedType == nil || requestedProject == nil ? OrcConfiguration.load() : OrcConfiguration()
+        let type = requestedType ?? config.defaultSessionType
+        let project = try SessionCreationDefaults.project(requestedProject ?? config.defaultProject, in: await service.workspaces())
         let name: String
         if let requestedName { name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines) }
         else {
@@ -145,7 +146,7 @@ import COrcSupport
     orc projects [--json]                    List available projects
     orc new [codex|claude|pi|terminal]        Create a session (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
-            [--project SELECTOR] [--json]    Default project: spiceai-project
+            [--project SELECTOR] [--json]    Override the configured project
     orc new --command 'COMMAND'              Run a custom command instead
     orc attach [NAME-OR-HANDLE]              Choose a session, or attach by name
                  [--read-only]              Watch without sending input or resizing
@@ -158,7 +159,8 @@ import COrcSupport
     Type to filter; / starts a search (including names beginning with n).
     Orc reuses Orca when running, or starts its installed backend headlessly.
     Project selectors accept a name, absolute path, path:/absolute/path, or id:ID.
-    Set defaultSessionType in ~/.config/orc/config.json to change the default agent.
+    Set defaultSessionType and defaultProject in ~/.config/orc/config.json.
+    When unset, defaults are codex and spiceai-project.
     Use terminal for a session without an agent.
     ORCA_USER_DATA_PATH selects an Orca profile; ORC_CONFIG_DIR selects Orc settings and credentials.
     """

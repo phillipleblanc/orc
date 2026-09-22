@@ -1,10 +1,8 @@
 import Foundation
 
 public enum SessionCreationDefaults {
-    public static func project(_ selector: String? = nil, in projects: [Workspace]) throws -> Workspace {
-        let query = selector ?? "spiceai-project"
+    public static func project(_ query: String, in projects: [Workspace]) throws -> Workspace {
         let matches = projects.filter {
-            if selector == nil, $0.hostId != nil, $0.hostId != "local" { return false }
             if query.hasPrefix("id:") { return $0.id == String(query.dropFirst(3)) }
             if query.hasPrefix("path:") { return $0.path == String(query.dropFirst(5)) }
             if query.hasPrefix("/") { return $0.path == query }
@@ -12,8 +10,7 @@ public enum SessionCreationDefaults {
         }
         guard matches.count == 1, let project = matches.first else {
             if matches.isEmpty {
-                let subject = selector == nil ? "Default local project" : "Project"
-                throw OrcError("\(subject) '\(query)' is not registered in Orca. Run `orc projects` or use --project SELECTOR.")
+                throw OrcError("Project '\(query)' is not registered in Orca. Run `orc projects` or use --project SELECTOR.")
             }
             throw OrcError("Multiple projects match '\(query)'. Use --project id:ID or --project path:/absolute/path to choose one.")
         }

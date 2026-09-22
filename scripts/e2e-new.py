@@ -107,6 +107,17 @@ with tempfile.TemporaryDirectory(prefix='orc-new-') as directory:
         marker = '__ORC_CUSTOM_' + uuid.uuid4().hex + '__'
         custom = create('--command', "printf '%s\\n' '" + marker + "'; exec /bin/sh", expected_type='custom')
         wait_for(lambda: marker in json.dumps(rpc('terminal.read', {'terminal': custom['handle']})))
+        for selector in [ROOT.name, str(ROOT), 'path:' + str(ROOT), 'id:' + projects[ROOT.name]['id']]:
+            config.write_text(json.dumps(dict(defaultSessionType='terminal', defaultProject=selector)))
+            create(expected_type='terminal', project=ROOT.name)
+        create('terminal', expected_type='terminal', project=ROOT.name)
+        create('--project', 'spiceai-project', expected_type='terminal')
+        config.write_text('{"defaultSessionType":"terminal","defaultProject":"unknown-project"}')
+        missing_before = {t['handle'] for t in terminals()}
+        cli('new', error='not registered')
+        assert {t['handle'] for t in terminals()} == missing_before
+        create('--project', ROOT.name, expected_type='terminal', project=ROOT.name)
+        config.write_text('{"defaultSessionType":"terminal"}')
         before = {t['handle'] for t in terminals()}
         for args, error in [
             (('new', 'unknown'), 'Unknown session type'),
@@ -120,10 +131,13 @@ with tempfile.TemporaryDirectory(prefix='orc-new-') as directory:
             cli(*args, error=error)
         config.write_text('{"defaultSessionType":"unknown"}')
         cli('new', error='defaultSessionType')
+        for project in ['', '  ', 42]:
+            config.write_text(json.dumps(dict(defaultSessionType='terminal', defaultProject=project)))
+            cli('new', error='defaultProject')
         config.write_text('{')
         cli('new', error='defaultSessionType')
         assert {t['handle'] for t in terminals()} == before, 'Rejected requests created sessions'
-        create('terminal', expected_type='terminal')
+        create('terminal', '--project', 'spiceai-project', expected_type='terminal')
         print('PASS configuration precedence, project selectors, invalid input, and no mutations on errors', flush=True)
     finally:
         for handle in HANDLES:

@@ -13,6 +13,6 @@ ln -sfn "$HOME/Applications/Orc.app/Contents/Resources/orc" "$HOME/.local/bin/or
 ORC_SETTINGS_DIR="${ORC_CONFIG_DIR:-$HOME/.config/orc}"
 mkdir -p -m 700 "$ORC_SETTINGS_DIR"
 if [[ ! -e "$ORC_SETTINGS_DIR/config.json" && ! -L "$ORC_SETTINGS_DIR/config.json" ]]; then
-  (umask 077; set -o noclobber; printf '{\n  "defaultSessionType": "codex"\n}\n' > "$ORC_SETTINGS_DIR/config.json")
+  (umask 077; set -o noclobber; printf '{\n  "defaultSessionType": "codex",\n  "defaultProject": "spiceai-project"\n}\n' > "$ORC_SETTINGS_DIR/config.json")
 fi
 printf 'Installed ~/Applications/Orc.app and ~/.local/bin/orc\n'

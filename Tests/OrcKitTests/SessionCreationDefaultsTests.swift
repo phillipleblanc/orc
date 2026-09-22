@@ -19,22 +19,21 @@ final class SessionCreationDefaultsTests: XCTestCase {
         XCTAssertEqual(try SessionCreationDefaults.name(excluding: reserved), "glide-mouse")
         XCTAssertThrowsError(try SessionCreationDefaults.name(excluding: all))
     }
-    func testDefaultSelectsLocalProjectByNameOrDirectory() throws {
-        let remote = Workspace(id: "remote", path: "/remote/spiceai-project", displayName: nil, hostId: "ssh:other")
+    func testProjectNamesMatchDisplayNameOrDirectory() throws {
         let other = Workspace(id: "other", path: "/code/other", displayName: nil, hostId: "local")
         for local in [
             Workspace(id: "local-project", path: "/code/spiceai-project", displayName: "My project", hostId: "local"),
             Workspace(id: "local-project", path: "/code/renamed", displayName: "spiceai-project", hostId: nil)
         ] {
-            XCTAssertEqual(try SessionCreationDefaults.project(in: [remote, other, local]).id, "local-project")
+            XCTAssertEqual(try SessionCreationDefaults.project("spiceai-project", in: [other, local]).id, "local-project")
         }
     }
-    func testMissingRemoteOnlyAndAmbiguousDefaultsRequireExplicitProject() {
+    func testMissingAndAmbiguousProjectsRequireExplicitSelector() {
         let first = Workspace(id: "first", path: "/one/spiceai-project", displayName: nil, hostId: "local")
         let second = Workspace(id: "second", path: "/two/spiceai-project", displayName: nil, hostId: "local")
         let remote = Workspace(id: "remote", path: "/remote/spiceai-project", displayName: nil, hostId: "ssh:other")
-        for projects in [[], [remote], [first, second]] {
-            XCTAssertThrowsError(try SessionCreationDefaults.project(in: projects)) { error in
+        for projects in [[], [first, remote], [first, second]] {
+            XCTAssertThrowsError(try SessionCreationDefaults.project("spiceai-project", in: projects)) { error in
                 XCTAssertTrue(error.localizedDescription.contains("--project"))
             }
         }

@@ -302,6 +302,7 @@ struct CreateSessionView: View {
             Form {
                 TextField("Name", text: $name).accessibilityIdentifier("session-name")
                 Picker("Project", selection: $workspace) {
+                    Text("Choose a project").tag("")
                     ForEach(model.workspaces) { Text("\($0.name) — \($0.path)").tag("id:" + $0.id) }
                 }
                 Picker("Run", selection: $agent) {
@@ -321,10 +322,14 @@ struct CreateSessionView: View {
         }.padding(24).frame(width: 550)
         .onAppear {
             do {
-                agent = try OrcConfiguration.load().defaultSessionType.rawValue
-                let project = (try? SessionCreationDefaults.project(in: model.workspaces)) ?? model.workspaces.first
-                workspace = project.map { "id:" + $0.id } ?? ""
+                let config = try OrcConfiguration.load()
+                agent = config.defaultSessionType.rawValue
+                let project = try SessionCreationDefaults.project(config.defaultProject, in: model.workspaces)
+                workspace = "id:" + project.id
             } catch { self.error = error.localizedDescription }
+        }
+        .onChange(of: workspace) { _, project in
+            if !project.isEmpty { error = nil }
         }
     }
     func create() async {
