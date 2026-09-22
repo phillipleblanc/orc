@@ -33,6 +33,8 @@ Run **`orc attach`** without a name to open a terminal session picker. Type to f
 
 Press **Ctrl-]** to detach. Closing an inline view or the app also detaches; the agent continues in Orca. Attach reconnects after a transport interruption and checks that the terminal's process incarnation has not changed. Use `--no-reconnect` to exit on interruption. Read-only attachment neither sends input nor claims the terminal size.
 
+The scroll wheel uses your terminal's native scrollback for normal-screen sessions. Attach requests up to 5,000 retained lines from Orca, subject to its snapshot size limit. Full-screen applications retain their own alternate-screen and mouse behavior. Detaching leaves normal-screen output in your terminal's scrollback.
+
 ### One-time terminal connection
 
 Listing and creation work over Orca's authenticated local Unix socket. Interactive streams additionally require an Orca **runtime access link**:
@@ -70,7 +72,7 @@ The Ghostty build creates a private SDK overlay to normalize arm64e TBD entries 
 
 `OrcKit` contains session models, local RPC, NaCl-authenticated WebSocket streaming, and terminal attachment. Both frontends use the same session service. Each libghostty surface launches the app's bundled `orc attach` in a local PTY; libghostty handles rendering, input, selection, scrolling, and clipboard operations. The remote PTY remains in Orca.
 
-The adapter requires Orca's `terminal.binary-stream.v1` capability. It uses internal runtime protocols, which are not a stable third-party SDK. Protocol changes in Orca can require updating this adapter. Ghostty's full embedding API is also pinned rather than assumed stable.
+The adapter requires Orca's `terminal.binary-stream.v1` and `terminal.multiplex.v1` capabilities. It uses internal runtime protocols, which are not a stable third-party SDK. Protocol changes in Orca can require updating this adapter. Ghostty's full embedding API is also pinned rather than assumed stable.
 
 `ORCA_USER_DATA_PATH` selects the local Orca profile, and `ORC_CONFIG_DIR` selects Orc's credentials. The WebSocket endpoint follows that runtime's metadata, while the saved server public key pins its identity. Remote workspaces are accessed through the local Orca runtime; this is not a standalone remote-runtime client.
 

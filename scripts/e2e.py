@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import socket
@@ -46,6 +47,13 @@ def rpc(method, params):
 
 def cli(*args):
     return subprocess.check_output([CLI, *args], text=True, timeout=30)
+
+def alternate_screen(data):
+    active = False
+    for modes, action in re.findall(rb'\x1b\[\?([0-9;]+)([hl])', data):
+        if any(mode in (b'47', b'1047', b'1049') for mode in modes.split(b';')):
+            active = action == b'h'
+    return active
 
 class Terminal:
     def __init__(self, handle=None, cols=100, rows=30, extra=(), env=None):
@@ -90,6 +98,7 @@ class Terminal:
         after = termios.tcgetattr(self.slave)
         assert self.before == after, 'attach did not restore terminal settings'
         assert self.process.returncode == 0, f'attach exit {self.process.returncode}'
+        assert not alternate_screen(self.transcript), 'detach must restore the normal terminal screen'
         os.close(self.master); os.close(self.slave)
 
 class Proxy:
@@ -191,6 +200,7 @@ finally:
     print('PASS picker filtering, split arrow sequence, selection, flags, empty results, resize, Escape/SIGTERM, and tty restoration', flush=True)
     t = Terminal('orc-e2e-' + suffix); terminals.append(t)
     t.read_until('\x1b[?2026l')
+    assert not alternate_screen(t.transcript), 'normal sessions need scrollback; alternate screen turns the wheel into arrow keys'
     t.send("printf '__ORC_%s__\\n' INPUT\r")
     t.read_until('__ORC_INPUT__')
     print('PASS live keyboard input and terminal output', flush=True)
@@ -199,14 +209,18 @@ finally:
     t.read_until('__SIZE_36 112')
     assert next(s for s in json.loads(cli('list', '--json')) if s['handle'] == handle)['title'] == 'orc-e2e-' + suffix, 'Shell output must not erase the session name'
     print('PASS window resize reaches the Orca PTY', flush=True)
+    t.send("python3 -c 'for n in range(1, 181): print(\"__SCROLL_%03d__\" % n)'\r")
+    t.read_until('__SCROLL_180__')
     t.close(); terminals.remove(t)
     assert next(s for s in json.loads(cli('list', '--json')) if s['handle'] == handle)['connected']
     t = Terminal(handle, 112, 36); terminals.append(t)
     t.read_until('\x1b[?2026l')
+    if b'__SCROLL_001__' not in t.transcript: t.read_until('__SCROLL_001__')
     assert b'__ORC_INPUT__' in t.transcript
+    assert not alternate_screen(t.transcript), 'reattaching a normal session must preserve native scrollback'
     t.send("printf '__ORC_%s__\\n' REATTACH\r")
     t.read_until('__ORC_REATTACH__')
-    print('PASS detach preserves session and reattach restores screen', flush=True)
+    print('PASS detach preserves session and reattach restores screen with retained scrollback', flush=True)
     watcher = Terminal(handle, 50, 10, ('--read-only',)); terminals.append(watcher)
     watcher.read_until('\x1b[?2026l')
     assert b'__ORC_REATTACH__' in watcher.transcript
@@ -230,9 +244,12 @@ finally:
         env = dict(os.environ, ORCA_USER_DATA_PATH=directory)
         t = Terminal(handle, env=env); terminals.append(t)
         t.read_until('\x1b[?2026l')
+        reconnect_start = len(t.transcript)
         proxy.drop()
         t.read_until('Reconnecting')
         t.read_until('\x1b[?2026l')
+        if b'__SCROLL_001__' not in t.transcript[reconnect_start:]: t.read_until('__SCROLL_001__')
+        assert not alternate_screen(t.transcript), 'reconnecting a normal session must preserve native scrollback'
         t.send("printf '__ORC_%s__\\n' RECONNECTED\r")
         t.read_until('__ORC_RECONNECTED__')
         t.close(); terminals.remove(t)
@@ -245,6 +262,7 @@ finally:
     t = Terminal(handle); terminals.append(t)
     t.read_until('\x1b[?2026l')
     if b'__TUI_READY__' not in t.transcript: t.read_until('__TUI_READY__')
+    assert alternate_screen(t.transcript), 'remote full-screen applications must retain their alternate screen'
     keystrokes = '\x1b[A🌊한글\x03\x1b[200~pasted text\x1b[201~'
     t.send(keystrokes + '\r')
     t.read_until('__TUI_INPUT_' + keystrokes.encode().hex() + '__')
@@ -253,7 +271,9 @@ finally:
     t = Terminal(handle, 110, 40); terminals.append(t)
     t.read_until('\x1b[?2026l')
     assert b'__TUI_READY__' in t.transcript
+    assert alternate_screen(t.transcript), 'reattaching a full-screen application must restore its alternate screen'
     t.send('\x18'); t.read_until('__TUI_DONE__')
+    assert not alternate_screen(t.transcript), 'exiting the remote TUI must restore scrollback'
     t.close(); terminals.remove(t)
     print('PASS raw TUI, Unicode, arrow/control keys, bracketed paste, alternate-screen restore, and resize', flush=True)
 finally:

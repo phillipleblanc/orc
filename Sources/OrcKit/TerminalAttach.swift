@@ -27,6 +27,8 @@ public struct InputDecoder {
     private var streamID: UInt32?
     private var snapshot = Data()
     private var collectingSnapshot = false
+    private var snapshotUnavailable = false
+    private var requestedScrollback = false
     private var savedTermios = termios()
     private var raw = false
     private var stopping = false
@@ -56,12 +58,15 @@ public struct InputDecoder {
         guard tcsetattr(STDIN_FILENO, TCSANOW, &settings) == 0 else { throw OrcError("Cannot enter raw terminal mode.") }
         raw = true
         defer { restore() }
-        output("\u{1b}[?1049h\u{1b}[2J\u{1b}[H")
+        // The remote application owns screen selection. An outer alternate
+        // screen disables scrollback and makes Ghostty send arrow keys on scroll.
+        output("\u{1b}[?1049l\u{1b}[2J\u{1b}[H")
         note("Attaching to \(terminal.name). Ctrl-] detaches; the session stays running.")
         installInput()
         var attempts = 0
         while !stopping && !ended {
             failure = nil; streamID = nil; ready = false; snapshot.removeAll(); collectingSnapshot = false
+            requestedScrollback = false; snapshotUnavailable = false
             do {
                 let conn = try StreamConnection(pairing: pairing)
                 connection = conn
@@ -71,16 +76,16 @@ public struct InputDecoder {
                 try await conn.connect()
                 let status = try await conn.request("status.get")
                 let capabilities = status["capabilities"] as? [String] ?? (status["runtime"] as? [String: Any])?["capabilities"] as? [String] ?? []
-                guard capabilities.contains("terminal.binary-stream.v1") else { throw OrcError("Orca does not advertise binary terminal streaming.") }
+                guard capabilities.contains("terminal.binary-stream.v1"), capabilities.contains("terminal.multiplex.v1") else {
+                    throw OrcError("Orca does not advertise terminal streaming with scrollback support.")
+                }
                 // Reconnecting to a replaced process must require another explicit attach.
                 let current = try await SessionService().list()
                 guard let live = current.terminals.first(where: { $0.handle == terminal.handle }), live.connected,
                       terminal.incarnationId == nil || terminal.incarnationId == live.incarnationId else {
                     ended = true; throw OrcError("The original terminal exited or was replaced. Run `orc list` to choose a session.")
                 }
-                try await conn.subscribe("terminal.subscribe", ["terminal": terminal.handle,
-                    "client": ["id": clientID, "type": "desktop"], "viewport": viewport,
-                    "capabilities": ["terminalBinaryStream": 1, "desktopViewportClaims": 1, "writeUnavailable": 1]])
+                try await conn.subscribe("terminal.multiplex", [:])
                 snapshotDeadline = Task { [weak self, weak conn] in
                     try? await Task.sleep(nanoseconds: 15_000_000_000)
                     guard !Task.isCancelled, let self, !self.ready else { return }
@@ -160,6 +165,19 @@ public struct InputDecoder {
     private func event(_ value: [String: Any]) {
         let event = value["event"] as? [String: Any] ?? value
         switch event["type"] as? String {
+        case "ready":
+            guard streamID == nil, let connection else { return }
+            streamID = 1
+            Task {
+                do {
+                    try await connection.send(TerminalFrame(opcode: 9, streamID: 0, payload: jsonData([
+                        "streamId": 1, "terminal": terminal.handle,
+                        "client": ["id": clientID, "type": "desktop"], "viewport": viewport,
+                        "capabilities": ["desktopViewportClaims": 1, "writeUnavailable": 1]])))
+                } catch {
+                    if self.connection === connection { disconnected(error); connection.close() }
+                }
+            }
         case "subscribed":
             if let id = event["streamId"] as? NSNumber { streamID = id.uint32Value }
         case "end": ended = true; disconnected(nil)
@@ -178,17 +196,36 @@ public struct InputDecoder {
                 try writeAll(STDOUT_FILENO, Data(text.utf8))
             case 2:
                 collectingSnapshot = true; snapshot.removeAll()
+                snapshotUnavailable = try jsonObject(frame.payload)["unavailable"] != nil
             case 3:
                 guard collectingSnapshot, snapshot.count + frame.payload.count <= 8 * 1024 * 1024 else { throw OrcError("Invalid or oversized terminal snapshot.") }
                 snapshot += frame.payload
             case 4:
                 guard collectingSnapshot else { throw OrcError("Unexpected snapshot end.") }
-                output("\u{1b}[?2026h\u{1b}[0m\u{1b}[2J\u{1b}[H")
+                if snapshotUnavailable {
+                    snapshot.removeAll(); collectingSnapshot = false
+                    note("Orca could not provide retained scrollback; keeping the live screen.")
+                    return
+                }
+                // A fresh snapshot may follow an alternate-screen application
+                // that exited during a disconnect. Its replay selects the screen.
+                output("\u{1b}[?2026h\u{1b}[?1049l\u{1b}[0m\u{1b}[2J\u{1b}[H")
                 try writeAll(STDOUT_FILENO, snapshot)
                 output("\u{1b}[?2026l")
                 snapshot.removeAll(); collectingSnapshot = false; ready = true
                 snapshotDeadline?.cancel(); snapshotDeadline = nil
                 Task { await resize() }
+                if !requestedScrollback, let connection, let streamID {
+                    requestedScrollback = true
+                    // Desktop subscriptions initially contain only the viewport.
+                    // An untagged request replaces it with history and lets Orca
+                    // discard buffered live output already covered by the snapshot.
+                    Task {
+                        do { try await connection.send(TerminalFrame(opcode: 11, streamID: streamID,
+                            payload: jsonData(["scrollbackRows": 5000]))) }
+                        catch { if self.connection === connection { disconnected(error); connection.close() } }
+                    }
+                }
             case 5, 12: break
             case 6: throw OrcError("Orca reported a terminal stream error.")
             case 17: note("Orca refused terminal input.")
@@ -208,7 +245,7 @@ public struct InputDecoder {
         inputSource?.cancel(); inputSource = nil
         signalSources.forEach { $0.cancel() }; signalSources.removeAll()
         connection?.close(); connection = nil
-        output("\u{1b}[?2026l\u{1b}[<u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l")
+        output("\u{1b}[?2026l\u{1b}[<u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l\u{1b}[r\u{1b}[?6l\u{1b}[999;1H\r\n")
         if raw { _ = tcsetattr(STDIN_FILENO, TCSANOW, &savedTermios); raw = false }
     }
 }
