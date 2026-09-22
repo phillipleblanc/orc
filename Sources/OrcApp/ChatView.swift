@@ -133,7 +133,7 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Circle().fill(model.connected ? .green : .orange).frame(width: 7, height: 7)
+                AgentActivityIndicator(activity: model.connected ? model.target?.activity ?? .unknown : .offline)
                 Text(status).font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Toggle("Follow latest", isOn: $followLatest).toggleStyle(.checkbox).font(.caption)
@@ -204,7 +204,7 @@ struct ChatView: View {
     private var status: String {
         guard model.connected else { return model.error == nil ? "Connecting to Orca" : "Disconnected" }
         guard let target = model.target else { return "Waiting for session metadata" }
-        return (target.agent?.capitalized ?? "Agent") + " · " + (target.state?.capitalized ?? "Waiting for agent")
+        return (target.agent?.capitalized ?? "Agent") + " · " + target.activity.label
     }
     private var emptyTitle: String {
         if model.target?.supported == false { return "Chat is unavailable for this session" }

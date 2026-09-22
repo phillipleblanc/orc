@@ -29,6 +29,7 @@ import OrcKit
     @Published var sessions: [Session] = []
     @Published var workspaces: [Workspace] = []
     @Published var chatTargets: [String: ChatTarget] = [:]
+    @Published private(set) var activities: [String: AgentActivity] = [:]
     @Published var selected: String?
     @Published var error: String?
     @Published var showCreate = false
@@ -36,6 +37,9 @@ import OrcKit
     @Published var connected = Pairing.isConfigured
     @Published var loading = false
     let service = SessionService()
+    func activity(for session: Session) -> AgentActivity {
+        session.connected ? activities[session.handle] ?? .unknown : .offline
+    }
     func refresh() async {
         guard !loading else { return }; loading = true; defer { loading = false }
         connected = Pairing.isConfigured
@@ -44,12 +48,14 @@ import OrcKit
             async let spaces = service.workspaces()
             async let tabs = try? LocalRPC.call("session.tabs.listAll")
             let result = try await listing
+            async let activity = service.activities(for: result.terminals)
             workspaces = try await spaces
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
+            activities = await activity
             error = result.truncated ? "Orca returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription; activities = [:] }
     }
 }
 
@@ -113,7 +119,7 @@ struct SessionWindow: View {
         .task {
             while !Task.isCancelled {
                 await model.refresh()
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
@@ -129,11 +135,14 @@ struct SessionWindow: View {
                 ForEach(filtered) { session in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
-                            Circle().fill(session.connected ? Color.green : Color.secondary).frame(width: 6, height: 6)
+                            AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
                             Text(session.name).font(.headline).lineLimit(1)
                         }
                         Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 5).tag(session.id)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityValue(model.activity(for: session).label)
+                    .help(model.activity(for: session).label)
                     .contextMenu {
                         Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
                         Divider()
@@ -196,8 +205,10 @@ struct SessionWindow: View {
                     .buttonStyle(.borderless).accessibilityLabel("Back to Session List")
                 Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
                 Text(session.name).font(.title2.bold()).textSelection(.enabled)
-                Label(session.connected ? "Running in Orca" : "Offline", systemImage: session.connected ? "circle.fill" : "circle")
-                    .font(.callout).foregroundStyle(session.connected ? .green : .secondary)
+                HStack(spacing: 7) {
+                    AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
+                    Text(model.activity(for: session).label)
+                }.font(.callout)
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Workspace").font(.caption).foregroundStyle(.secondary)

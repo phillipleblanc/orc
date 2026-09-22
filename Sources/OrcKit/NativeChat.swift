@@ -45,6 +45,10 @@ public struct ChatTarget: Equatable {
     public var requiresTerminal: Bool { state == "blocked" || state == "waiting" || interactivePrompt?.isEmpty == false }
     public var canSend: Bool { supported && hasLiveAgent && identity != nil && !requiresTerminal }
     public var isWorking: Bool { state == "working" }
+    public var activity: AgentActivity {
+        guard hasLiveAgent else { return .unknown }
+        return requiresTerminal ? .needsAttention : AgentActivity(isRunningAgent: true, state: state)
+    }
     public var params: [String: Any] {
         let decoder = agent == "pi" ? "omp" : agent == "openclaude" ? "claude" : agent ?? ""
         var result: [String: Any] = ["agent": decoder, "sessionId": sessionID ?? "", "limit": 60]
