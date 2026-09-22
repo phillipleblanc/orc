@@ -12,6 +12,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import signal
 import socket
 import struct
@@ -78,10 +79,16 @@ class Terminal:
             if self.process.poll() is not None: break
         raise AssertionError(f'missing {text!r}; exit={self.process.poll()}; output={data[-3000:]!r}')
     def send(self, text): os.write(self.master, text.encode())
+    def attached(self, name):
+        marker = ('[orc] Attaching to ' + name + '.').encode()
+        data = self.read_until(marker.decode())
+        # Picker cleanup also emits a synchronized-output terminator. Wait for
+        # the snapshot after the new attachment's banner before sending input.
+        if b'\x1b[?2026l' not in data.split(marker, 1)[1]: self.read_until('\x1b[?2026l')
     def resize(self, cols, rows):
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
         os.kill(self.process.pid, signal.SIGWINCH)
-    def close(self, graceful=True):
+    def close(self, graceful=True, expected_code=0):
         if self.process.poll() is None:
             if graceful is True: self.send('\x1d')
             elif graceful is False: self.process.send_signal(signal.SIGTERM)
@@ -97,7 +104,7 @@ class Terminal:
                 raise AssertionError('attach did not exit after detach')
         after = termios.tcgetattr(self.slave)
         assert self.before == after, 'attach did not restore terminal settings'
-        assert self.process.returncode == 0, f'attach exit {self.process.returncode}'
+        assert self.process.returncode == expected_code, f'attach exit {self.process.returncode}'
         assert not alternate_screen(self.transcript), 'detach must restore the normal terminal screen'
         os.close(self.master); os.close(self.slave)
 
@@ -253,9 +260,20 @@ finally:
         t.send("printf '__ORC_%s__\\n' RECONNECTED\r")
         t.read_until('__ORC_RECONNECTED__')
         t.close(); terminals.remove(t)
+        t = Terminal(handle, extra=('--read-only', '--no-reconnect'), env=env); terminals.append(t)
+        t.read_until('\x1b[?2026l')
+        t.send('\x1b[39;5u'); t.read_until('Orc — Attach to a session')
+        t.send('orc-e2e-' + suffix + '-second\r'); t.attached('orc-e2e-' + suffix + '-second')
+        readonly_marker = str(Path(directory) / 'must-not-exist')
+        t.send('touch ' + shlex.quote(readonly_marker) + '\r')
+        rpc('terminal.send', {'terminal': second, 'text': "printf '__SWITCH_%s__\\n' READONLY", 'enter': True})
+        t.read_until('__SWITCH_READONLY__')
+        assert not Path(readonly_marker).exists(), 'Switching must preserve --read-only'
+        proxy.drop(); t.read_until('orc: ')
+        t.close(None, expected_code=1); terminals.remove(t)
     proxy.close()
     print('PASS automatic reconnect after real socket loss', flush=True)
-    import shlex
+    print('PASS switching preserves read-only and no-reconnect flags', flush=True)
     handle = json.loads(cli('new', 'orc-tui-' + suffix, '--worktree', 'path:' + str(ROOT),
                             '--command', 'python3 -u ' + shlex.quote(str(ROOT / 'scripts/tui-fixture.py')), '--json'))['handle']
     handles.append(handle)
@@ -263,15 +281,41 @@ finally:
     t.read_until('\x1b[?2026l')
     if b'__TUI_READY__' not in t.transcript: t.read_until('__TUI_READY__')
     assert alternate_screen(t.transcript), 'remote full-screen applications must retain their alternate screen'
-    keystrokes = '\x1b[A🌊한글\x03\x1b[200~pasted text\x1b[201~'
+    keystrokes = "'\x1b[A🌊한글\x03\x1b[200~pasted '\x1b[39;5u\x1d\x1b[201~"
     t.send(keystrokes + '\r')
     t.read_until('__TUI_INPUT_' + keystrokes.encode().hex() + '__')
     t.resize(110, 40); t.read_until('__TUI_SIZE_40_110__')
     t.close(); terminals.remove(t)
+    embedded = Terminal(handle, extra=('--no-session-switch',)); terminals.append(embedded)
+    embedded.read_until('\x1b[?2026l')
+    embedded.send('\x1b[39;5u\r'); embedded.read_until('__TUI_INPUT_1b5b33393b3575__')
+    embedded.send('\x1b[93;5u'); embedded.close(None); terminals.remove(embedded)
+    print('PASS embedded views keep their session and extended Ctrl-] detaches', flush=True)
     t = Terminal(handle, 110, 40); terminals.append(t)
     t.read_until('\x1b[?2026l')
     assert b'__TUI_READY__' in t.transcript
     assert alternate_screen(t.transcript), 'reattaching a full-screen application must restore its alternate screen'
+    late_name = 'orc-switch-' + suffix
+    late = json.loads(cli('new', late_name, '--worktree', 'path:' + str(ROOT),
+                          '--command', "printf '__SWITCH_%s__\\n' READY; exec /bin/sh", '--json'))['handle']
+    handles.append(late)
+    t.send('\x1b'); time.sleep(.02); t.send('[39;5u')
+    picker_screen = t.read_until('Orc — Attach to a session')
+    assert late_name.encode() in picker_screen, 'Returning to the picker must refresh sessions'
+    assert f'{len(handles)}/{len(handles)} · {handle}'.encode() in picker_screen, 'The previous session must stay selected'
+    t.send(late_name + '\r'); t.attached(late_name)
+    if b'__SWITCH_READY__' not in t.transcript: t.read_until('__SWITCH_READY__')
+    t.send("printf '__SWITCH_%s__\\n' SHELL\r"); t.read_until('__SWITCH_SHELL__')
+    t.send('\x1b[27;5;39~'); t.read_until('Orc — Attach to a session')
+    t.send('orc-tui-' + suffix + '\r'); t.attached('orc-tui-' + suffix)
+    t.send('\r'); t.read_until('__TUI_INPUT___')
+    t.send('\x1b'); time.sleep(.2); t.send('q\r'); t.read_until('__TUI_INPUT_1b71__')
+    t.send('\x1b[39;5u'); t.read_until('Orc — Attach to a session')
+    t.send('\x1b'); t.close(None); terminals.remove(t)
+    assert all(s['connected'] for s in json.loads(cli('list', '--json')) if s['handle'] in handles)
+    print('PASS repeated switching, refreshed picker, selected session, shortcut isolation, bare Escape, and cancel cleanup', flush=True)
+    t = Terminal(handle, 110, 40); terminals.append(t)
+    t.read_until('\x1b[?2026l')
     t.send('\x18'); t.read_until('__TUI_DONE__')
     assert not alternate_screen(t.transcript), 'exiting the remote TUI must restore scrollback'
     t.close(); terminals.remove(t)

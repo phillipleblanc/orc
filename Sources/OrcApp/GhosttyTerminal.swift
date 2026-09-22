@@ -100,7 +100,8 @@ struct GhosttyTerminal: NSViewRepresentable {
         config.font_size = 13
         config.wait_after_command = true
         let cli = Bundle.main.resourceURL?.appendingPathComponent("orc").path ?? "orc"
-        let command = shellQuote(cli) + " attach " + shellQuote(session.handle)
+        // The native app owns navigation; its terminal stays bound to this session.
+        let command = shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch"
         command.withCString { commandPointer in
             config.command = commandPointer
             FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in

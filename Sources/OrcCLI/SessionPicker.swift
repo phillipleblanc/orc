@@ -20,11 +20,12 @@ import OrcKit
     private var continuation: CheckedContinuation<Session?, Error>?
     private var finished = false
 
-    init(sessions: [Session]) {
+    init(sessions: [Session], selectedHandle: String? = nil) {
         self.sessions = sessions.filter(\.connected).sorted {
             let order = $0.name.localizedStandardCompare($1.name)
             return order == .orderedSame ? $0.handle < $1.handle : order == .orderedAscending
         }
+        selected = self.sessions.firstIndex(where: { $0.handle == selectedHandle }) ?? 0
     }
     private var matches: [Session] {
         sessions.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)

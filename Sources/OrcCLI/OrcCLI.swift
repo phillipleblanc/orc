@@ -57,16 +57,23 @@ import COrcSupport
             else { print("Created \(options[0])\norc attach \(shellQuote(handle))") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
+            let sessionSwitching = !flag("--no-session-switch")
             guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME-OR-HANDLE] [--read-only] [--no-reconnect]") }
-            let listing = try await service.list()
-            let terminal: Session
-            if let selector = options.first { terminal = try resolveSession(selector, in: listing.terminals) }
-            else {
-                guard let picked = try await SessionPicker(sessions: listing.terminals).run() else { return }
-                terminal = picked
+            var selector = options.first
+            var selectedHandle: String?
+            while true {
+                let listing = try await service.list()
+                let terminal: Session
+                if let selector { terminal = try resolveSession(selector, in: listing.terminals) }
+                else {
+                    guard let picked = try await SessionPicker(sessions: listing.terminals, selectedHandle: selectedHandle).run() else { return }
+                    terminal = picked
+                }
+                guard terminal.connected else { throw OrcError("This session is offline.") }
+                let result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
+                guard result == .picker else { return }
+                selector = nil; selectedHandle = terminal.handle
             }
-            guard terminal.connected else { throw OrcError("This session is offline.") }
-            try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect).run()
         case "connect":
             guard options.isEmpty, !json else { throw OrcError("Usage: orc connect < pairing-link-file (or paste the link at the prompt)") }
             guard let line = pairingLink else { throw OrcError("No pairing link supplied.") }
@@ -103,7 +110,7 @@ import COrcSupport
     orc connect                             Save a runtime access link from stdin
     orc status [--json]                      Connect to or start the Orca runtime
 
-    Press Ctrl-] to detach. The Orca session keeps running.
+    Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
     Orc reuses Orca when running, or starts its installed backend headlessly.
     Workspace selectors include path:/absolute/path and id:<workspace-id>.
     The current directory is used when --worktree is omitted.

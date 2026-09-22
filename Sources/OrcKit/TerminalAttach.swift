@@ -22,6 +22,7 @@ public struct InputDecoder {
     private let terminal: Session
     private let readOnly: Bool
     private let reconnect: Bool
+    private let sessionSwitching: Bool
     private let clientID = "orc-" + UUID().uuidString
     private var connection: StreamConnection?
     private var streamID: UInt32?
@@ -35,7 +36,11 @@ public struct InputDecoder {
     private var ended = false
     private var inputSource: DispatchSourceRead?
     private var signalSources: [DispatchSourceSignal] = []
+    private var previousSignals: [(Int32, sig_t?)] = []
     private var decoder = InputDecoder()
+    private var shortcuts: AttachInput
+    private var inputDeadline: Task<Void, Never>?
+    private var exitReason: AttachExit = .detached
     private var inputQueue: [String] = []
     private var inputBytes = 0
     private var drainingInput = false
@@ -46,10 +51,11 @@ public struct InputDecoder {
     private var snapshotDeadline: Task<Void, Never>?
     private var retryDelay: Task<Void, Never>?
 
-    public init(terminal: Session, readOnly: Bool = false, reconnect: Bool = true) {
+    public init(terminal: Session, readOnly: Bool = false, reconnect: Bool = true, sessionSwitching: Bool = true) {
         self.terminal = terminal; self.readOnly = readOnly; self.reconnect = reconnect
+        self.sessionSwitching = sessionSwitching; self.shortcuts = AttachInput(sessionSwitching: sessionSwitching)
     }
-    public func run() async throws {
+    public func run() async throws -> AttachExit {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { throw OrcError("Attach needs an interactive terminal. Run it in Ghostty, or use `orc list --json`.") }
         let pairing = try Pairing.load()
         guard tcgetattr(STDIN_FILENO, &savedTermios) == 0 else { throw OrcError("Cannot read terminal settings.") }
@@ -61,7 +67,7 @@ public struct InputDecoder {
         // The remote application owns screen selection. An outer alternate
         // screen disables scrollback and makes Ghostty send arrow keys on scroll.
         output("\u{1b}[?1049l\u{1b}[2J\u{1b}[H")
-        note("Attaching to \(terminal.name). Ctrl-] detaches; the session stays running.")
+        note("Attaching to \(terminal.name). " + (sessionSwitching ? "Ctrl-' switches sessions; " : "") + "Ctrl-] detaches. Sessions stay running.")
         installInput()
         var attempts = 0
         while !stopping && !ended {
@@ -108,6 +114,7 @@ public struct InputDecoder {
             await retryDelay?.value; retryDelay = nil
         }
         if ended { note("Session ended.") }
+        return exitReason
     }
     private var viewport: [String: Int] {
         var size = winsize(); _ = ioctl(STDOUT_FILENO, TIOCGWINSZ, &size)
@@ -116,23 +123,26 @@ public struct InputDecoder {
     private func installInput() {
         let source = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
         source.setEventHandler { [weak self] in
-            guard let self else { return }
+            guard let self, !self.stopping else { return }
             var bytes = [UInt8](repeating: 0, count: 4096)
             let count = Darwin.read(STDIN_FILENO, &bytes, bytes.count)
             guard count > 0 else { self.stop(); return }
-            let data = Data(bytes.prefix(count))
-            if data.contains(0x1d) { self.stop(); return }
-            guard !self.readOnly, self.ready else { return }
-            let text = self.decoder.append(data)
-            if !text.isEmpty {
-                guard self.inputBytes + text.utf8.count <= 256 * 1024 else { self.note("Input buffer full; detached to avoid losing input silently."); self.stop(); return }
-                self.inputQueue.append(text); self.inputBytes += text.utf8.count
-                Task { await self.drainInput() }
+            self.inputDeadline?.cancel()
+            let input = self.shortcuts.append(Data(bytes.prefix(count)))
+            if let exit = input.exit { self.stop(exit); return }
+            self.forwardInput(input.bytes)
+            if self.shortcuts.hasPending {
+                // A lone Escape must still reach applications that use it to cancel.
+                self.inputDeadline = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard !Task.isCancelled, let self, !self.stopping else { return }
+                    self.forwardInput(self.shortcuts.flushPending())
+                }
             }
         }
         source.resume(); inputSource = source
         for number in [SIGWINCH, SIGTERM, SIGHUP, SIGINT, SIGQUIT] {
-            signal(number, SIG_IGN)
+            previousSignals.append((number, signal(number, SIG_IGN)))
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
             source.setEventHandler { [weak self] in
                 guard let self else { return }
@@ -141,6 +151,14 @@ public struct InputDecoder {
             }
             source.resume(); signalSources.append(source)
         }
+    }
+    private func forwardInput(_ data: Data) {
+        guard !readOnly, ready, !stopping else { return }
+        let text = decoder.append(data)
+        guard !text.isEmpty else { return }
+        guard inputBytes + text.utf8.count <= 256 * 1024 else { note("Input buffer full; detached to avoid losing input silently."); stop(); return }
+        inputQueue.append(text); inputBytes += text.utf8.count
+        Task { await self.drainInput() }
     }
     private func drainInput() async {
         guard !drainingInput else { return }; drainingInput = true
@@ -153,7 +171,10 @@ public struct InputDecoder {
                     "viewport": viewport, "claimViewport": true])
                 let send = result["send"] as? [String: Any] ?? result
                 if send["accepted"] as? Bool == false { note("Input not accepted: another client may control this session. Close the phone’s live terminal, then retry.") }
-            } catch { note("Input delivery uncertain; it was not retried. \(error.localizedDescription)"); disconnected(error); return }
+            } catch {
+                guard !stopping else { return }
+                note("Input delivery uncertain; it was not retried. \(error.localizedDescription)"); disconnected(error); return
+            }
         }
     }
     private func resize() async {
@@ -163,6 +184,7 @@ public struct InputDecoder {
         catch { disconnected(error) }
     }
     private func event(_ value: [String: Any]) {
+        guard !stopping else { return }
         let event = value["event"] as? [String: Any] ?? value
         switch event["type"] as? String {
         case "ready":
@@ -185,6 +207,7 @@ public struct InputDecoder {
         }
     }
     private func receive(_ data: Data) {
+        guard !stopping else { return }
         do {
             let frame = try TerminalFrame(data: data)
             if let streamID, frame.streamID != streamID { throw OrcError("Mismatched terminal stream.") }
@@ -237,13 +260,20 @@ public struct InputDecoder {
         failure = error; ready = false
         disconnect?.resume(); disconnect = nil
     }
-    private func stop() { stopping = true; retryDelay?.cancel(); connection?.close(); disconnected(nil) }
+    private func stop(_ reason: AttachExit = .detached) {
+        guard !stopping else { return }
+        exitReason = reason; stopping = true
+        inputQueue.removeAll(); inputBytes = 0
+        inputDeadline?.cancel(); retryDelay?.cancel(); connection?.close(); disconnected(nil)
+    }
     private func output(_ text: String) { try? writeAll(STDOUT_FILENO, Data(text.utf8)) }
     private func note(_ text: String) { try? writeAll(STDERR_FILENO, Data(("\r\n[orc] " + text + "\r\n").utf8)) }
     private func restore() {
-        snapshotDeadline?.cancel(); retryDelay?.cancel()
+        stopping = true
+        inputDeadline?.cancel(); snapshotDeadline?.cancel(); retryDelay?.cancel()
         inputSource?.cancel(); inputSource = nil
         signalSources.forEach { $0.cancel() }; signalSources.removeAll()
+        previousSignals.forEach { _ = signal($0.0, $0.1) }; previousSignals.removeAll()
         connection?.close(); connection = nil
         output("\u{1b}[?2026l\u{1b}[<u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l\u{1b}[r\u{1b}[?6l\u{1b}[999;1H\r\n")
         if raw { _ = tcsetattr(STDIN_FILENO, TCSANOW, &savedTermios); raw = false }
