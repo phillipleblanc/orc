@@ -6,11 +6,13 @@ import OrcKit
     @NSApplicationDelegateAdaptor(OrcApplicationDelegate.self) private var appDelegate
     @StateObject private var model = SessionModel()
     var body: some Scene {
-        WindowGroup("Orc") { SessionWindow(model: model) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model) }
             .defaultSize(width: 380, height: 560)
             .windowResizability(.contentMinSize)
             .commands {
-                CommandGroup(replacing: .newItem) { Button("New Session…") { model.showCreate = true }.keyboardShortcut("n") }
+                CommandGroup(replacing: .newItem) {
+                    Button("New Session…") { model.revealWindow?(); model.showCreate = true }.keyboardShortcut("n")
+                }
                 CommandGroup(after: .newItem) { Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r") }
             }
         Settings { ConnectionView().frame(width: 480) }
@@ -18,7 +20,13 @@ import OrcKit
 }
 
 @MainActor final class OrcApplicationDelegate: NSObject, NSApplicationDelegate {
+    override init() {
+        super.init()
+        _ = IdleNotifications.shared
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        IdleNotifications.shared.start()
         guard let url = Bundle.main.url(forResource: "Orc", withExtension: "icns"),
               let icon = NSImage(contentsOf: url) else { return }
         NSApplication.shared.applicationIconImage = icon
@@ -36,7 +44,41 @@ import OrcKit
     @Published var showConnection = false
     @Published var connected = Pairing.isConfigured
     @Published var loading = false
+    @Published private(set) var notificationNavigation = UUID()
     let service = SessionService()
+    var revealWindow: (() -> Void)?
+    private var idleTracker = AgentIdleTracker()
+    private var monitor: Task<Void, Never>?
+
+    init() {
+        IdleNotifications.shared.onSelect = { [weak self] target in
+            Task { await self?.openNotification(target) }
+        }
+        monitor = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refresh()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+    deinit { monitor?.cancel() }
+
+    private func openNotification(_ target: IdleNotifications.Target) async {
+        notificationNavigation = UUID()
+        let navigation = notificationNavigation
+        revealWindow?()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        while loading { try? await Task.sleep(for: .milliseconds(50)) }
+        await refresh()
+        guard navigation == notificationNavigation else { return }
+        guard let session = sessions.first(where: { $0.handle == target.handle }),
+              target.incarnation == nil || session.incarnationId == target.incarnation else {
+            error = "The session from that notification is no longer available."
+            return
+        }
+        selected = session.handle
+        revealWindow?()
+    }
     func activity(for session: Session) -> AgentActivity {
         session.connected ? activities[session.handle] ?? .unknown : .offline
     }
@@ -53,9 +95,12 @@ import OrcKit
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
             activities = await activity
+            for session in idleTracker.update(sessions: sessions, activities: activities) {
+                Task { await IdleNotifications.shared.postIdle(session) }
+            }
             error = result.truncated ? "Orca returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
-        } catch { self.error = error.localizedDescription; activities = [:] }
+        } catch { self.error = error.localizedDescription; activities = [:]; idleTracker.reset() }
     }
 }
 
@@ -74,6 +119,8 @@ enum SessionWindowMode: Equatable {
 
 struct SessionWindow: View {
     @ObservedObject var model: SessionModel
+    @ObservedObject private var notifications = IdleNotifications.shared
+    @Environment(\.openWindow) private var openWindow
     @State private var search = ""
     @State private var copied = false
     @State private var attachedSession: String?
@@ -97,7 +144,7 @@ struct SessionWindow: View {
                     detail(selected).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            if let error = model.error {
+            if let error = model.error ?? notifications.warning {
                 Divider()
                 HStack { Image(systemName: "exclamationmark.triangle"); Text(error).textSelection(.enabled); Spacer() }
                     .font(.callout).foregroundStyle(.orange).padding(12)
@@ -121,12 +168,8 @@ struct SessionWindow: View {
             attachedSession = nil; chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
             if wasAttached, let session = selected, session.connected { attach(session) }
         }
-        .task {
-            while !Task.isCancelled {
-                await model.refresh()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+        .onAppear { model.revealWindow = { openWindow(id: "sessions") } }
+        .onChange(of: model.notificationNavigation) { _, _ in search = "" }
     }
     private var sidebar: some View {
         VStack(spacing: 0) {
