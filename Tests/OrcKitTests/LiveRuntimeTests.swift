@@ -127,7 +127,9 @@ final class LiveRuntimeTests: XCTestCase {
         bytes += try message("pi-user", nil, "user", [["type": "text", "text": "Read 한글.txt"]])
         bytes += try message("pi-call", "pi-user", "assistant", [
             ["type": "thinking", "thinking": "Inspect the file"],
-            ["type": "toolCall", "id": "call-1", "name": "read", "arguments": ["path": "한글.txt"]]])
+            ["type": "toolCall", "id": "call-1", "name": "read", "arguments": ["path": "한글.txt"]],
+            ["type": "toolCall", "id": "call-2", "name": "edit", "arguments": [
+                "path": "한글.txt", "oldText": "before\n", "newText": "after\n"]]])
         bytes += try message("pi-result", "pi-call", "toolResult", [["type": "text", "text": "File unavailable"]], isError: true)
         bytes += try record(["type": "compaction", "id": "bookkeeping", "summary": "Hidden bookkeeping"])
         try bytes.write(to: file)
@@ -140,8 +142,10 @@ final class LiveRuntimeTests: XCTestCase {
         XCTAssertNil(page["error"])
         let messages = (page["messages"] as? [[String: Any]] ?? []).compactMap(ChatMessage.init)
         XCTAssertEqual(messages.map(\.id), ["pi-call", "pi-result"])
-        XCTAssertEqual(messages.first?.blocks.map(\.type), ["text", "tool-call"])
+        XCTAssertEqual(messages.first?.blocks.map(\.type), ["text", "tool-call", "tool-call"])
         XCTAssertTrue(messages.first?.blocks.last?.body.contains("한글.txt") == true)
+        XCTAssertEqual(messages.first?.blocks.last?.diff?.edits.first?.before, "before\n")
+        XCTAssertEqual(messages.first?.blocks.last?.diff?.edits.first?.after, "after\n")
         XCTAssertEqual(messages.last?.role, "tool")
         XCTAssertEqual(messages.last?.blocks.first?.isError, true)
         XCTAssertEqual(page["hasMore"] as? Bool, true)
@@ -161,10 +165,13 @@ final class LiveRuntimeTests: XCTestCase {
             if event["type"] as? String == "snapshot", !gotInitial {
                 XCTAssertNil(event["error"])
                 XCTAssertEqual(messages.map(\.id), ["pi-call", "pi-result"])
+                XCTAssertEqual(messages.first?.blocks.last?.diff?.edits.first?.path, "한글.txt")
                 gotInitial = true; initial.fulfill()
             }
             if event["type"] as? String == "appended", messages.contains(where: { $0.id == "pi-reply" }), !gotAppend {
-                XCTAssertEqual(messages.last?.blocks.last?.body, "Pi live reply")
+                XCTAssertEqual(messages.last?.blocks.first?.body, "Pi live reply")
+                XCTAssertEqual(messages.last?.blocks.last?.diff?.edits.first?.before, "after\n")
+                XCTAssertEqual(messages.last?.blocks.last?.diff?.edits.first?.after, "streamed\n")
                 gotAppend = true; appended.fulfill()
             }
         }
@@ -174,7 +181,10 @@ final class LiveRuntimeTests: XCTestCase {
         guard gotInitial else { return }
         let output = try FileHandle(forWritingTo: file)
         try output.seekToEnd()
-        try output.write(contentsOf: message("pi-reply", "pi-result", "assistant", [["type": "text", "text": "Pi live reply"]]))
+        try output.write(contentsOf: message("pi-reply", "pi-result", "assistant", [
+            ["type": "text", "text": "Pi live reply"],
+            ["type": "toolCall", "id": "call-3", "name": "edit", "arguments": [
+                "path": "한글.txt", "oldText": "after\n", "newText": "streamed\n"]]]))
         try output.close()
         await fulfillment(of: [appended], timeout: 15)
         _ = try await connection.request("nativeChat.unsubscribe", ["subscriptionId": "pi-chat"])

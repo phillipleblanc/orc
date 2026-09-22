@@ -27,6 +27,8 @@ Session indicators show Orca's reported agent activity: green means idle, a yell
 
 Choose **Open Chat** for a supported agent's conversation, without starting an embedded terminal. Chat displays messages and expandable tool activity, loads earlier history, and sends with **⌘Return**. **Stop** interrupts the current response; **Attach** switches to its terminal. Closing chat leaves the Orca session running.
 
+Edit tool calls display syntax-highlighted diffs with **Unified** and **Split** layouts, powered by [@pierre/diffs](https://diffs.com/docs). Pi/Claude replacement edits, multi-edits, unified patches, and Codex `apply_patch` calls use the changes recorded in the transcript. Replacement snippets and Codex hunks are labelled as excerpts with relative line numbers. **Tool input** keeps the original arguments accessible; unsupported or incomplete edits use that text view. Previews describe the requested changes, while tool results report whether they succeeded. The renderer is bundled locally and works offline.
+
 Chat uses Orca's `nativeChat` transcript APIs and live agent status. Pi, Claude/OpenClaude, Codex, Grok, and OMP are supported when Orca publishes a provider session ID. The agent's Orca status hooks must work, and startup prompts may need to be completed through Attach before a conversation becomes available. Pi, Grok, and OMP require a locally readable transcript; plain shells and SSH Pi sessions use Attach. Use Attach for permission prompts, interactive questions, slash commands, and image input. A disconnected chat retains its history and draft; click **Reconnect Chat** to resume. Input is never automatically retried after uncertain delivery.
 
 Pi transcripts use Orca's OMP decoder with the exact absolute `.jsonl` path reported by Pi's status hook. Orc keeps the Pi session identity and input target; only the transcript decoder selection is OMP. Chat waits when that path is missing. The decoder displays messages in file order, so a branched or rewound Pi conversation can include abandoned turns; use Attach for Pi's active-branch view.
@@ -49,7 +51,7 @@ The app and CLI share `~/.config/orc/connection.json`, written with owner-only p
 
 ## Build and install
 
-Requires Apple Silicon, macOS 14+, Python 3.12+, and Xcode with its command-line tools and Metal toolchain. Install the Metal component if necessary:
+Requires Apple Silicon, macOS 14+, Python 3.12+, Node.js 20+ with npm, and Xcode with its command-line tools and Metal toolchain. Install the Metal component if necessary:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain
@@ -58,7 +60,7 @@ bash scripts/install.sh
 open ~/Applications/Orc.app
 ```
 
-Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`. It builds the full embedded libghostty C API, statically links both libraries, bundles Ghostty resources, and ad-hoc signs `dist/Orc.app`. Installation copies the app to `~/Applications/Orc.app` and links `~/.local/bin/orc`. Add `~/.local/bin` to your shell's PATH if needed. No Homebrew library is required at runtime.
+Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`, and installs the locked diff-renderer dependencies in `WebDiff`. It builds the full embedded libghostty C API, statically links both libraries, bundles Ghostty and diff resources, and ad-hoc signs `dist/Orc.app`. Installation copies the app to `~/Applications/Orc.app` and links `~/.local/bin/orc`. Add `~/.local/bin` to your shell's PATH if needed. Node.js and Homebrew libraries are not required at runtime.
 
 For CLI-only development:
 
@@ -91,6 +93,8 @@ ORC_CLI_ONLY=1 ORC_LIVE_TESTS=1 ORC_TEST_WORKTREE="$PWD" swift test
 
 The PTY suite creates and cleans up only its own sessions. It tests actual stream encryption, input, viewport changes, detach/reattach, concurrent read-only viewing, signal cleanup, and transport reconnection. The opt-in live Swift tests exercise mobile input ownership, desktop viewing, transcript streaming and pagination (including Pi records through Orca's OMP decoder), and guarded chat input against the same real runtime; they do not substitute for testing a physical phone.
 
+Run `npm --prefix WebDiff ci` and `npm --prefix WebDiff test` to check edit/patch parsing against the actual diff library. `npm --prefix WebDiff run build` bundles the renderer for native app development.
+
 An optional live-agent test sends a small prompt and tests interruption against an authenticated disposable Codex session. Set `ORC_LIVE_AGENT_TESTS=1`, `ORC_CHAT_TEST_HANDLE` to an `orc-chat-e2e…` fixture, and `ORC_CHAT_TEST_PROVIDER_FILE` to a private JSON file containing that fixture's verified provider `id` and `transcriptPath`. This isolates message transport from hook discovery; it does not test automatic session identification.
 
 Never point integration tests at your daily Orca profile. Normal `swift test` skips live mutation tests.
@@ -100,5 +104,6 @@ Never point integration tests at your daily Orca profile. Normal `swift test` sk
 - [Orca CLI](https://www.onorca.dev/docs/cli/reference), [runtime sharing](https://www.onorca.dev/docs/remote-servers), and [native chat](https://www.onorca.dev/docs/agents/native-chat)
 - [Ghostty source and embedding API](https://github.com/ghostty-org/ghostty/tree/v1.3.1)
 - [libsodium](https://doc.libsodium.org/)
+- [@pierre/diffs](https://diffs.com/docs)
 
-Upstream licenses are included in the built app's `Contents/Resources/licenses` directory.
+Upstream licenses are included in the built app's `Contents/Resources/licenses` directory and `Contents/Resources/DiffView/THIRD-PARTY-NOTICES.txt`.

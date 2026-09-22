@@ -83,9 +83,11 @@ public struct ChatBlock: Equatable {
     public let title: String
     public let body: String
     public let isError: Bool
+    public let diff: ChatDiff?
     public init(_ value: [String: Any]) {
         type = value["type"] as? String ?? "unknown"
         isError = value["isError"] as? Bool == true || value["state"] as? String == "failed"
+        diff = type == "tool-call" ? ChatDiff(toolName: value["name"] as? String ?? "", input: value["input"]) : nil
         switch type {
         case "text": title = ""; body = value["text"] as? String ?? ""
         case "tool-call":

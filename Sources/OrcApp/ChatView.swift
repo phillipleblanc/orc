@@ -161,6 +161,7 @@ struct ChatView: View {
                         Color.clear.frame(height: 1).id("chat-bottom")
                     }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .defaultScrollAnchor(followLatest ? .bottom : nil)
                 .onChange(of: model.history.messages) { _, _ in if followLatest { proxy.scrollTo("chat-bottom", anchor: .bottom) } }
             }
             if model.target?.requiresTerminal == true {
@@ -228,7 +229,9 @@ private struct ChatMessageView: View {
                   systemImage: message.role == "user" ? "person.crop.circle" : message.role == "tool" ? "wrench.and.screwdriver" : "sparkle")
                 .font(.caption.bold()).foregroundStyle(.secondary)
             ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
-                if block.type == "text", message.role != "reasoning" {
+                if let diff = block.diff {
+                    ChatDiffView(block: block, diff: diff)
+                } else if block.type == "text", message.role != "reasoning" {
                     Text((try? AttributedString(markdown: block.body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.body))
                         .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 } else {

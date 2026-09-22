@@ -1,0 +1,16 @@
+{
+  "name": "orc-chat-diffs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@pierre/diffs": "1.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
