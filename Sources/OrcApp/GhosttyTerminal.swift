@@ -101,7 +101,9 @@ struct GhosttyTerminal: NSViewRepresentable {
         config.wait_after_command = true
         let cli = Bundle.main.resourceURL?.appendingPathComponent("orc").path ?? "orc"
         // The native app owns navigation; its terminal stays bound to this session.
-        let command = shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch"
+        // An embedded Ghostty PTY is not its parent process's Herdr pane.
+        let command = "/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
+            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch"
         command.withCString { commandPointer in
             config.command = commandPointer
             FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in
