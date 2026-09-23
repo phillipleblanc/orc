@@ -109,7 +109,7 @@ enum SessionWindowMode: Equatable {
     var size: NSSize {
         switch self {
         case .compact: return NSSize(width: 380, height: 560)
-        case .details: return NSSize(width: 760, height: 560)
+        case .details: return NSSize(width: 760, height: 700)
         case .attached: return NSSize(width: 1200, height: 780)
         case .chat: return NSSize(width: 1060, height: 780)
         }
@@ -248,42 +248,44 @@ struct SessionWindow: View {
                 }.padding(.horizontal, 14).padding(.vertical, 7)
             }
         } else {
-            VStack(alignment: .leading, spacing: 20) {
-                Button { model.selected = nil } label: { Label("Sessions", systemImage: "chevron.left") }
-                    .buttonStyle(.borderless).accessibilityLabel("Back to Session List")
-                Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
-                Text(session.name).font(.title2.bold()).textSelection(.enabled)
-                HStack(spacing: 7) {
-                    AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
-                    Text(model.activity(for: session).label)
-                }.font(.callout)
-                Divider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Project").font(.caption).foregroundStyle(.secondary)
-                    Text(session.worktreePath).font(.callout).textSelection(.enabled)
-                }
-                if let agent = session.agentIdentity {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Button { model.selected = nil } label: { Label("Sessions", systemImage: "chevron.left") }
+                        .buttonStyle(.borderless).accessibilityLabel("Back to Session List")
+                    Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
+                    Text(session.name).font(.title2.bold()).textSelection(.enabled)
+                    HStack(spacing: 7) {
+                        AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
+                        Text(model.activity(for: session).label)
+                    }.font(.callout)
+                    Divider()
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Agent").font(.caption).foregroundStyle(.secondary)
-                        Text(agent).font(.callout)
+                        Text("Project").font(.caption).foregroundStyle(.secondary)
+                        Text(session.worktreePath).font(.callout).textSelection(.enabled)
                     }
-                }
-                Spacer()
-                Text("Open chat, attach here, or copy the command for Ghostty.").font(.callout).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 10) {
-                    copyButton(session)
-                    HStack {
-                        Button("Open Chat", systemImage: "bubble.left.and.bubble.right") {
-                            if Pairing.isConfigured { chatSession = session.id }
-                            else { pendingChat = session.id; model.showConnection = true }
-                        }.buttonStyle(.borderedProminent).disabled(model.chatTargets[session.id]?.supported != true)
-                        Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
+                    if let agent = session.agentIdentity {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Agent").font(.caption).foregroundStyle(.secondary)
+                            Text(agent).font(.callout)
+                        }
                     }
-                    if model.chatTargets[session.id]?.supported != true {
-                        Text("Chat requires a supported agent with history available to this Orca runtime.").font(.caption).foregroundStyle(.secondary)
+                    SessionNotesEditor(sessionID: session.id).id(session.id)
+                    Text("Open chat, attach here, or copy the command for Ghostty.").font(.callout).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 10) {
+                        copyButton(session)
+                        HStack {
+                            Button("Open Chat", systemImage: "bubble.left.and.bubble.right") {
+                                if Pairing.isConfigured { chatSession = session.id }
+                                else { pendingChat = session.id; model.showConnection = true }
+                            }.buttonStyle(.borderedProminent).disabled(model.chatTargets[session.id]?.supported != true)
+                            Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
+                        }
+                        if model.chatTargets[session.id]?.supported != true {
+                            Text("Chat requires a supported agent with history available to this Orca runtime.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-            }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
     private func attach(_ session: Session) {
@@ -299,6 +301,29 @@ struct SessionWindow: View {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session.attachCommand, forType: .string)
         copied = true
         Task { try? await Task.sleep(for: .seconds(2)); copied = false }
+    }
+}
+
+private struct SessionNotesEditor: View {
+    @AppStorage private var notes: String
+
+    init(sessionID: String) {
+        _notes = AppStorage(wrappedValue: "", "sessionNotes.\(sessionID)")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Notes").font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $notes)
+                .font(.callout)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 140)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
+                .accessibilityLabel("Session notes")
+                .accessibilityIdentifier("session-notes")
+        }
     }
 }
 
