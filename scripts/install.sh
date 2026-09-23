@@ -6,13 +6,19 @@ mkdir -p "$HOME/Applications" "$HOME/.local/bin"
 if [[ -e "$HOME/.local/bin/orc" && ! -L "$HOME/.local/bin/orc" ]]; then
   echo 'Refusing to overwrite an existing orc executable.' >&2; exit 1
 fi
+ORC_PI_EXTENSION="$HOME/.pi/agent/extensions/orc-notes.ts"
+if [[ -e "$ORC_PI_EXTENSION" && ! -L "$ORC_PI_EXTENSION" ]]; then
+  echo 'Refusing to overwrite an existing Pi /notes extension.' >&2; exit 1
+fi
 ditto dist/Orc.app "$HOME/Applications/Orc.app"
 touch "$HOME/Applications/Orc.app"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$HOME/Applications/Orc.app"
 ln -sfn "$HOME/Applications/Orc.app/Contents/Resources/orc" "$HOME/.local/bin/orc"
+mkdir -p "$HOME/.pi/agent/extensions"
+ln -sfn "$(pwd)/pi/orc-notes.ts" "$ORC_PI_EXTENSION"
 ORC_SETTINGS_DIR="${ORC_CONFIG_DIR:-$HOME/.config/orc}"
 mkdir -p -m 700 "$ORC_SETTINGS_DIR"
 if [[ ! -e "$ORC_SETTINGS_DIR/config.json" && ! -L "$ORC_SETTINGS_DIR/config.json" ]]; then
   (umask 077; set -o noclobber; printf '{\n  "defaultSessionType": "codex",\n  "defaultProject": "spiceai-project"\n}\n' > "$ORC_SETTINGS_DIR/config.json")
 fi
-printf 'Installed ~/Applications/Orc.app and ~/.local/bin/orc\n'
+printf 'Installed ~/Applications/Orc.app, ~/.local/bin/orc, and Pi /notes extension\n'

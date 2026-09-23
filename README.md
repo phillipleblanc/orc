@@ -41,6 +41,8 @@ Installation creates this file if absent and preserves existing settings. Missin
 
 **Orc.app** opens as a compact session list. Selecting a session reveals its details, a local notes field that saves as you type, and the **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal. While attached, selecting another running session switches the terminal to it automatically. **Detach** returns to details and restores selection without automatic attachment; sessions continue running in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
 
+In an Orca-hosted Pi session, run **`/notes`** to edit the same note in nvim. Orc installs the Pi extension at `~/.pi/agent/extensions/orc-notes.ts`; existing Pi processes can load it with `/reload`. Notes are private local text files in `~/.config/orc/notes/` (or `ORC_CONFIG_DIR/notes/`), keyed by terminal handle. The app refreshes an open note when nvim saves it. Notes saved by earlier Orc versions in macOS preferences are migrated when the app launches or Pi first opens them.
+
 The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
 
 In headless mode, Orc also reads saved custom names from the selected Orca profile to handle stale runtime layout titles. Orc never writes Orca's profile files; creating and renaming sessions use its runtime API.

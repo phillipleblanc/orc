@@ -22,6 +22,7 @@ import OrcKit
 @MainActor final class OrcApplicationDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
+        SessionNotesStore.migrateLegacyPreferences()
         _ = IdleNotifications.shared
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -305,16 +306,26 @@ struct SessionWindow: View {
 }
 
 private struct SessionNotesEditor: View {
-    @AppStorage private var notes: String
+    let sessionID: String
+    @State private var notes: String
+    @State private var error: String?
+    @State private var saveFailed = false
 
     init(sessionID: String) {
-        _notes = AppStorage(wrappedValue: "", "sessionNotes.\(sessionID)")
+        self.sessionID = sessionID
+        _notes = State(initialValue: (try? SessionNotesStore.load(
+            handle: sessionID,
+            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(sessionID)"))) ?? "")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Notes").font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: $notes)
+            TextEditor(text: Binding(get: { notes }, set: { value in
+                notes = value
+                do { try SessionNotesStore.save(value, handle: sessionID); error = nil; saveFailed = false }
+                catch { self.error = error.localizedDescription; saveFailed = true }
+            }))
                 .font(.callout)
                 .scrollContentBackground(.hidden)
                 .padding(8)
@@ -323,6 +334,21 @@ private struct SessionNotesEditor: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
                 .accessibilityLabel("Session notes")
                 .accessibilityIdentifier("session-notes")
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+        .task(id: sessionID) {
+            while !Task.isCancelled {
+                if !saveFailed {
+                    do {
+                        let saved = try SessionNotesStore.load(
+                            handle: sessionID,
+                            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(sessionID)"))
+                        if saved != notes { notes = saved }
+                        error = nil
+                    } catch { self.error = error.localizedDescription }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
     }
 }
