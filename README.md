@@ -22,7 +22,7 @@ orc attach fleet-rules
 orc attach fleet-rules --read-only
 ```
 
-Run **`orc new`** to start the configured agent in the configured project from any directory. The defaults are **Codex** and **spiceai-project**. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`, and prints an attach command. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to Orca's shell. Use `--command 'COMMAND'` for a custom command instead of a session type.
+Run **`orc new`** to start the configured agent in the configured project and attach to it immediately in an interactive terminal. The defaults are **Codex** and **spiceai-project**. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to Orca's shell. Use `--command 'COMMAND'` for a custom command instead of a session type. Noninteractive use prints the attach command without opening a terminal; `--json` retains its creation-only output for scripts.
 
 Use **`--project SELECTOR`** to choose another registered project by name, absolute path, `path:/absolute/path`, or `id:ID`. `orc projects` lists available choices. `list`, `projects`, and `new` support `--json`; creation JSON includes the name, type, project, handle, and attach command.
 

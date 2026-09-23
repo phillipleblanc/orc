@@ -72,7 +72,12 @@ import COrcSupport
                 project: requestedProject ?? legacyProject, command: customCommand)
             if json { try emit(["handle": created.handle, "name": created.name, "type": created.type, "project": created.project,
                                "attachCommand": "orc attach \(shellQuote(created.handle))"]) }
-            else { print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))") }
+            else {
+                print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))")
+                if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 {
+                    try await run(["attach", created.handle], pairingLink: nil)
+                }
+            }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
@@ -173,7 +178,7 @@ import COrcSupport
 
     orc list [--json]                         List sessions and handles
     orc projects [--json]                    List available projects
-    orc new [codex|claude|pi|terminal]        Create a session (default: codex)
+    orc new [codex|claude|pi|terminal]        Create and attach (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
             [--project SELECTOR] [--json]    Override the configured project
     orc new --command 'COMMAND'              Run a custom command instead
@@ -187,6 +192,7 @@ import COrcSupport
     Inside Herdr, the attached agent appears in Herdr's Agents view.
     When a session ends, attach returns to the picker. Esc closes the picker.
     In the picker, n creates and attaches using the same defaults as orc new.
+    orc new --json creates without attaching for scripts and automation.
     Type to filter; / starts a search (including names beginning with n).
     Orc reuses Orca when running, or starts its installed backend headlessly.
     Project selectors accept a name, absolute path, path:/absolute/path, or id:ID.
