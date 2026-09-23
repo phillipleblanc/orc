@@ -77,6 +77,9 @@ import COrcSupport
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
             guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME-OR-HANDLE] [--read-only] [--no-reconnect]") }
+            let herdr = HerdrAttach.current
+            let herdrChild = ProcessInfo.processInfo.environment["ORC_HERDR_ATTACH_CHILD"] == "1"
+            if herdrChild, options.count != 1 { throw OrcError("An Orc Herdr attachment needs a session handle.") }
             var selector = options.first
             var selectedHandle: String?
             while true {
@@ -96,7 +99,33 @@ import COrcSupport
                     }
                 }
                 guard terminal.connected else { throw OrcError("This session is offline.") }
-                let result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
+                if herdrChild {
+                    let expected = ProcessInfo.processInfo.environment["ORC_HERDR_EXPECTED_INCAR"] ?? ""
+                    guard terminal.incarnationId ?? "" == expected else {
+                        throw OrcError("The selected Orca session was replaced before attachment. Choose it again.")
+                    }
+                } else if let herdr {
+                    let result = try await herdr.attach(terminal, readOnly: readOnly, noReconnect: noReconnect,
+                                                        sessionSwitching: sessionSwitching)
+                    guard result == .picker || (sessionSwitching && result == .ended) else { return }
+                    selector = nil; selectedHandle = terminal.handle
+                    continue
+                }
+                let bridge = herdrChild ? herdr.flatMap { HerdrAgentBridge(context: $0, session: terminal) } : nil
+                bridge?.start()
+                let result: AttachExit
+                do {
+                    result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
+                } catch {
+                    await bridge?.stop()
+                    throw error
+                }
+                await bridge?.stop()
+                if herdrChild {
+                    if result == .picker { Darwin.exit(HerdrAttach.pickerExitCode) }
+                    if result == .ended { Darwin.exit(HerdrAttach.endedExitCode) }
+                    return
+                }
                 guard result == .picker || (sessionSwitching && result == .ended) else { return }
                 selector = nil; selectedHandle = terminal.handle
             }
@@ -155,6 +184,7 @@ import COrcSupport
     orc status [--json]                      Connect to or start the Orca runtime
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
+    Inside Herdr, the attached agent appears in Herdr's Agents view.
     When a session ends, attach returns to the picker. Esc closes the picker.
     In the picker, n creates and attaches using the same defaults as orc new.
     Type to filter; / starts a search (including names beginning with n).
