@@ -460,6 +460,8 @@ finally:
     handles.append(late)
     t.send('\x1b'); time.sleep(.02); t.send('[39;5u')
     picker_screen = t.read_until('Orc — Attach to a session')
+    if b'\x1b[?2026l' not in picker_screen.split('Orc — Attach to a session'.encode(), 1)[1]:
+        picker_screen += t.read_until('\x1b[?2026l')
     assert keyboard_flags(t.transcript) == 0, 'the picker must use ordinary keyboard encoding'
     assert late_name.encode() in picker_screen, 'Returning to the picker must refresh sessions'
     assert re.search(rb'\d+/\d+ \xc2\xb7 ' + re.escape(handle.encode()), picker_screen), 'The previous session must stay selected'

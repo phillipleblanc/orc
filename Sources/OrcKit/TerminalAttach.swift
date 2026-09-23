@@ -31,6 +31,9 @@ public struct InputDecoder {
     private var snapshotUnavailable = false
     private var snapshotKeyboardFlags: Int?
     private var requestedScrollback = false
+    private var scrollbackSnapshotPending = false
+    private var replayingScrollbackSnapshot = false
+    private var activeKeyboardFlags: Int?
     private var savedTermios = termios()
     private var raw = false
     private var stopping = false
@@ -73,7 +76,9 @@ public struct InputDecoder {
         var attempts = 0
         while !stopping && !ended {
             failure = nil; streamID = nil; ready = false; snapshot.removeAll(); collectingSnapshot = false
-            requestedScrollback = false; snapshotUnavailable = false; snapshotKeyboardFlags = nil
+            requestedScrollback = false; scrollbackSnapshotPending = false
+            replayingScrollbackSnapshot = false; activeKeyboardFlags = nil
+            snapshotUnavailable = false; snapshotKeyboardFlags = nil
             do {
                 let conn = try StreamConnection(pairing: pairing)
                 connection = conn
@@ -220,6 +225,8 @@ public struct InputDecoder {
                 try writeAll(STDOUT_FILENO, Data(text.utf8))
             case 2:
                 collectingSnapshot = true; snapshot.removeAll()
+                replayingScrollbackSnapshot = scrollbackSnapshotPending
+                scrollbackSnapshotPending = false
                 let metadata = try jsonObject(frame.payload)
                 snapshotUnavailable = metadata["unavailable"] != nil
                 snapshotKeyboardFlags = (metadata["kittyKeyboardFlags"] as? Int).flatMap {
@@ -239,15 +246,21 @@ public struct InputDecoder {
                 // that exited during a disconnect. Its replay selects the screen.
                 output("\u{1b}[?2026h\u{1b}[?1049l\u{1b}[0m\u{1b}[2J\u{1b}[H")
                 try writeAll(STDOUT_FILENO, snapshot)
-                // Keyboard mode is separate from snapshot ANSI. Restore it on
-                // the replay's active screen before accepting modified keys.
-                if let flags = snapshotKeyboardFlags { output("\u{1b}[=\(flags)u") }
+                // Scrollback replay is historical: its keyboard metadata can
+                // be zero even while the live agent is still in Kitty mode.
+                // Keep the current mode rather than letting history turn
+                // Shift+Enter into plain Enter in a nested terminal.
+                if !replayingScrollbackSnapshot || activeKeyboardFlags == nil {
+                    activeKeyboardFlags = snapshotKeyboardFlags
+                }
+                if let flags = activeKeyboardFlags { output("\u{1b}[=\(flags)u") }
                 output("\u{1b}[?2026l")
                 snapshot.removeAll(); collectingSnapshot = false; ready = true
                 snapshotDeadline?.cancel(); snapshotDeadline = nil
                 Task { await resize() }
                 if !requestedScrollback, let connection, let streamID {
                     requestedScrollback = true
+                    scrollbackSnapshotPending = true
                     // Desktop subscriptions initially contain only the viewport.
                     // An untagged request replaces it with history and lets Orca
                     // discard buffered live output already covered by the snapshot.
