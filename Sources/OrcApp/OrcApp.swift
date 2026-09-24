@@ -155,7 +155,7 @@ enum SessionWindowMode: Equatable {
         switch self {
         case .compact: return NSSize(width: 380, height: 560)
         case .details: return NSSize(width: 760, height: 700)
-        case .attached: return NSSize(width: 1200, height: 780)
+        case .attached: return NSSize(width: 1440, height: 936)
         case .chat: return NSSize(width: 1060, height: 780)
         }
     }
