@@ -52,6 +52,8 @@ import OrcKit
     var revealWindow: (() -> Void)?
     private var reviewState = AgentReviewState()
     private var monitor: Task<Void, Never>?
+    private var badgeCount: Int?
+    private var badgeTask: Task<Void, Never>?
 
     init() {
         do { reviewState = try AgentReviewStore.load(); unreadKeys = reviewState.unreadKeys }
@@ -100,11 +102,17 @@ import OrcKit
     }
     private func updateDockBadge() {
         let count = Set(sessions.filter { activity(for: $0) == .unread }.map(\.notesKey)).count
-        let label = count == 0 ? nil : String(count)
-        let tile = NSApplication.shared.dockTile
-        guard tile.badgeLabel != label else { return }
-        tile.badgeLabel = label
-        tile.display()
+        guard badgeCount != count else { return }
+        badgeCount = count
+        let previous = badgeTask
+        badgeTask = Task {
+            await previous?.value
+            await IdleNotifications.shared.setBadgeCount(count)
+        }
+    }
+    func refreshDockBadge() {
+        badgeCount = nil
+        updateDockBadge()
     }
     func refresh() async {
         guard !loading else { return }; loading = true; defer { loading = false }
@@ -211,7 +219,10 @@ struct SessionWindow: View {
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: attachedSession) { _, _ in markVisibleOutputRead() }
         .onChange(of: chatSession) { _, _ in markVisibleOutputRead() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in markVisibleOutputRead() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            markVisibleOutputRead()
+            Task { await notifications.refreshSettings(); model.refreshDockBadge() }
+        }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
     }
     private var sidebar: some View {

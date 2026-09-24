@@ -31,10 +31,10 @@ import OrcKit
         guard authorization == nil else { return }
         authorization = Task {
             do {
-                let settings = await center.notificationSettings()
-                if settings.authorizationStatus == .notDetermined {
-                    _ = try await center.requestAuthorization(options: [.alert, .sound])
-                }
+                // Ask for every notification feature we use, including the Dock badge.
+                // Existing installations may already have alert/sound authorization but
+                // have never requested badge authorization.
+                _ = try await center.requestAuthorization(options: [.alert, .sound, .badge])
                 _ = await isAuthorized()
             } catch { warning = "Could not enable idle notifications: \(error.localizedDescription)" }
         }
@@ -43,8 +43,26 @@ import OrcKit
     private func isAuthorized() async -> Bool {
         let settings = await center.notificationSettings()
         let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-        warning = allowed ? nil : "Idle notifications are disabled. Enable Orc in System Settings → Notifications."
+        if !allowed {
+            warning = "Idle notifications are disabled. Enable Orc in System Settings → Notifications."
+        } else if settings.badgeSetting == .disabled {
+            warning = "Dock badges are disabled. Enable Badge application icon for Orc in System Settings → Notifications."
+        } else {
+            warning = nil
+        }
         return allowed
+    }
+
+    func refreshSettings() async {
+        await authorization?.value
+        _ = await isAuthorized()
+    }
+
+    func setBadgeCount(_ count: Int) async {
+        start()
+        await authorization?.value
+        do { try await center.setBadgeCount(count) }
+        catch { warning = "Could not update the Dock badge: \(error.localizedDescription)" }
     }
 
     func postIdle(_ session: Session) async {
