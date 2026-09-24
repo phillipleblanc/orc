@@ -273,11 +273,6 @@ struct SessionWindow: View {
                 }.padding(14)
                 Divider()
                 GhosttyTerminal(session: session).id(session.id + terminalGeneration.uuidString)
-                HStack {
-                    Text("Powered by libghostty").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Ctrl-] detaches · Session stays running in Orca").font(.caption).foregroundStyle(.secondary)
-                }.padding(.horizontal, 14).padding(.vertical, 7)
             }
         } else {
             ScrollView {
