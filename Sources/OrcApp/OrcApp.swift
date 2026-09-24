@@ -94,8 +94,17 @@ import OrcKit
     }
     private func updateReviewState() {
         unreadKeys = reviewState.unreadKeys
+        updateDockBadge()
         do { try AgentReviewStore.save(reviewState); reviewError = nil }
         catch { reviewError = "Could not save agent review state: \(error.localizedDescription)" }
+    }
+    private func updateDockBadge() {
+        let count = Set(sessions.filter { activity(for: $0) == .unread }.map(\.notesKey)).count
+        let label = count == 0 ? nil : String(count)
+        let tile = NSApplication.shared.dockTile
+        guard tile.badgeLabel != label else { return }
+        tile.badgeLabel = label
+        tile.display()
     }
     func refresh() async {
         guard !loading else { return }; loading = true; defer { loading = false }
@@ -113,6 +122,7 @@ import OrcKit
             let previous = reviewState
             let completed = reviewState.update(sessions: sessions, activities: activities, pruneMissing: !result.truncated)
             if reviewState != previous { updateReviewState() }
+            updateDockBadge()
             for session in completed {
                 Task { await IdleNotifications.shared.postIdle(session) }
             }
@@ -124,6 +134,7 @@ import OrcKit
             let previous = reviewState
             reviewState.resetCycles()
             if reviewState != previous { updateReviewState() }
+            updateDockBadge()
         }
     }
 }
