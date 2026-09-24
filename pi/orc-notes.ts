@@ -1,23 +1,28 @@
 /** Edit the current Orca terminal's Orc note with nvim inside Pi. */
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const HANDLE = /^term_[A-Za-z0-9_-]+$/;
+const PANE = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
 
-function noteFile(handle: string): string {
+function noteFile(key: string): string {
   const config = process.env.ORC_CONFIG_DIR || join(homedir(), ".config", "orc");
-  return join(config, "notes", `${handle}.txt`);
+  return join(config, "notes", `${key}.txt`);
 }
 
-function migrateLegacyNote(handle: string, file: string): void {
+function migrateLegacyNote(handle: string | undefined, file: string): void {
   if (existsSync(file)) return;
   let legacy = "";
-  try {
-    legacy = execFileSync("/usr/bin/defaults", ["read", "dev.phillipleblanc.orc", `sessionNotes.${handle}`],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).replace(/\n$/, "");
-  } catch { /* No note in the app's earlier UserDefaults store. */ }
+  if (handle && HANDLE.test(handle)) {
+    const oldFile = noteFile(handle);
+    if (existsSync(oldFile)) legacy = readFileSync(oldFile, "utf8");
+    else try {
+      legacy = execFileSync("/usr/bin/defaults", ["read", "dev.phillipleblanc.orc", `sessionNotes.${handle}`],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).replace(/\n$/, "");
+    } catch { /* No note in the app's earlier UserDefaults store. */ }
+  }
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   try { writeFileSync(file, legacy, { flag: "wx", mode: 0o600 }); }
   catch (error: any) { if (error?.code !== "EEXIST") throw error; }
@@ -50,14 +55,14 @@ export default function (pi: any): void {
         ctx.ui.notify("/notes needs an interactive Pi terminal.", "error");
         return;
       }
-      const handle = process.env.ORCA_TERMINAL_HANDLE;
-      if (!handle || !HANDLE.test(handle)) {
-        ctx.ui.notify("/notes needs a Pi session launched in an Orca terminal.", "error");
+      const pane = process.env.ORCA_PANE_KEY;
+      if (!pane || !PANE.test(pane)) {
+        ctx.ui.notify("/notes needs an Orca pane identity; reload Pi in an Orca terminal.", "error");
         return;
       }
-      const file = noteFile(handle);
+      const file = noteFile(`pane_${pane.replace(":", "_")}`);
       try {
-        migrateLegacyNote(handle, file);
+        migrateLegacyNote(process.env.ORCA_TERMINAL_HANDLE, file);
         const status = await openNvim(file, ctx.ui);
         if (status !== 0) ctx.ui.notify("nvim did not save the note successfully.", "error");
       } catch (error) {

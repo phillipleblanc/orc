@@ -16,8 +16,16 @@ public struct Session: Codable, Identifiable, Hashable {
     public let writable: Bool
     public let agentIdentity: String?
     public let incarnationId: String?
+    public var tabId: String? = nil
+    public var leafId: String? = nil
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
     public var attachCommand: String { "orc attach " + shellQuote(handle) }
+    public var notesKey: String {
+        guard let tabId, let leafId, !tabId.isEmpty, !leafId.isEmpty,
+              (tabId + leafId).allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+        else { return handle }
+        return "pane_\(tabId)_\(leafId)"
+    }
 }
 
 public struct Workspace: Codable, Identifiable, Hashable {
@@ -58,12 +66,35 @@ public func resolveSession(_ selector: String, in sessions: [Session]) throws ->
     return match
 }
 
+/// session.tabs.listAll carries the persisted pane identity even when
+/// terminal.list temporarily labels a background PTY with a pty: placeholder.
+struct PaneIdentity: Equatable {
+    let tabId: String
+    let leafId: String
+
+    static func byHandle(in response: [String: Any]) -> [String: PaneIdentity] {
+        let snapshots = response["snapshots"] as? [[String: Any]] ?? [response]
+        var result: [String: PaneIdentity] = [:]
+        for snapshot in snapshots {
+            for tab in snapshot["tabs"] as? [[String: Any]] ?? [] {
+                guard tab["type"] as? String == "terminal",
+                      let handle = tab["terminal"] as? String,
+                      let tabId = tab["parentTabId"] as? String,
+                      let leafId = tab["leafId"] as? String else { continue }
+                result[handle] = PaneIdentity(tabId: tabId, leafId: leafId)
+            }
+        }
+        return result
+    }
+}
+
 public struct SessionListing: Decodable {
     public let terminals: [Session]
     public let totalCount: Int
     public let truncated: Bool
 
-    init(response: [String: Any], savedNames: [SessionTab: String] = [:]) throws {
+    init(response: [String: Any], savedNames: [SessionTab: String] = [:],
+         paneIdentities: [String: PaneIdentity] = [:]) throws {
         // terminal.rename changes the parent tab name. Per-pane terminal titles
         // remain controlled by shell/agent OSC updates, so use the layout's tab
         // title for every handle it contains, including headless layouts.
@@ -95,6 +126,10 @@ public struct SessionListing: Decodable {
         if let terminals = response["terminals"] as? [[String: Any]] {
             listing["terminals"] = terminals.map { terminal in
                 var terminal = terminal
+                if let handle = terminal["handle"] as? String, let pane = paneIdentities[handle] {
+                    terminal["tabId"] = pane.tabId
+                    terminal["leafId"] = pane.leafId
+                }
                 if let handle = terminal["handle"] as? String, let title = titles[handle] {
                     terminal["title"] = title
                 }
@@ -113,10 +148,12 @@ public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
         async let status = LocalRPC.call("status.get")
+        async let tabs = try? LocalRPC.call("session.tabs.listAll")
         let response = try await LocalRPC.call("terminal.list", ["limit": 10000, "includeVisualLayouts": true])
         let headless = try await status["desktopWindowStatus"] as? String != "available"
         let names = headless ? await Task.detached { SavedSessionNames.load() }.value : [:]
-        return try SessionListing(response: response, savedNames: names)
+        return try SessionListing(response: response, savedNames: names,
+                                  paneIdentities: PaneIdentity.byHandle(in: await tabs ?? [:]))
     }
     public func workspaces() async throws -> [Workspace] {
         let result = try await LocalRPC.call("worktree.list", ["limit": 10000])

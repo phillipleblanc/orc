@@ -270,7 +270,7 @@ struct SessionWindow: View {
                             Text(agent).font(.callout)
                         }
                     }
-                    SessionNotesEditor(sessionID: session.id).id(session.id)
+                    SessionNotesEditor(session: session).id(session.notesKey)
                     Text("Open chat, attach here, or copy the command for Ghostty.").font(.callout).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 10) {
                         copyButton(session)
@@ -306,16 +306,16 @@ struct SessionWindow: View {
 }
 
 private struct SessionNotesEditor: View {
-    let sessionID: String
+    let session: Session
     @State private var notes: String
     @State private var error: String?
     @State private var saveFailed = false
 
-    init(sessionID: String) {
-        self.sessionID = sessionID
+    init(session: Session) {
+        self.session = session
         _notes = State(initialValue: (try? SessionNotesStore.load(
-            handle: sessionID,
-            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(sessionID)"))) ?? "")
+            key: session.notesKey, legacyHandle: session.handle,
+            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(session.handle)"))) ?? "")
     }
 
     var body: some View {
@@ -323,7 +323,7 @@ private struct SessionNotesEditor: View {
             Text("Notes").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: Binding(get: { notes }, set: { value in
                 notes = value
-                do { try SessionNotesStore.save(value, handle: sessionID); error = nil; saveFailed = false }
+                do { try SessionNotesStore.save(value, key: session.notesKey); error = nil; saveFailed = false }
                 catch { self.error = error.localizedDescription; saveFailed = true }
             }))
                 .font(.callout)
@@ -336,13 +336,13 @@ private struct SessionNotesEditor: View {
                 .accessibilityIdentifier("session-notes")
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }
-        .task(id: sessionID) {
+        .task(id: session.notesKey) {
             while !Task.isCancelled {
                 if !saveFailed {
                     do {
                         let saved = try SessionNotesStore.load(
-                            handle: sessionID,
-                            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(sessionID)"))
+                            key: session.notesKey, legacyHandle: session.handle,
+                            legacy: UserDefaults.standard.string(forKey: "sessionNotes.\(session.handle)"))
                         if saved != notes { notes = saved }
                         error = nil
                     } catch { self.error = error.localizedDescription }

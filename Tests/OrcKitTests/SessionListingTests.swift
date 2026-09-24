@@ -10,10 +10,11 @@ final class SessionListingTests: XCTestCase {
     private func group(_ title: Any, panes: [String: Any]) -> [String: Any] {
         ["type": "group", "tabs": [["title": title, "panes": panes]]]
     }
-    private func listing(_ terminals: [[String: Any]], root: [String: Any]? = nil, savedNames: [SessionTab: String] = [:]) throws -> SessionListing {
+    private func listing(_ terminals: [[String: Any]], root: [String: Any]? = nil, savedNames: [SessionTab: String] = [:],
+                         paneIdentities: [String: PaneIdentity] = [:]) throws -> SessionListing {
         var response: [String: Any] = ["terminals": terminals, "totalCount": terminals.count, "truncated": false]
         if let root { response["visualLayouts"] = [["root": root]] }
-        return try SessionListing(response: response, savedNames: savedNames)
+        return try SessionListing(response: response, savedNames: savedNames, paneIdentities: paneIdentities)
     }
     func testSavedRenameSurvivesAgentTitleChangesAndResolvesForAttach() throws {
         for title in ["Pi ready", "⠋ Pi working", "Shell"] {
@@ -68,5 +69,21 @@ final class SessionListingTests: XCTestCase {
                       SessionTab(host: "local", worktree: "workspace", tab: "other")] {
             XCTAssertEqual(try listing([renamed], root: root, savedNames: [other: "Wrong name"]).terminals.first?.name, "Old tab name")
         }
+    }
+
+    func testBackgroundTerminalUsesPersistedPaneInsteadOfPtyPlaceholder() throws {
+        var background = terminal("term_background", title: "Pi ready")
+        background["ptyId"] = "project@@7f514adc"
+        background["tabId"] = "pty:project@@7f514adc"
+        background["leafId"] = "pty:project@@7f514adc"
+        let tabs: [String: Any] = ["snapshots": [["tabs": [["type": "terminal", "terminal": "term_background",
+            "parentTabId": "tab-stable", "leafId": "leaf-stable", "ptyId": "project@@7f514adc"]]]]]
+        let identities = PaneIdentity.byHandle(in: tabs)
+        let key = SessionTab(host: "local", worktree: "workspace", tab: "tab-stable")
+        let sessions = try listing([background], savedNames: [key: "Persistent title"], paneIdentities: identities).terminals
+        XCTAssertEqual(sessions.first?.name, "Persistent title")
+        XCTAssertEqual(sessions.first?.notesKey, "pane_tab-stable_leaf-stable")
+        XCTAssertEqual(try listing([background]).terminals.first?.notesKey, "term_background",
+                       "A pty: placeholder must not become a note filename")
     }
 }
