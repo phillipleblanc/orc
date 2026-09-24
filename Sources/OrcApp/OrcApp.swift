@@ -39,8 +39,10 @@ import OrcKit
     @Published var workspaces: [Workspace] = []
     @Published var chatTargets: [String: ChatTarget] = [:]
     @Published private(set) var activities: [String: AgentActivity] = [:]
+    @Published private(set) var unreadKeys: Set<String> = []
     @Published var selected: String?
     @Published var error: String?
+    @Published var reviewError: String?
     @Published var showCreate = false
     @Published var showConnection = false
     @Published var connected = Pairing.isConfigured
@@ -48,10 +50,12 @@ import OrcKit
     @Published private(set) var notificationNavigation = UUID()
     let service = SessionService()
     var revealWindow: (() -> Void)?
-    private var idleTracker = AgentIdleTracker()
+    private var reviewState = AgentReviewState()
     private var monitor: Task<Void, Never>?
 
     init() {
+        do { reviewState = try AgentReviewStore.load(); unreadKeys = reviewState.unreadKeys }
+        catch { reviewError = "Could not load agent review state: \(error.localizedDescription)" }
         IdleNotifications.shared.onSelect = { [weak self] target in
             Task { await self?.openNotification(target) }
         }
@@ -81,7 +85,17 @@ import OrcKit
         revealWindow?()
     }
     func activity(for session: Session) -> AgentActivity {
-        session.connected ? activities[session.handle] ?? .unknown : .offline
+        reviewState.activity(for: session, base: session.connected ? activities[session.handle] ?? .unknown : .offline)
+    }
+    func markRead(_ session: Session) {
+        let previous = reviewState
+        reviewState.markRead(session)
+        if reviewState != previous { updateReviewState() }
+    }
+    private func updateReviewState() {
+        unreadKeys = reviewState.unreadKeys
+        do { try AgentReviewStore.save(reviewState); reviewError = nil }
+        catch { reviewError = "Could not save agent review state: \(error.localizedDescription)" }
     }
     func refresh() async {
         guard !loading else { return }; loading = true; defer { loading = false }
@@ -96,12 +110,21 @@ import OrcKit
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
             activities = await activity
-            for session in idleTracker.update(sessions: sessions, activities: activities) {
+            let previous = reviewState
+            let completed = reviewState.update(sessions: sessions, activities: activities, pruneMissing: !result.truncated)
+            if reviewState != previous { updateReviewState() }
+            for session in completed {
                 Task { await IdleNotifications.shared.postIdle(session) }
             }
             error = result.truncated ? "Orca returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
-        } catch { self.error = error.localizedDescription; activities = [:]; idleTracker.reset() }
+        } catch {
+            self.error = error.localizedDescription
+            activities = [:]
+            let previous = reviewState
+            reviewState.resetCycles()
+            if reviewState != previous { updateReviewState() }
+        }
     }
 }
 
@@ -122,6 +145,7 @@ struct SessionWindow: View {
     @ObservedObject var model: SessionModel
     @ObservedObject private var notifications = IdleNotifications.shared
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var search = ""
     @State private var copied = false
     @State private var attachedSession: String?
@@ -145,7 +169,7 @@ struct SessionWindow: View {
                     detail(selected).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            if let error = model.error ?? notifications.warning {
+            if let error = model.reviewError ?? model.error ?? notifications.warning {
                 Divider()
                 HStack { Image(systemName: "exclamationmark.triangle"); Text(error).textSelection(.enabled); Spacer() }
                     .font(.callout).foregroundStyle(.orange).padding(12)
@@ -172,6 +196,12 @@ struct SessionWindow: View {
         }
         .onAppear { model.revealWindow = { openWindow(id: "sessions") } }
         .onChange(of: model.notificationNavigation) { _, _ in search = "" }
+        .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
+        .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
+        .onChange(of: attachedSession) { _, _ in markVisibleOutputRead() }
+        .onChange(of: chatSession) { _, _ in markVisibleOutputRead() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in markVisibleOutputRead() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
     }
     private var sidebar: some View {
         VStack(spacing: 0) {
@@ -294,6 +324,14 @@ struct SessionWindow: View {
         chatSession = nil
         if Pairing.isConfigured { attachedSession = session.id }
         else { attachedSession = nil; pendingAttach = session.id; model.showConnection = true }
+    }
+    private func markVisibleOutputRead() {
+        guard NSApplication.shared.isActive,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+              controlActiveState == .key, let session = selected,
+              attached || chatting, model.connected, session.connected,
+              model.unreadKeys.contains(session.notesKey) else { return }
+        model.markRead(session)
     }
     private func copyButton(_ session: Session) -> some View {
         Button { copy(session) } label: { Label(copied ? "Copied" : "Copy Attach Command", systemImage: copied ? "checkmark" : "doc.on.doc") }

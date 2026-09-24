@@ -17,6 +17,8 @@ struct AgentActivityIndicator: View {
                 }
             case .idle:
                 Circle().fill(.green).padding(2)
+            case .unread:
+                Image(systemName: "bell.fill").foregroundStyle(.blue)
             case .needsAttention:
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
             case .noAgent:

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AgentActivity: Equatable, Sendable {
-    case idle, active, needsAttention, noAgent, unknown, offline
+    case idle, active, unread, needsAttention, noAgent, unknown, offline
 
     public init(isRunningAgent: Bool?, state: String?) {
         guard let isRunningAgent else { self = .unknown; return }
@@ -18,6 +18,7 @@ public enum AgentActivity: Equatable, Sendable {
         switch self {
         case .idle: return "Idle"
         case .active: return "Active"
+        case .unread: return "New output to review"
         case .needsAttention: return "Needs attention"
         case .noAgent: return "No agent running"
         case .unknown: return "Activity unavailable"

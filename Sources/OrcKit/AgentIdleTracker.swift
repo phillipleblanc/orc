@@ -2,8 +2,8 @@ import Foundation
 
 /// Tracks observed work cycles, fenced to the terminal process and agent.
 /// Missing or uncertain activity clears the cycle so recovery cannot replay it.
-public struct AgentIdleTracker {
-    private struct Identity: Equatable {
+public struct AgentIdleTracker: Codable, Equatable {
+    private struct Identity: Codable, Equatable {
         let incarnation: String?
         let agent: String?
     }
@@ -19,12 +19,12 @@ public struct AgentIdleTracker {
             let identity = Identity(incarnation: session.incarnationId, agent: session.agentIdentity)
             switch activities[session.handle] ?? .unknown {
             case .active:
-                next[session.handle] = identity
+                next[session.notesKey] = identity
             case .needsAttention:
-                if working[session.handle] == identity { next[session.handle] = identity }
+                if working[session.notesKey] == identity { next[session.notesKey] = identity }
             case .idle:
-                if working[session.handle] == identity { completed.append(session) }
-            case .noAgent, .unknown, .offline:
+                if working[session.notesKey] == identity { completed.append(session) }
+            case .unread, .noAgent, .unknown, .offline:
                 break
             }
         }
