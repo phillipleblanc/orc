@@ -154,23 +154,40 @@ struct GhosttyTerminal: NSViewRepresentable {
         if flags.contains(.option) { value |= GHOSTTY_MODS_ALT.rawValue }
         if flags.contains(.command) { value |= GHOSTTY_MODS_SUPER.rawValue }
         if flags.contains(.capsLock) { value |= GHOSTTY_MODS_CAPS.rawValue }
+        if flags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { value |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
+        if flags.rawValue & UInt(NX_DEVICERCTLKEYMASK) != 0 { value |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
+        if flags.rawValue & UInt(NX_DEVICERALTKEYMASK) != 0 { value |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
+        if flags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0 { value |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
         return ghostty_input_mods_e(rawValue: value)
     }
     override func keyDown(with event: NSEvent) {
         guard let surface else { return }
+        let translated = ghostty_surface_key_translation_mods(surface, mods(event.modifierFlags))
+        var translationFlags = event.modifierFlags
+        if translated.rawValue & GHOSTTY_MODS_ALT.rawValue == 0 { translationFlags.remove(.option) }
+        let translationEvent: NSEvent
+        if translationFlags == event.modifierFlags { translationEvent = event }
+        else {
+            translationEvent = NSEvent.keyEvent(with: event.type, location: event.locationInWindow,
+                                                modifierFlags: translationFlags, timestamp: event.timestamp,
+                                                windowNumber: event.windowNumber, context: nil,
+                                                characters: event.characters(byApplyingModifiers: translationFlags) ?? "",
+                                                charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                                                isARepeat: event.isARepeat, keyCode: event.keyCode) ?? event
+        }
         inputText = nil; handlingKey = true
-        if !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.command) { interpretKeyEvents([event]) }
+        if !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.command) { interpretKeyEvents([translationEvent]) }
         handlingKey = false
         var key = ghostty_input_key_s()
         key.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
         key.mods = mods(event.modifierFlags)
-        key.consumed_mods = mods(event.modifierFlags.subtracting([.control, .command]))
+        key.consumed_mods = mods(translationEvent.modifierFlags.subtracting([.control, .command]))
         key.keycode = UInt32(event.keyCode)
         key.composing = hasMarkedText()
         key.unshifted_codepoint = event.characters(byApplyingModifiers: [])?.unicodeScalars.first?.value ?? 0
-        var text = inputText ?? (hasMarkedText() ? "" : event.characters ?? "")
+        var text = inputText ?? (hasMarkedText() ? "" : translationEvent.characters ?? "")
         if text.unicodeScalars.count == 1, let scalar = text.unicodeScalars.first {
-            if scalar.value < 0x20 { text = event.characters(byApplyingModifiers: event.modifierFlags.subtracting(.control)) ?? "" }
+            if scalar.value < 0x20 { text = translationEvent.characters(byApplyingModifiers: translationEvent.modifierFlags.subtracting(.control)) ?? "" }
             else if (0xF700...0xF8FF).contains(scalar.value) { text = "" }
         }
         // Ghostty encodes control and function keys from the physical key and
@@ -183,6 +200,30 @@ struct GhosttyTerminal: NSViewRepresentable {
         guard let surface else { return }; var key = ghostty_input_key_s()
         key.action = GHOSTTY_ACTION_RELEASE; key.mods = mods(event.modifierFlags); key.keycode = UInt32(event.keyCode)
         key.unshifted_codepoint = event.characters(byApplyingModifiers: [])?.unicodeScalars.first?.value ?? 0
+        _ = ghostty_surface_key(surface, key)
+    }
+    override func flagsChanged(with event: NSEvent) {
+        guard let surface, !hasMarkedText() else { return }
+        let bit: UInt32
+        let rightMask: UInt?
+        switch event.keyCode {
+        case 0x39: bit = GHOSTTY_MODS_CAPS.rawValue; rightMask = nil
+        case 0x38: bit = GHOSTTY_MODS_SHIFT.rawValue; rightMask = nil
+        case 0x3C: bit = GHOSTTY_MODS_SHIFT.rawValue; rightMask = UInt(NX_DEVICERSHIFTKEYMASK)
+        case 0x3B: bit = GHOSTTY_MODS_CTRL.rawValue; rightMask = nil
+        case 0x3E: bit = GHOSTTY_MODS_CTRL.rawValue; rightMask = UInt(NX_DEVICERCTLKEYMASK)
+        case 0x3A: bit = GHOSTTY_MODS_ALT.rawValue; rightMask = nil
+        case 0x3D: bit = GHOSTTY_MODS_ALT.rawValue; rightMask = UInt(NX_DEVICERALTKEYMASK)
+        case 0x37: bit = GHOSTTY_MODS_SUPER.rawValue; rightMask = nil
+        case 0x36: bit = GHOSTTY_MODS_SUPER.rawValue; rightMask = UInt(NX_DEVICERCMDKEYMASK)
+        default: return
+        }
+        var key = ghostty_input_key_s()
+        key.keycode = UInt32(event.keyCode)
+        key.mods = mods(event.modifierFlags)
+        let sidePressed = rightMask.map { event.modifierFlags.rawValue & $0 != 0 } ?? true
+        let pressed = key.mods.rawValue & bit != 0 && sidePressed
+        key.action = pressed ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
         _ = ghostty_surface_key(surface, key)
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

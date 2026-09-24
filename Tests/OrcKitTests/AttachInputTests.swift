@@ -72,4 +72,13 @@ final class AttachInputTests: XCTestCase {
         XCTAssertEqual(result.bytes, key)
         XCTAssertEqual(parser.append(Data([0x1d])).exit, .detached)
     }
+    func testOptionKeysPassThroughAttach() {
+        for sequence in ["\u{1b}[13;3u", "\u{1b}[98;3u", "\u{1b}b"] {
+            var parser = AttachInput()
+            let bytes = Data(sequence.utf8)
+            let result = parser.append(bytes)
+            XCTAssertNil(result.exit)
+            XCTAssertEqual(result.bytes, bytes)
+        }
+    }
 }
