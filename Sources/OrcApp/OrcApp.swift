@@ -134,7 +134,7 @@ struct SessionWindow: View {
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     var attached: Bool { selected != nil && attachedSession == selected?.id }
     var chatting: Bool { selected != nil && chatSession == selected?.id }
-    var mode: SessionWindowMode { selected == nil ? .compact : attached ? .attached : chatting ? .chat : .details }
+    var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : chatSession != nil ? .chat : .details }
     var filtered: [Session] { model.sessions.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.worktreePath.localizedCaseInsensitiveContains(search) } }
     var body: some View {
         VStack(spacing: 0) {
@@ -166,8 +166,9 @@ struct SessionWindow: View {
         .onChange(of: model.selected) { previous, _ in
             let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
                 && model.sessions.contains { $0.id == previous && $0.connected }
-            attachedSession = nil; chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
+            chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
             if wasAttached, let session = selected, session.connected { attach(session) }
+            else { attachedSession = nil }
         }
         .onAppear { model.revealWindow = { openWindow(id: "sessions") } }
         .onChange(of: model.notificationNavigation) { _, _ in search = "" }
@@ -292,7 +293,7 @@ struct SessionWindow: View {
     private func attach(_ session: Session) {
         chatSession = nil
         if Pairing.isConfigured { attachedSession = session.id }
-        else { pendingAttach = session.id; model.showConnection = true }
+        else { attachedSession = nil; pendingAttach = session.id; model.showConnection = true }
     }
     private func copyButton(_ session: Session) -> some View {
         Button { copy(session) } label: { Label(copied ? "Copied" : "Copy Attach Command", systemImage: copied ? "checkmark" : "doc.on.doc") }
