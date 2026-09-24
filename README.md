@@ -43,6 +43,8 @@ Installation creates this file if absent and preserves existing settings. Missin
 
 In an Orca-hosted Pi session, run **`/notes`** to edit the same note in nvim. Orc installs the Pi extension at `~/.pi/agent/extensions/orc-notes.ts`; existing Pi processes can load it with `/reload`. Notes are private local text files in `~/.config/orc/notes/` (or `ORC_CONFIG_DIR/notes/`), keyed by Orca's persistent tab and pane IDs so they survive a terminal-handle change on restart. The app refreshes an open note when nvim saves it. Notes saved by earlier Orc versions in macOS preferences or handle-named files are kept and migrated when their session is opened.
 
+The `orc-session-name.ts` Pi extension keeps Pi's `/name` aligned with the saved Orca tab name. An Orca rename sets the Pi session name; using `/name` in Pi renames the Orca tab. It reads Orca's selected profile and sends tab renames through the installed Orca CLI. Existing Pi processes can load it with `/reload`.
+
 The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
 
 In headless mode, Orc also reads saved custom names from the selected Orca profile to handle stale runtime layout titles. Orc never writes Orca's profile files; creating and renaming sessions use its runtime API.
