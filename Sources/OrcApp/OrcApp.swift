@@ -167,6 +167,7 @@ struct SessionWindow: View {
     @ObservedObject private var notifications = IdleNotifications.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
+    @AppStorage("autoAttachSessions") private var autoAttachSessions = false
     @State private var search = ""
     @State private var copied = false
     @State private var attachedSession: String?
@@ -217,7 +218,7 @@ struct SessionWindow: View {
                 && model.sessions.contains { $0.id == previous && $0.connected }
             chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
-            if wasAttached, let session = selected, session.connected { attach(session) }
+            if (autoAttachSessions || wasAttached), let session = selected, session.connected { attach(session) }
             else { attachedSession = nil }
         }
         .onAppear { model.revealWindow = { openWindow(id: "sessions") } }
@@ -258,6 +259,16 @@ struct SessionWindow: View {
             HStack {
                 Text("\(model.sessions.count) sessions").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Toggle(isOn: $autoAttachSessions) {
+                    Image(systemName: autoAttachSessions ? "bolt.fill" : "bolt.slash")
+                }
+                    .toggleStyle(.button).controlSize(.small)
+                    .tint(autoAttachSessions ? .accentColor : .gray)
+                    .help(autoAttachSessions ? "Auto-attach on: selecting a session opens its terminal" :
+                            "Auto-attach off: selecting a session shows its details")
+                    .accessibilityLabel("Auto-attach sessions")
+                    .accessibilityValue(autoAttachSessions ? "On" : "Off")
+                    .accessibilityIdentifier("auto-attach-toggle")
                 Button { model.showConnection = true } label: { Image(systemName: model.connected ? "link" : "link.badge.plus") }
                     .buttonStyle(.borderless).help("Connection Settings").accessibilityLabel("Connection Settings")
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
