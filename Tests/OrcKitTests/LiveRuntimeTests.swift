@@ -46,6 +46,31 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    @MainActor func testChildSessionUsesOrcaNameAndAppearsUnderParent() async throws {
+        let worktree = try isolatedWorktree()
+        let service = SessionService()
+        let parentName = "orc-child-e2e-" + UUID().uuidString
+        var handles: [String] = []
+        do {
+            let parentHandle = try await service.create(name: parentName, worktree: "path:" + worktree, command: nil)
+            handles.append(parentHandle)
+            let initial = try await service.list().terminals
+            let parent = try XCTUnwrap(initial.first { $0.handle == parentHandle })
+            let childName = try SessionHierarchy.childName(parent: parent, suffix: "review")
+            let childHandle = try await service.create(name: childName, worktree: "path:" + worktree, command: nil)
+            handles.append(childHandle)
+            let listing = try await service.list().terminals
+            let child = try XCTUnwrap(listing.first { $0.handle == childHandle })
+            let hierarchy = SessionHierarchy(sessions: listing)
+            XCTAssertEqual(child.name, parentName + "-review")
+            XCTAssertEqual(hierarchy.parent(of: child)?.handle, parentHandle)
+            XCTAssertEqual(hierarchy.displayName(for: child), "review")
+        } catch {
+            for handle in handles { _ = try? await LocalRPC.call("terminal.close", ["terminal": handle]) }
+            throw error
+        }
+        for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
+    }
     func testUnreachableLiveRuntimeIsNotReplaced() throws {
         _ = try isolatedWorktree()
         let meta = try RuntimeMetadata.load()

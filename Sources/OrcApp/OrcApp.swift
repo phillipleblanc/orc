@@ -36,6 +36,7 @@ import OrcKit
 
 @MainActor final class SessionModel: ObservableObject {
     @Published var sessions: [Session] = []
+    private(set) var hierarchy = SessionHierarchy(sessions: [])
     @Published var workspaces: [Workspace] = []
     @Published var chatTargets: [String: ChatTarget] = [:]
     @Published private(set) var activities: [String: AgentActivity] = [:]
@@ -124,6 +125,7 @@ import OrcKit
             let result = try await listing
             async let activity = service.activities(for: result.terminals)
             workspaces = try await spaces
+            hierarchy = SessionHierarchy(sessions: result.terminals)
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
             activities = await activity
@@ -174,11 +176,14 @@ struct SessionWindow: View {
     @State private var chatDrafts: [String: String] = [:]
     @State private var terminalGeneration = UUID()
     @State private var renamingSession: Session?
+    @State private var creatingChildOf: Session?
+    @State private var collapsedParents: Set<String> = []
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     var attached: Bool { selected != nil && attachedSession == selected?.id }
     var chatting: Bool { selected != nil && chatSession == selected?.id }
     var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : chatSession != nil ? .chat : .details }
-    var filtered: [Session] { model.sessions.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.worktreePath.localizedCaseInsensitiveContains(search) } }
+    var hierarchy: SessionHierarchy { model.hierarchy }
+    var visibleGroups: [SessionHierarchy.Group] { hierarchy.matching(search) }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -198,6 +203,7 @@ struct SessionWindow: View {
         .background(SessionWindowSizer(mode: mode).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar { ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") } }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
+        .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .sheet(isPresented: $model.showConnection, onDismiss: {
             model.connected = Pairing.isConfigured
@@ -210,6 +216,7 @@ struct SessionWindow: View {
             let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
                 && model.sessions.contains { $0.id == previous && $0.connected }
             chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
+            if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
             if wasAttached, let session = selected, session.connected { attach(session) }
             else { attachedSession = nil }
         }
@@ -234,21 +241,14 @@ struct SessionWindow: View {
             TextField("Find a session", text: $search).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Find a session").padding(12)
             List(selection: $model.selected) {
-                ForEach(filtered) { session in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
-                            Text(session.name).font(.headline).lineLimit(1)
+                ForEach(visibleGroups) { group in
+                    sessionRow(group.session, name: group.session.name,
+                               hasChildren: !group.children.isEmpty, isChild: false)
+                    if !collapsedParents.contains(group.id) || !search.isEmpty {
+                        ForEach(group.children) { child in
+                            sessionRow(child, name: hierarchy.displayName(for: child),
+                                       hasChildren: false, isChild: true)
                         }
-                        Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
-                    }.padding(.vertical, 5).tag(session.id)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(model.activity(for: session).label)
-                    .help(model.activity(for: session).label)
-                    .contextMenu {
-                        Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
-                        Divider()
-                        Button("Copy Attach Command") { copy(session) }
                     }
                 }
             }.listStyle(.sidebar)
@@ -265,12 +265,49 @@ struct SessionWindow: View {
             }.padding(12)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
+        HStack(spacing: 6) {
+            if isChild { Color.clear.frame(width: 16, height: 16).accessibilityHidden(true) }
+            if hasChildren {
+                Button {
+                    if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
+                } label: {
+                    Image(systemName: collapsedParents.contains(session.id) && search.isEmpty ? "chevron.right" : "chevron.down")
+                        .font(.caption.weight(.semibold)).frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+                .disabled(!search.isEmpty)
+                .accessibilityLabel("\(collapsedParents.contains(session.id) && search.isEmpty ? "Expand" : "Collapse") children of \(session.name)")
+            } else {
+                Color.clear.frame(width: 16, height: 16).accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
+                    Text(name).font(.headline).lineLimit(1)
+                }
+                Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 5).tag(session.id)
+        .accessibilityElement(children: hasChildren ? .contain : .combine)
+        .accessibilityValue(model.activity(for: session).label)
+        .help(model.activity(for: session).label)
+        .contextMenu {
+            if !isChild, hierarchy.canCreateChild(of: session) {
+                Button("Create Child…", systemImage: "plus") { creatingChildOf = session }
+            }
+            Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
+            Divider()
+            Button("Copy Attach Command") { copy(session) }
+        }
+    }
     @ViewBuilder private func detail(_ session: Session) -> some View {
         if chatting, model.connected {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Button { chatSession = nil } label: { Label("Close Chat", systemImage: "chevron.left") }
-                    Text(session.name).font(.headline).lineLimit(1)
+                    Text(hierarchy.displayName(for: session)).font(.headline).lineLimit(1)
                     Spacer()
                     copyButton(session)
                     Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
@@ -284,7 +321,7 @@ struct SessionWindow: View {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Button { attachedSession = nil } label: { Label("Detach", systemImage: "rectangle.compress.vertical") }
-                    Text(session.name).font(.headline).lineLimit(1)
+                    Text(hierarchy.displayName(for: session)).font(.headline).lineLimit(1)
                     Spacer()
                     if model.chatTargets[session.id]?.supported == true {
                         Button("Chat", systemImage: "bubble.left.and.bubble.right") { attachedSession = nil; chatSession = session.id }
@@ -302,7 +339,7 @@ struct SessionWindow: View {
                     Button { model.selected = nil } label: { Label("Sessions", systemImage: "chevron.left") }
                         .buttonStyle(.borderless).accessibilityLabel("Back to Session List")
                     Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
-                    Text(session.name).font(.title2.bold()).textSelection(.enabled)
+                    Text(hierarchy.displayName(for: session)).font(.title2.bold()).textSelection(.enabled)
                     HStack(spacing: 7) {
                         AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
                         Text(model.activity(for: session).label)
@@ -311,6 +348,12 @@ struct SessionWindow: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Project").font(.caption).foregroundStyle(.secondary)
                         Text(session.worktreePath).font(.callout).textSelection(.enabled)
+                    }
+                    if hierarchy.parent(of: session) != nil {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Orca name").font(.caption).foregroundStyle(.secondary)
+                            Text(session.name).font(.callout).textSelection(.enabled)
+                        }
                     }
                     if let agent = session.agentIdentity {
                         VStack(alignment: .leading, spacing: 6) {
@@ -438,6 +481,7 @@ struct SessionWindowSizer: NSViewRepresentable {
 
 struct CreateSessionView: View {
     @ObservedObject var model: SessionModel
+    var parent: Session? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var workspace = ""
@@ -445,12 +489,23 @@ struct CreateSessionView: View {
     @State private var customCommand = ""
     @State private var creating = false
     @State private var error: String?
+    private var fullName: String {
+        guard let parent else { return name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return parent.name + "-" + name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("New Session").font(.title2.bold())
-            Text("Start an agent or terminal in an existing Orca project.").foregroundStyle(.secondary)
+            Text(parent == nil ? "New Session" : "New Child Session").font(.title2.bold())
+            if let parent {
+                Text("Create a session grouped under \(parent.name).").foregroundStyle(.secondary)
+            } else {
+                Text("Start an agent or terminal in an existing Orca project.").foregroundStyle(.secondary)
+            }
             Form {
-                TextField("Name", text: $name).accessibilityIdentifier("session-name")
+                TextField(parent == nil ? "Name" : "Child name", text: $name).accessibilityIdentifier("session-name")
+                if parent != nil, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    LabeledContent("Orca name", value: fullName).textSelection(.enabled)
+                }
                 Picker("Project", selection: $workspace) {
                     Text("Choose a project").tag("")
                     ForEach(model.workspaces) { Text("\($0.name) — \($0.path)").tag("id:" + $0.id) }
@@ -465,16 +520,25 @@ struct CreateSessionView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(creating)
-                Button(creating ? "Creating…" : "Create Session") { Task { await create() } }
+                Button(creating ? "Creating…" : parent == nil ? "Create Session" : "Create Child") { Task { await create() } }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-                    .disabled(creating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace.isEmpty || (agent == "custom" && customCommand.isEmpty))
+                    .disabled(creating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                              fullName.utf8.count > 200 || workspace.isEmpty || (agent == "custom" && customCommand.isEmpty))
             }
         }.padding(24).frame(width: 550)
         .onAppear {
             do {
                 let config = try OrcConfiguration.load()
                 agent = config.defaultSessionType.rawValue
-                let project = try SessionCreationDefaults.project(config.defaultProject, in: model.workspaces)
+                let project: Workspace
+                if let parent {
+                    guard let matching = model.workspaces.first(where: { $0.id == parent.worktreeId }) else {
+                        throw OrcError("The parent session's project is no longer available. Choose another project.")
+                    }
+                    project = matching
+                } else {
+                    project = try SessionCreationDefaults.project(config.defaultProject, in: model.workspaces)
+                }
                 workspace = "id:" + project.id
             } catch { self.error = error.localizedDescription }
         }
@@ -485,7 +549,19 @@ struct CreateSessionView: View {
     func create() async {
         creating = true; defer { creating = false }
         do {
-            let handle = try await model.service.create(name: name, worktree: workspace, command: agent == "terminal" ? nil : agent == "custom" ? customCommand : agent)
+            let sessionName: String
+            if let parent {
+                let liveSessions = try await model.service.list().terminals
+                guard let current = liveSessions.first(where: { $0.handle == parent.handle }),
+                      SessionHierarchy(sessions: liveSessions).canCreateChild(of: current) else {
+                    throw OrcError("This session can no longer be a parent or its name is ambiguous. Refresh or rename it first.")
+                }
+                sessionName = try SessionHierarchy.childName(parent: current, suffix: name)
+            } else {
+                sessionName = name
+            }
+            let handle = try await model.service.create(name: sessionName, worktree: workspace,
+                command: agent == "terminal" ? nil : agent == "custom" ? customCommand : agent)
             await model.refresh(); model.selected = handle; dismiss()
         } catch { self.error = error.localizedDescription }
     }
@@ -506,6 +582,8 @@ struct RenameSessionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Rename Session").font(.title2.bold())
+            Text("Use the full Orca name. A parent-name prefix groups this session in Orc's sidebar.")
+                .font(.callout).foregroundStyle(.secondary)
             TextField("Name", text: $name).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Session name").focused($focused).disabled(saving)
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
