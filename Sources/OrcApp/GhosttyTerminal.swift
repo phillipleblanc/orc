@@ -25,7 +25,22 @@ import OrcKit
                 if let app = engine.app { ghostty_app_tick(app) }
             }
         }
-        runtime.action_cb = { _, _, action in
+        runtime.action_cb = { _, target, action in
+            if action.tag == GHOSTTY_ACTION_MOUSE_OVER_LINK, target.tag == GHOSTTY_TARGET_SURFACE,
+               let surface = target.target.surface, let pointer = ghostty_surface_userdata(surface) {
+                let view = Unmanaged<GhosttyView>.fromOpaque(pointer).takeUnretainedValue()
+                let link = action.action.mouse_over_link
+                view.hoveredLink = link.len > 0 && link.url != nil
+                    ? String(data: Data(bytes: link.url!, count: Int(link.len)), encoding: .utf8) : nil
+                return true
+            }
+            if action.tag == GHOSTTY_ACTION_OPEN_URL, target.tag == GHOSTTY_TARGET_SURFACE,
+               let surface = target.target.surface, let pointer = ghostty_surface_userdata(surface),
+               let bytes = action.action.open_url.url,
+               let value = String(data: Data(bytes: bytes, count: Int(action.action.open_url.len)), encoding: .utf8) {
+                let view = Unmanaged<GhosttyView>.fromOpaque(pointer).takeUnretainedValue()
+                return view.openMarkdownLink(value)
+            }
             // Window-management actions belong to the session manager; the surface handles terminal actions.
             return action.tag == GHOSTTY_ACTION_SET_TITLE || action.tag == GHOSTTY_ACTION_PWD || action.tag == GHOSTTY_ACTION_CELL_SIZE
         }
@@ -72,6 +87,9 @@ struct GhosttyTerminal: NSViewRepresentable {
 @MainActor final class GhosttyView: NSView, @preconcurrency NSTextInputClient {
     fileprivate var surface: ghostty_surface_t?
     private let session: Session
+    private let commandOverride: String?
+    fileprivate var hoveredLink: String?
+    private var markdownPress: (event: NSEvent, link: MarkdownFileLink)?
     private var marked = NSAttributedString(string: "")
     private var inputText: String?
     private var handlingKey = false
@@ -80,15 +98,20 @@ struct GhosttyTerminal: NSViewRepresentable {
     private var visibilityObserver: NSObjectProtocol?
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
-    init(session: Session) {
-        self.session = session
+    init(session: Session, command: String? = nil) {
+        self.session = session; commandOverride = command
         super.init(frame: .zero)
         wantsLayer = true
         setAccessibilityElement(true)
         setAccessibilityRole(.textArea)
         setAccessibilityLabel("Terminal — \(session.name)")
+        registerForDraggedTypes(TerminalFileDrop.types)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    func openMarkdownLink(_ value: String) -> Bool {
+        guard let url = URL(string: value) else { return false }
+        return MarkdownWindowController.open(url, relativeTo: URL(fileURLWithPath: session.worktreePath, isDirectory: true))
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window, surface == nil, !detached, let app = GhosttyEngine.shared.app else { return }
@@ -102,8 +125,8 @@ struct GhosttyTerminal: NSViewRepresentable {
         let cli = Bundle.main.resourceURL?.appendingPathComponent("orc").path ?? "orc"
         // The native app owns navigation; its terminal stays bound to this session.
         // An embedded Ghostty PTY is not its parent process's Herdr pane.
-        let command = "/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
-            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch"
+        let command = commandOverride ?? ("/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
+            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch")
         command.withCString { commandPointer in
             config.command = commandPointer
             FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in
@@ -123,7 +146,7 @@ struct GhosttyTerminal: NSViewRepresentable {
         window.makeFirstResponder(self)
     }
     func detach() {
-        detached = true
+        detached = true; markdownPress = nil; hoveredLink = nil
         if let visibilityObserver { NotificationCenter.default.removeObserver(visibilityObserver); self.visibilityObserver = nil }
         if let surface { self.surface = nil; ghostty_surface_free(surface) }
     }
@@ -240,6 +263,27 @@ struct GhosttyTerminal: NSViewRepresentable {
     @objc func copy(_ sender: Any?) { if let surface { _ = binding("copy_to_clipboard", surface) } }
     @objc func paste(_ sender: Any?) { if let surface { _ = binding("paste_from_clipboard", surface) } }
     override func selectAll(_ sender: Any?) { if let surface { _ = binding("select_all", surface) } }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard surface != nil, !detached, session.writable, TerminalFileDrop.accepts(sender.draggingPasteboard) else { return [] }
+        return .copy
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard surface != nil, !detached, session.writable else { return false }
+        do {
+            let writes = try TerminalFileDrop.writes(TerminalFileDrop.load(sender.draggingPasteboard))
+            guard !writes.isEmpty else { return false }
+            window?.makeFirstResponder(self)
+            for text in writes {
+                if let surface { text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) } }
+            }
+            return true
+        } catch {
+            let alert = NSAlert(); alert.messageText = "Could not drop files"
+            alert.informativeText = error.localizedDescription
+            if let window { alert.beginSheetModal(for: window) }
+            return false
+        }
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); if let tracking { removeTrackingArea(tracking) }
         tracking = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect], owner: self)
@@ -250,11 +294,54 @@ struct GhosttyTerminal: NSViewRepresentable {
         ghostty_surface_mouse_pos(surface, point.x, point.y, mods(event.modifierFlags))
     }
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self); mouseMoved(with: event)
+        window?.makeFirstResponder(self)
+        markdownPress = nil
+        if event.clickCount == 1, event.modifierFlags.intersection([.shift, .control, .option]).isEmpty,
+           let link = markdownLink(at: event) {
+            // Fullscreen applications can open links through their own mouse handler.
+            // Hold the press until a click or drag determines who owns the gesture.
+            markdownPress = (event, link)
+            return
+        }
+        forwardMouseDown(event)
+    }
+    override func mouseUp(with event: NSEvent) {
+        if let press = markdownPress {
+            markdownPress = nil
+            if markdownLink(at: event) == press.link {
+                MarkdownWindowController.open(press.link)
+            }
+            return
+        }
+        mouseMoved(with: event)
+        if let surface { _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(event.modifierFlags)) }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if let press = markdownPress {
+            markdownPress = nil
+            forwardMouseDown(press.event)
+        }
+        mouseMoved(with: event)
+    }
+    private func forwardMouseDown(_ event: NSEvent) {
+        mouseMoved(with: event)
         if let surface { _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(event.modifierFlags)) }
     }
-    override func mouseUp(with event: NSEvent) { if let surface { _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(event.modifierFlags)) } }
-    override func mouseDragged(with event: NSEvent) { mouseMoved(with: event) }
+    private func markdownLink(at event: NSEvent) -> MarkdownFileLink? {
+        guard let surface else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else { return nil }
+        // Shift bypasses application mouse capture; Command enables OSC 8 hit testing.
+        // Restore the real modifiers before forwarding any terminal input.
+        hoveredLink = nil
+        // Leaving the viewport invalidates Ghostty's same-cell link cache.
+        ghostty_surface_mouse_pos(surface, -1, -1, mods(event.modifierFlags))
+        ghostty_surface_mouse_pos(surface, point.x, point.y, mods([.shift, .command]))
+        let value = hoveredLink
+        ghostty_surface_mouse_pos(surface, point.x, point.y, mods(event.modifierFlags))
+        guard let value, let url = URL(string: value) else { return nil }
+        return MarkdownFileLink(url, relativeTo: URL(fileURLWithPath: session.worktreePath, isDirectory: true))
+    }
     override func scrollWheel(with event: NSEvent) {
         guard let surface else { return }
         ghostty_surface_mouse_scroll(surface, event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas ? 1 : 0)

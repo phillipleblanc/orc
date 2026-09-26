@@ -6,7 +6,7 @@ final class OrcConfigurationTests: XCTestCase {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         for config in [try OrcConfiguration.load(from: file), try JSONDecoder().decode(OrcConfiguration.self, from: Data("{}".utf8))] {
             XCTAssertEqual(config.defaultSessionType, .codex)
-            XCTAssertEqual(config.defaultProject, "spiceai-project")
+            XCTAssertEqual(config.defaultProject, "")
         }
     }
 
@@ -19,7 +19,7 @@ final class OrcConfigurationTests: XCTestCase {
         }
         let config = try JSONDecoder().decode(OrcConfiguration.self, from: Data("{\"defaultSessionType\":\"pi\"}".utf8))
         XCTAssertEqual(config.defaultSessionType, .pi)
-        XCTAssertEqual(config.defaultProject, "spiceai-project")
+        XCTAssertEqual(config.defaultProject, "")
     }
 
     func testSupportedDefaultsAndCommands() throws {
@@ -31,7 +31,8 @@ final class OrcConfigurationTests: XCTestCase {
             try Data("{\"defaultSessionType\":\"\(type.rawValue)\"}".utf8).write(to: file)
             let config = try OrcConfiguration.load(from: file)
             XCTAssertEqual(config.defaultSessionType, type)
-            XCTAssertEqual(config.defaultSessionType.command, type == .terminal ? nil : type.rawValue)
+            let expected: [SessionType: String] = [.codex: "codex --no-daemon", .claude: "claude", .pi: "pi"]
+            XCTAssertEqual(config.defaultSessionType.command, expected[type])
         }
     }
 

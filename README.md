@@ -4,15 +4,21 @@
 
 Native macOS clients for sessions owned by Orca. The SwiftUI app lists and creates sessions, offers native chat and embedded libghostty views, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
 
-Orca owns PTYs, agents, projects, persistence, remote hosts, and mobile access. Orc reuses the selected profile's running runtime. When it is unavailable, Orc starts the installed Orca backend headlessly and waits for it to become ready; no Orca window is needed. The backend stays alive when Orc closes or the CLI exits. Orc does not patch Orca or replace its executable.
+Orca owns PTYs, agents, projects, persistence, remote hosts, and mobile access. Orc includes a pinned Orca runtime in `Orc.app/Contents/Helpers/Orca.app`. It runs headlessly as an accessory application and stays alive when Orc closes or the CLI exits. A separate Orca installation is not required. The bundled runtime uses its own profile and Keychain identity; runtime updates are delivered with Orc.
 
-Install Orca.app in `/Applications` or `~/Applications`, or set `ORCA_APP_EXECUTABLE` to the absolute path of its `Contents/MacOS/Orca` executable. Concurrent Orc clients coordinate startup per profile, and Orca's own single-instance lock also applies. An existing runtime that is still starting is given time to recover. Orc does not terminate an unresponsive runtime or replay a mutation after sending it. Startup failures include the private log path under `~/.config/orc/runtimes/` (or `ORC_CONFIG_DIR`).
+Fresh installations keep runtime state under `~/.config/orc/runtime` (or `ORC_CONFIG_DIR/runtime`). Orc authenticates and reuses the selected profile's running backend before considering a launch. Concurrent clients coordinate startup per profile, and Orca's own single-instance lock also applies. Orc does not terminate an unresponsive runtime or replay a mutation after sending it. Startup failures include the private log path under `~/.config/orc/runtimes/` (or `ORC_CONFIG_DIR`).
+
+If existing Orca state or unscoped Orc connection credentials are detected, choose **Start Fresh** in the app or run `orc setup --fresh` to create independent bundled sessions. Orc preserves the old profile and archives existing connection credentials as an owner-only `connection.legacy-UUID.json` in its configuration directory. Add projects and pair your phone again after setup. Repeating setup reuses the bundled profile and its credentials. Existing sessions and phone grants are not migrated or copied. The bundled runtime refuses nonempty unowned profiles and profile version changes without an explicit migration.
+
+To keep using an external profile, set `ORCA_USER_DATA_PATH`, and set `ORCA_APP_EXECUTABLE` to its executable if Orc should start it. An empty `ORC_CONFIG_DIR` can also select a separate bundled installation. Clear external profile and executable overrides before using **Start Fresh**.
 
 ## Use
 
 ```sh
 orc list
 orc projects
+orc projects add /absolute/path/to/project --default
+orc projects add /absolute/path/to/folder --folder
 orc new
 orc new codex
 orc new pi --name fleet-rules
@@ -22,7 +28,7 @@ orc attach fleet-rules
 orc attach fleet-rules --read-only
 ```
 
-Run **`orc new`** to start the configured agent in the configured project and attach to it immediately in an interactive terminal. The defaults are **Codex** and **spiceai-project**. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to Orca's shell. Use `--command 'COMMAND'` for a custom command instead of a session type. Noninteractive use prints the attach command without opening a terminal; `--json` retains its creation-only output for scripts.
+Run **`orc new`** to start the configured agent in the configured project and attach to it immediately in an interactive terminal. The default agent is **Codex**. Register a project with `orc projects add PATH --default`, or select one with `--project`. The app's **Add Project…** action accepts repositories and plain folders. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to Orca's shell. Use `--command 'COMMAND'` for a custom command instead of a session type. Noninteractive use prints the attach command without opening a terminal; `--json` retains its creation-only output for scripts.
 
 Use **`--project SELECTOR`** to choose another registered project by name, absolute path, `path:/absolute/path`, or `id:ID`. `orc projects` lists available choices. `list`, `projects`, and `new` support `--json`; creation JSON includes the name, type, project, handle, and attach command.
 
@@ -31,17 +37,25 @@ The app and CLI read session defaults from **`~/.config/orc/config.json`**:
 ```json
 {
   "defaultSessionType": "codex",
-  "defaultProject": "spiceai-project"
+  "defaultProject": "path:/Users/you/code/project"
 }
 ```
 
 `defaultSessionType` supports `codex`, `claude`, `pi`, and `terminal`. `defaultProject` accepts the same selectors as `--project`: a registered project name, absolute path, `path:/absolute/path`, or `id:ID`. An explicit CLI type or `--project` overrides the corresponding setting. The app initializes its New Session controls from both defaults and lets you choose another project or agent. A missing or ambiguous project produces an error instead of choosing another project.
 
-Installation creates this file if absent and preserves existing settings. Missing settings fall back to `codex` and `spiceai-project`. Defaults are read each time a session is created from the CLI or picker, and each time the app opens New Session. `ORC_CONFIG_DIR` changes the directory for both configuration and connection credentials.
+Built-in Codex sessions and bundled runtime workers launch with `--no-daemon` so tool processes inherit their Orc session's environment and identity. The installed Codex CLI must support that flag. Explicit custom commands and runtime agent command overrides are used as configured. Existing Codex processes keep their launch mode until restarted; runtime worker defaults require the updated bundled runtime to be running.
+
+Installation creates this file if absent and preserves existing settings. The project must be registered before session creation. Defaults are read each time a session is created from the CLI or picker, and each time the app opens New Session. `ORC_CONFIG_DIR` changes the directory for configuration, connection credentials, and the default bundled profile.
 
 **Orc.app** opens as a compact session list. Selecting a session reveals its details, a local notes field that saves as you type, and the **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal. While attached, selecting another running session switches the terminal to it automatically. **Detach** returns to details and restores selection without automatic attachment; sessions continue running in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
 
 The bolt button in the sidebar footer toggles auto-attach. When highlighted, selecting a running session opens its terminal immediately; when off, selecting a session shows its details unless you are switching from an existing attachment. Detach always returns to details, and selecting another session while auto-attach is on attaches again. The setting is saved for the next app launch.
+
+Open **Session Overview** with the grid button in the main window or **⇧⌘O**. This separate window shows every session as a card with the same activity and unread indicators as the session list. The arrow button on a card attaches to that session in the main window. Viewing or organizing the board leaves unread output marked for review.
+
+Choose **New Group** to organize sessions into groups such as “Actively working” or “Waiting for review.” Drag a card onto another card to insert it before that card, or onto a group's drop area to place it at the end. Cards stay in a responsive grid. Card menus also offer **Move to Group**, **Move Earlier**, and **Move Later**. Group menus let you rename, reorder, or remove groups; removing a group returns its sessions to **Ungrouped**.
+
+Use a card's tag button to apply existing labels or type a new one. Labels can be reused across sessions, and remain in the picker when unused. Search matches session names, projects, agents, and labels; the label filter narrows the board to a single label. Groups, labels, and card order save locally under `ORC_CONFIG_DIR/boards` (default `~/.config/orc/boards`), separately for each runtime profile. Organization follows persistent pane IDs across session renames and terminal-handle changes.
 
 Right-click a top-level session and choose **Create Child…** to create a regular Orca session in the parent's project. Enter `review` under `orca-frontend` and Orca saves the name `orca-frontend-review`; Orc's sidebar shows it indented as `review`. Parents with children have a disclosure arrow. Grouping is derived from full Orca names, so renaming an existing session to `orca-frontend-review` groups it the same way, with no separate metadata to migrate. Nesting is limited to one level; a child cannot create children. The child dialog starts with your configured default agent, and its project can be changed before creation.
 
@@ -51,7 +65,7 @@ The `orc-session-name.ts` Pi extension keeps Pi's `/name` aligned with the saved
 
 The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
 
-In headless mode, Orc also reads saved custom names from the selected Orca profile to handle stale runtime layout titles. Orc never writes Orca's profile files; creating and renaming sessions use its runtime API.
+In headless mode, Orc also reads saved custom names from the selected Orca profile to handle stale runtime layout titles. Creating and renaming sessions use the runtime API; Orc does not edit session persistence files.
 
 Session indicators show Orca's reported agent activity: green means idle, a yellow spinner means active, and an orange exclamation mark means the agent needs attention. Gray indicates no agent, unavailable activity, or an offline terminal; hover for the status. The list refreshes every two seconds. Chat activity updates through its live metadata stream. Reduce Motion keeps the active indicator yellow without spinning.
 
@@ -61,9 +75,13 @@ Orc's Dock badge counts sessions showing the unread bell state. Viewing a sessio
 
 Choose **Open Chat** for a supported agent's conversation, without starting an embedded terminal. Chat displays messages and expandable tool activity, loads earlier history, and sends with **⌘Return**. **Stop** interrupts the current response; **Attach** switches to its terminal. Closing chat leaves the Orca session running.
 
+Click a local Markdown link in Chat or an attached terminal to open a separate Orc window. **Rendered** is selected by default; **Raw** shows the read-only source. **Reload file** reads changes saved on disk. Links to other Markdown files open their own windows, while web links use your browser. Relative chat links resolve from the session's project folder; links inside a document resolve from that file's folder. The offline renderer does not execute embedded scripts or fetch remote images. Local images must be inside the document's folder. Markdown files must be UTF-8 and at most 4 MiB.
+
 Edit tool calls display syntax-highlighted diffs with **Unified** and **Split** layouts, powered by [@pierre/diffs](https://diffs.com/docs). Pi/Claude replacement edits, multi-edits, unified patches, and Codex `apply_patch` calls use the changes recorded in the transcript. Replacement snippets and Codex hunks are labelled as excerpts with relative line numbers. **Tool input** keeps the original arguments accessible; unsupported or incomplete edits use that text view. Previews describe the requested changes, while tool results report whether they succeeded. The renderer is bundled locally and works offline.
 
-Chat uses Orca's `nativeChat` transcript APIs and live agent status. Pi, Claude/OpenClaude, Codex, Grok, and OMP are supported when Orca publishes a provider session ID. The agent's Orca status hooks must work, and startup prompts may need to be completed through Attach before a conversation becomes available. Pi, Grok, and OMP require a locally readable transcript; plain shells and SSH Pi sessions use Attach. Use Attach for permission prompts, interactive questions, slash commands, and image input. A disconnected chat retains its history and draft; click **Reconnect Chat** to resume. Input is never automatically retried after uncertain delivery.
+Chat uses Orca's `nativeChat` transcript APIs and live agent status. Pi, Claude/OpenClaude, Codex, Grok, and OMP are supported when Orca publishes a provider session ID. The agent's Orca status hooks must work, and startup prompts may need to be completed through Attach before a conversation becomes available. Pi, Grok, and OMP require a locally readable transcript; plain shells and SSH Pi sessions use Attach. Use Attach for permission prompts, interactive questions, and slash commands. A disconnected chat retains its history and draft; click **Reconnect Chat** to resume. Input is never automatically retried after uncertain delivery.
+
+Drag local images or files anywhere into Chat to add removable attachments, then send with **⌘Return**. Attachments stay with each session's draft when switching views. Claude/OpenClaude, Codex, and Grok receive images as terminal image pastes; other files, and Pi/OMP images, use file references. Local attachments are not uploaded to SSH sessions. Dropped image data without a file path is saved as private PNG files under `ORC_CONFIG_DIR/attachments` (default `~/.config/orc/attachments`), up to 20 MiB per image. Keep these files while agents or resumed conversations may need them. Dropping files into an attached terminal pastes quoted paths without pressing Enter.
 
 Pi transcripts use Orca's OMP decoder with the exact absolute `.jsonl` path reported by Pi's status hook. Orc keeps the Pi session identity and input target; only the transcript decoder selection is OMP. Chat waits when that path is missing. The decoder displays messages in file order, so a branched or rewound Pi conversation can include abandoned turns; use Attach for Pi's active-branch view.
 
@@ -83,21 +101,68 @@ Attach restores the agent's keyboard mode, including **Shift+Enter** for multili
 
 The scroll wheel uses your terminal's native scrollback for normal-screen sessions. Attach requests up to 5,000 retained lines from Orca, subject to its snapshot size limit. Full-screen applications retain their own alternate-screen and mouse behavior. Detaching leaves normal-screen output in your terminal's scrollback.
 
-### One-time terminal connection
+## Task-bound agents
 
-Listing and creation work over Orca's authenticated local Unix socket. Interactive streams additionally require an Orca **runtime access link**:
+Run these commands from your own Orc coordinator session:
+
+```sh
+orc agent spawn pi --name fix-ci --project spiceai-project --prompt-file brief.md --json
+orc agent send <agent-id> --prompt-file followup.md --json
+orc agent show <agent-id> --json
+orc agent stop <agent-id> --json
+orc agent release <agent-id> --json
+```
+
+`spawn` reuses your bound Run or creates one, creates a Task/Dispatch, delivers the brief, checks readiness,
+and confirms the terminal name. The agent ID is the Dispatch ID. `orc agent list` reports workers with
+Run scope and pagination. Pi uses its configured model/thinking settings; Codex/Claude accept `--model`
+and `--effort`. Project selectors/defaults match `orc new`. Prompts are nonempty UTF-8 files up to 64 KiB.
+The commands print JSON receipts and select the bundled runtime/profile automatically.
+
+Save a UUID and pass `--request-id UUID` for mutations that may need recovery. Failed/uncertain commands
+exit nonzero and preserve runtime receipts; inspect `orc agent request UUID` and `orc agent show ID`
+before retrying. Repeat identical arguments with the same key for an uncertain request. `--retry-of ID`
+starts a new attempt of an eligible failed/stopped Task using its original brief. A naming failure retains
+the created agent: use `orc agent rename ID --name NAME`. See `orc agent --help` for options.
+
+To install the CLI without replacing a running app, build Orc and run `python3 scripts/install-cli.py`.
+It installs a verified complete bundle under `~/.local/share/orc/cli/` and atomically updates
+`~/.local/bin/orc`. Keep `~/.local/bin` on PATH. The selected profile and existing sessions are preserved.
+
+### Runtime access
+
+The bundled runtime configures local terminal/chat access on first startup. Orc captures the serve readiness result through a private pipe, checks its runtime scope, endpoint, identity, and server key, and saves an owner-only connection bound to the selected profile. The link is never printed or written to `backend.log`. Subsequent starts reuse that grant without creating another pairing offer.
+
+For an explicitly selected external Orca profile, interactive streams require a **runtime access link**:
 
 1. In Orca, open **Settings → Remote Orca Servers**, create an access link for this computer, and copy it. Use runtime sharing, not mobile pairing.
 2. Paste it into Orc's **Connection Settings**, or run `orc connect` and paste at its hidden-input prompt.
 3. Select a session and click **Attach** in Orc, or run `orc attach NAME` in Ghostty.
 
-Automatic headless startup uses the same Orca profile and existing pairing identity. It does not create a new access link. First-time setup still requires the runtime access link above.
+If first-run setup is interrupted after the backend starts but before its link is saved, Orc leaves it running. Supply its link with `orc connect`, or stop that specific runtime explicitly before retrying setup. Orc never restarts a live backend to recover a pairing link.
 
-The app and CLI share `~/.config/orc/connection.json`, written with owner-only permissions. Treat runtime access links as credentials. Revoke Orc's dedicated link in Orca to remove its access. Existing phone pairing remains independent. When the phone owns a live terminal, Orca may refuse desktop typing; leave that phone terminal before resuming desktop input.
+The app and CLI share `~/.config/orc/connection.json`, written with owner-only permissions. Treat runtime access links as credentials. A connection bound to another profile is rejected. Phone grants are separate from local Orc access.
+
+### Pair a phone
+
+In Orc, choose **Pair Phone…** from the menu or click the phone icon below the session list. Select your Mac's LAN or Tailscale address and click **Generate QR Code**. On the same Wi-Fi or Tailscale network, open the official Orca Mobile app, choose **Pair**, and scan the code. **Copy Link** provides the alternative paste-pair flow. Pair the bundled runtime as a new server; the old Orca server entry still refers to its original profile.
+
+```sh
+orc pair-phone                         # QR code, preferring Tailscale when available
+orc phones                             # Addresses, paired phones, and pending grants
+orc pair-phone --address 100.64.1.20    # Choose one of this Mac's listed addresses
+orc pair-phone --link                  # Private link for pasting into Orca Mobile
+orc pair-phone --rotate                # Replace the unused code; paired phones keep access
+orc phones revoke DEVICE_ID           # Disconnect and revoke that phone
+```
+
+`pair-phone` and `phones` accept `--json` for automation. Pairing output contains a credential; keep it private. Reopening pairing reuses an unused grant, while pairing another phone after a successful connection creates a separate grant. The app displays paired and pending grants under **Phone Access** and can revoke either. Creating, replacing, and revoking phone grants leave running sessions and Orc's local access intact. Grants persist across backend restarts.
+
+Pairing requires a bundled runtime that supports Orc's phone API. An older or external running runtime is left running and reports that it needs an update. LAN/Tailscale pairing does not use Orca Relay; both devices need a reachable private network path and the Mac must remain awake. **Completion push notifications are unavailable in headless serve mode** because the upstream completion detector runs in the desktop renderer. Interactive terminal/chat access is separate from completion pushes.
 
 ## Build and install
 
-Requires Apple Silicon, macOS 14+, Python 3.12+, Node.js 20+ with npm, and Xcode with its command-line tools and Metal toolchain. Install the Metal component if necessary:
+Requires Apple Silicon, macOS 14+, Python 3.12+, Node.js 20+ with npm, and the Xcode/SDK and Apple Development signing identity in [the runtime lock](runtime/orca.lock.json). Install the Metal component if necessary:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain
@@ -106,7 +171,9 @@ bash scripts/install.sh
 open ~/Applications/Orc.app
 ```
 
-Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`, and installs the locked diff-renderer dependencies in `WebDiff`. It builds the full embedded libghostty C API, statically links both libraries, bundles Ghostty and diff resources, and ad-hoc signs `dist/Orc.app`. Installation copies the app to `~/Applications/Orc.app` and links `~/.local/bin/orc`. Add `~/.local/bin` to your shell's PATH if needed. Node.js and Homebrew libraries are not required at runtime.
+Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`, and installs the locked web-renderer dependencies in `WebDiff`. It builds libghostty and the pinned Orca source runtime, stages the complete signed inner app with its license notices, and signs the outer `dist/Orc.app` ad hoc. Installation verifies and replaces the complete bundle at `~/Applications/Orc.app` and links `~/.local/bin/orc`. Pi extensions are included in the app. Node.js and Homebrew libraries are not required at runtime.
+
+Use `bash scripts/build.sh --offline` with prepared native dependencies, npm cache, and a completed verified runtime cache. `bash scripts/install.sh --offline` installs an existing bundle without building or downloading. `ORC_INSTALL_ROOT` selects an alternate installation root for testing. Installation refuses to replace a destination while Orc or its bundled runtime is using it; close that app and explicitly stop its backend before installing. This development signing configuration is not a notarized public distribution.
 
 For CLI-only development:
 
@@ -118,15 +185,23 @@ ORC_CLI_ONLY=1 swift test
 
 The Ghostty build creates a private SDK overlay to normalize arm64e TBD entries for Zig 0.15 and repacks Zig archive members before Apple's `libtool` indexes them. It leaves Xcode's SDK untouched. Builds produce an arm64 application for this Mac; release signing/notarization and Intel builds are separate distribution work.
 
+The [runtime build guide](runtime/README.md) describes the lock, cache, packaging checks, and startup/activation-policy probe for the [bundled-runtime plan](docs/bundled-orca-runtime-plan.md).
+
 ## Architecture and compatibility
 
 `OrcKit` contains session models, local RPC, NaCl-authenticated WebSocket streaming, and terminal attachment. Both frontends use the same session service. Each libghostty surface launches the app's bundled `orc attach` in a local PTY; libghostty handles rendering, input, selection, scrolling, and clipboard operations. The remote PTY remains in Orca.
 
 The adapter requires Orca's `terminal.binary-stream.v1` and `terminal.multiplex.v1` capabilities. It uses internal runtime protocols, which are not a stable third-party SDK. Protocol changes in Orca can require updating this adapter. Ghostty's full embedding API is also pinned rather than assumed stable.
 
-`ORCA_USER_DATA_PATH` selects the local Orca profile, and `ORC_CONFIG_DIR` selects Orc's configuration and credentials. The WebSocket endpoint follows that runtime's metadata, while the saved server public key pins its identity. Remote projects are accessed through the local Orca runtime; this is not a standalone remote-runtime client.
+`ORCA_USER_DATA_PATH` explicitly selects a local runtime profile. `ORC_CONFIG_DIR` selects Orc's configuration, credentials, and default bundled profile. `ORCA_APP_EXECUTABLE` is a development override; without an explicit profile it selects the external Orca default profile. The WebSocket endpoint follows the selected runtime's metadata, while the saved server public key pins its identity. Remote projects are accessed through the local runtime.
 
 ## End-to-end tests
+
+After building, run `python3 scripts/e2e-bundled.py`. It installs offline into a disposable root and exercises concurrent cold starts, automatic access, project registration, encrypted attachment, saved names across restart, and rejection of a tampered bundle. It leaves private diagnostics on failure. The suite does not disable the machine's network; testing a fully disconnected installation requires an isolated Mac or VM. `python3 scripts/probe-orca-runtime.py dist/Orc.app --report .build/orca-runtime/app-probe.json` separately measures activation policy and lifecycle behavior.
+
+`python3 scripts/e2e-phone-pairing.py` requires the locked source build cache and a LAN/Tailscale address. It uses a disposable profile and an encrypted mobile-scoped test client to check pairing, input/output, rotation, revocation, and reconnecting after restart. Pairing on a physical iOS/Android device remains a separate acceptance test.
+
+`python3 scripts/e2e-codex-launch.py` requires an installed, authenticated Codex CLI with `--no-daemon` support. It creates a disposable profile, starts a normal Codex session and a worker with a small smoke-test prompt, and verifies launch flags plus a worker tool subprocess's inherited identity and process ancestry. It cleans up its own sessions and runtime.
 
 Use a disposable instance of the **installed** Orca executable with `--user-data-dir=/absolute/test/profile --serve --serve-json --serve-port PORT --serve-pairing-address 127.0.0.1`. Its JSON ready event contains a runtime pairing URL: keep that output private. Set `ORCA_USER_DATA_PATH` to the same profile for CLI commands, register the Orc source project and a local `spiceai-project` with `orca repo add --path PATH`, and connect `orc` using a separate `ORC_CONFIG_DIR`.
 
@@ -140,9 +215,9 @@ ORC_CLI_ONLY=1 ORC_LIVE_TESTS=1 ORC_TEST_WORKTREE="$PWD" swift test
 
 The PTY suite creates and cleans up only its own sessions. It tests actual stream encryption, input, viewport changes, detach/reattach, concurrent read-only viewing, signal cleanup, and transport reconnection. Picker creation also exercises the installed Codex command and its Orca status hook without sending prompts. The creation suite additionally requires installed Claude and Pi commands with working status hooks. It starts each agent without sending prompts and checks defaults, project selection, names, validation, and cleanup. The opt-in live Swift tests exercise mobile input ownership, desktop viewing, transcript streaming and pagination (including Pi records through Orca's OMP decoder), and guarded chat input against the same real runtime; they do not substitute for testing a physical phone.
 
-Run `npm --prefix WebDiff ci` and `npm --prefix WebDiff test` to check edit/patch parsing against the actual diff library. `npm --prefix WebDiff run build` bundles the renderer for native app development.
+Run `npm --prefix WebDiff ci` and `npm --prefix WebDiff test` for renderer tests. `npm --prefix WebDiff run build` bundles the web views for native app development. Build these assets before `swift test` to exercise the Markdown windows with WebKit.
 
-An optional live-agent test sends a small prompt and tests interruption against an authenticated disposable Codex session. Set `ORC_LIVE_AGENT_TESTS=1`, `ORC_CHAT_TEST_HANDLE` to an `orc-chat-e2e…` fixture, and `ORC_CHAT_TEST_PROVIDER_FILE` to a private JSON file containing that fixture's verified provider `id` and `transcriptPath`. This isolates message transport from hook discovery; it does not test automatic session identification.
+An optional live-agent test sends a small prompt and tests interruption against an authenticated disposable Codex session. Set `ORC_LIVE_AGENT_TESTS=1`, `ORC_CHAT_TEST_HANDLE` to an `orc-chat-e2e…` fixture, and `ORC_CHAT_TEST_PROVIDER_FILE` to a private JSON file containing that fixture's verified provider `id` and `transcriptPath`. This isolates message transport from hook discovery; it does not test automatic session identification. With the same fixture, `ORC_CHAT_ATTACHMENT_TESTS=1 swift test --filter LiveAgentChatTests/testDroppedImageAndFileThroughChatWriter` checks image and file drops through guarded chat delivery. It verifies that an image whose name contains spaces appears as an image attachment in the real Codex transcript.
 
 Never point integration tests at your daily Orca profile. Normal `swift test` skips live mutation tests.
 

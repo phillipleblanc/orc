@@ -1,0 +1,47 @@
+--- a/resources/darwin/bin/orca
++++ b/resources/darwin/bin/orca
+@@ -9,7 +9,7 @@
+ 		[[ $SOURCE != /* ]] && SOURCE=$DIR/$SOURCE
+ 	done
+ 	SOURCE_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+-	echo "${SOURCE_DIR%%${SOURCE_DIR#*.app}}"
++	echo "${SOURCE_DIR%/Contents/Resources/bin}"
+ }
+ 
+ APP_PATH="$(app_realpath "${BASH_SOURCE[0]}")"
+--- a/src/main/startup/main-process-runtime-launch.ts
++++ b/src/main/startup/main-process-runtime-launch.ts
+@@ -32,7 +32,6 @@
+   recordRuntimeRpcStartFailure,
+   showRuntimeRpcStartupFailureDialog
+ } from '../runtime/runtime-rpc-startup-failure'
+-import { CliInstaller } from '../cli/cli-installer'
+ import { installLinuxBareOrcaDispatcher } from '../cli/linux-bare-orca-dispatcher'
+ import { scheduleAllPendingHistoryTreeRemovals } from '../terminal-history-deletion'
+ import { triggerStartupNotificationRegistration } from '../ipc/startup-notification-registration'
+@@ -168,25 +167,6 @@
+   settleDesktopActivation()
+   // Why: every attempt must reach app.quit(); a page beforeunload can veto an earlier signal.
+   registerServeSignalHandlers(process, () => app.quit())
+-  // Why: headless serve has no renderer to run the normal cli:install flow; do it here for macOS/Linux only (Windows-excluded: install() only mutates registry PATH, not child terminals).
+-  if (process.platform === 'darwin' || process.platform === 'linux') {
+-    try {
+-      // Why: serve is headless — a fallback osascript admin prompt would hang it; skip elevation since ~/.local/bin needs none.
+-      const cliStatus = await new CliInstaller({
+-        privilegedRunner: async () => {
+-          throw new Error('serve CLI auto-install must not request administrator privileges')
+-        }
+-      }).install()
+-      console.log(
+-        `[serve] orca CLI install: ${cliStatus.state}${cliStatus.commandPath ? ` (${cliStatus.commandPath})` : ''}`
+-      )
+-    } catch (error) {
+-      console.warn(
+-        '[serve] orca CLI install skipped:',
+-        error instanceof Error ? error.message : String(error)
+-      )
+-    }
+-  }
+   // Why: Linux CLI installs as `orca-ide`, but the Claude Team launcher invokes bare `orca`; drop a ~/.local/bin dispatcher (ahead of /usr/bin) so it resolves. Best-effort.
+   if (process.platform === 'linux' && app.isPackaged && process.resourcesPath) {
+     try {

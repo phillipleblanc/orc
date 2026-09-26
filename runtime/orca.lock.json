@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "purpose": "development-bundle",
+  "upstream": {
+    "repository": "https://github.com/stablyai/orca",
+    "tag": "v1.4.212",
+    "commit": "d937d22f498505c017634be9bf0540c9fa42e665"
+  },
+  "platform": "darwin",
+  "architecture": "arm64",
+  "artifact": {
+    "url": "https://github.com/stablyai/orca/releases/download/v1.4.212/Orca-1.4.212-arm64-mac.zip",
+    "sha256": "2022608311b00026d00bc9f5cd454faa059f13ffeb4b452e978053f5d01e66b3"
+  },
+  "bundle": {
+    "name": "Orca.app",
+    "identifier": "com.stablyai.orca",
+    "version": "1.4.212",
+    "executable": "Contents/MacOS/Orca",
+    "signingAuthority": "Developer ID Application: Lovecast LLC (6CX3WHS9HZ)",
+    "teamIdentifier": "6CX3WHS9HZ"
+  },
+  "source": {
+    "url": "https://codeload.github.com/stablyai/orca/tar.gz/d937d22f498505c017634be9bf0540c9fa42e665",
+    "sha256": "b69a45103d071fe1ad118ffe403920c65f565a2c019080513b3950ca7b681512"
+  },
+  "license": {
+    "spdx": "MIT",
+    "path": "runtime/licenses/Orca-MIT.txt",
+    "url": "https://raw.githubusercontent.com/stablyai/orca/d937d22f498505c017634be9bf0540c9fa42e665/LICENSE",
+    "sha256": "ff1b611f80580d49f4b97e93a97b24eb050b0671b26b8afe16341fab699112f3"
+  },
+  "sourceBuild": {
+    "node": {
+      "version": "24.21.0",
+      "directory": "node-v24.21.0-darwin-arm64",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+      "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"
+    },
+    "pnpm": {
+      "version": "12.0.0",
+      "url": "https://registry.npmjs.org/@pnpm/exe.darwin-arm64/-/exe.darwin-arm64-12.0.0.tgz",
+      "sha256": "c63ecbbf546f1e97fe3ab675cf169041044a02efee10eaa41c720365285d0b7c"
+    },
+    "xcodeVersion": "Xcode 26.5\nBuild version 17F42",
+    "sdkVersion": "26.5",
+    "dependencyLockSHA256": "dd08171e409aff27574f1c321e3fbdbc6b21bf1b67a2b4cb6e74cd746c8f8119",
+    "mobileDependencyLockSHA256": "1327605e77b3fed83c7410635d39fdab40c49380e5cbf483ec6ff1b404b4e1d1",
+    "patches": [
+      "runtime/patches/orc-runtime.patch",
+      "runtime/patches/orc-phone-pairing.patch",
+      "runtime/patches/orc-bundled-cli.patch",
+      "runtime/patches/orc-codex-no-daemon.patch"
+    ],
+    "packagingConfig": "runtime/electron-builder.cjs",
+    "inputs": [
+      {
+        "path": "runtime/patches/orc-runtime.patch",
+        "sha256": "7063cc1e82aaee98dd22b4715c31a8cead21ebc7dfdbfbf511d99f76092f266b"
+      },
+      {
+        "path": "runtime/electron-builder.cjs",
+        "sha256": "9b8f7cff19ba630eae6a5db2e932d96ea6849b9ca1a7b29f25b117c508b14809"
+      },
+      {
+        "path": "scripts/build-orca-runtime.py",
+        "sha256": "0bbbf61b547af3d05bcef288575e884fcf6a9d09742cdb5569c1892c49c8be97"
+      },
+      {
+        "path": "scripts/orca_runtime.py",
+        "sha256": "749873f451e6ed2b2a184761184b045f85f390a9bf6ad76617b804318e79c643"
+      },
+      {
+        "path": "runtime/patches/orc-phone-pairing.patch",
+        "sha256": "78e42cf8b21ed2cf5789c7664c8d50712bb7215664c15f5fd4d9e10178ae3d94"
+      },
+      {
+        "path": "runtime/patches/orc-bundled-cli.patch",
+        "sha256": "650275c643659287ff5c007eab6d6e7a4db252f9c40e5b7e644bb01bc1c9bd4c"
+      },
+      {
+        "path": "runtime/patches/orc-codex-no-daemon.patch",
+        "sha256": "68a153ec2fdcde1f6e045291957013742fa4708d4d788ab29ed2269ffc02cd05"
+      }
+    ],
+    "bundle": {
+      "name": "Orca.app",
+      "identifier": "dev.phillipleblanc.orc.runtime",
+      "version": "1.4.212",
+      "executable": "Contents/MacOS/Orca",
+      "signingAuthority": "Apple Development: Phillip LeBlanc (VX3398FVAU)",
+      "teamIdentifier": "C2DD65U2QA",
+      "accessoryBundle": true,
+      "displayName": "Orc Runtime"
+    },
+    "profileMode": "orc-managed",
+    "distribution": "development-only"
+  }
+}

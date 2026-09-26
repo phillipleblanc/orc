@@ -24,7 +24,8 @@ let package = Package(
             linkerSettings: [.unsafeFlags([ghostty + "/libghostty-fat.a"]), .linkedLibrary("c++"),
                 .linkedFramework("AppKit"), .linkedFramework("Carbon"), .linkedFramework("Metal"),
                 .linkedFramework("QuartzCore"), .linkedFramework("CoreText"), .linkedFramework("CoreGraphics"),
-                .linkedFramework("IOSurface"), .linkedFramework("IOKit"), .linkedFramework("UniformTypeIdentifiers")])
+                .linkedFramework("IOSurface"), .linkedFramework("IOKit"), .linkedFramework("UniformTypeIdentifiers")]),
+        .testTarget(name: "OrcAppTests", dependencies: ["OrcApp"])
     ]),
     swiftLanguageModes: [.v5]
 )

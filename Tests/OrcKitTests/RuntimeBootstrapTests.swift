@@ -2,6 +2,33 @@ import XCTest
 @testable import OrcKit
 
 final class RuntimeBootstrapTests: XCTestCase {
+    func testFreshSetupRejectsExternalOverridesWithoutMutation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for environment in [["ORCA_APP_EXECUTABLE": "/Applications/Orca.app/Contents/MacOS/Orca"],
+                            ["ORCA_USER_DATA_PATH": "/external/profile"]] {
+            let starter = RuntimeStarter(config: root, environment: environment)
+            XCTAssertThrowsError(try starter.connect(startFresh: true)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("Unset ORCA_USER_DATA_PATH"))
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        }
+    }
+
+    func testFreshSetupVerifiesBundleBeforeChangingCredentialsOrProfile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let connection = root.appendingPathComponent("connection.json"), original = Data("credentials".utf8)
+        try original.write(to: connection)
+        let starter = RuntimeStarter(config: root, environment: [:], hostExecutable: root.appendingPathComponent("Missing.app/Contents/Resources/orc"))
+        XCTAssertThrowsError(try starter.connect(startFresh: true)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Cannot verify the bundled runtime"))
+        }
+        XCTAssertEqual(try Data(contentsOf: connection), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: starter.profile.path))
+    }
+
     func testHeadlessEnvironmentDoesNotInheritAgentIdentityOrNodeMode() {
         let profile = URL(fileURLWithPath: "/tmp/orc-runtime-test")
         let starter = RuntimeStarter(profile: profile, environment: [
@@ -9,9 +36,9 @@ final class RuntimeBootstrapTests: XCTestCase {
             "ORCA_TERMINAL_HANDLE": "parent-terminal", "ORCA_BYPASS_SINGLE_INSTANCE_LOCK": "1",
             "ORCA_PAIRING_CODE": "must-not-propagate", "ELECTRON_RUN_AS_NODE": "1",
             "NODE_OPTIONS": "--inspect", "NODE_REPL_EXTERNAL_MODULE": "custom",
-            "PATH": "/bin:/usr/bin", "HOME": "/Users/test", "LANG": "en_US.UTF-8"])
+            "PATH": "/bin:/usr/bin", "HOME": "/Users/test", "LANG": "en_US.UTF-8", "ORCA_BACKGROUND_LAUNCH": "0"])
         XCTAssertEqual(starter.launchEnvironment(), ["ORCA_USER_DATA_PATH": starter.profile.path,
-            "PATH": "/bin:/usr/bin", "HOME": "/Users/test", "LANG": "en_US.UTF-8"])
+            "PATH": "/bin:/usr/bin", "HOME": "/Users/test", "LANG": "en_US.UTF-8", "ORCA_BACKGROUND_LAUNCH": "1"])
     }
 
     func testCanonicalProfileSharesStartupLockWhileOtherProfilesStaySeparate() throws {

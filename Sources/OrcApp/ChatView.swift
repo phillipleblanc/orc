@@ -89,13 +89,13 @@ import OrcKit
             if transcriptID == id { try history.prepend(page) }
         } catch { if transcriptID == id { self.error = error.localizedDescription } }
     }
-    func send(_ text: String) async -> Bool {
-        guard !sending, connected, ready, let connection, let target else { return false }
+    func send(_ draft: ChatDraft) async -> Bool {
+        guard !sending, !draft.loadingAttachments, connected, ready, let connection, let target else { return false }
         sending = true; defer { sending = false }
         let generation = self.generation
         do {
             let current = try await checkedTarget(target)
-            try await ChatWriter.send(text, target: current, connection: connection, clientID: clientID)
+            try await ChatWriter.send(draft.text, attachments: draft.attachments, target: current, connection: connection, clientID: clientID)
             if self.generation == generation { error = nil }
             return true
         } catch {
@@ -124,10 +124,11 @@ import OrcKit
 
 struct ChatView: View {
     @StateObject private var model: ChatModel
-    @Binding private var draft: String
+    @Binding private var draft: ChatDraft
     @State private var followLatest = true
+    @State private var dropTargeted = false
     let attach: () -> Void
-    init(session: Session, draft: Binding<String>, attach: @escaping () -> Void) {
+    init(session: Session, draft: Binding<ChatDraft>, attach: @escaping () -> Void) {
         _model = StateObject(wrappedValue: ChatModel(session: session)); _draft = draft; self.attach = attach
     }
     var body: some View {
@@ -179,28 +180,76 @@ struct ChatView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Message the agent…", text: $draft, axis: .vertical)
+                if !draft.attachments.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(draft.attachments) { attachment in
+                                HStack(spacing: 6) {
+                                    Image(systemName: attachment.isImage ? "photo" : "doc")
+                                    Text(attachment.name).lineLimit(1)
+                                    Button {
+                                        draft.attachments.removeAll { $0.id == attachment.id }
+                                    } label: { Image(systemName: "xmark.circle.fill") }
+                                        .buttonStyle(.plain).disabled(model.sending)
+                                        .accessibilityLabel("Remove \(attachment.name)")
+                                }.font(.callout).padding(8)
+                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                                    .help(attachment.url.path)
+                            }
+                        }
+                    }
+                }
+                TextField("Message the agent…", text: $draft.text, axis: .vertical)
                     .lineLimit(2...7).textFieldStyle(.plain).font(.body)
                     .accessibilityLabel("Message the agent").padding(10)
                     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                     .disabled(!model.connected || model.sending || model.target?.canSend != true || !model.ready)
                 HStack {
-                    Text("⌘Return to send · Enter for a new line").font(.caption).foregroundStyle(.secondary)
+                    Text(draft.loadingAttachments ? "Adding attachments…" : "Drop images or files · ⌘Return to send")
+                        .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     if model.target?.isWorking == true {
                         Button("Stop", systemImage: "stop.fill") { Task { await model.stop() } }
                             .disabled(!model.connected || model.sending || model.target?.canSend != true)
                     }
                     Button(model.sending ? "Sending…" : "Send", systemImage: "arrow.up") {
-                        let text = draft
-                        Task { if await model.send(text), draft == text { draft = "" } }
+                        let sent = draft
+                        Task { if await model.send(sent) { draft.didSend(sent) } }
                     }.keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
-                        .disabled(!model.connected || !model.ready || model.sending || model.target?.canSend != true || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!model.connected || !model.ready || model.sending || draft.loadingAttachments || model.target?.canSend != true || draft.isEmpty)
                 }
             }.padding(16)
         }
+        .modifier(MarkdownLinkHandling(directory: URL(fileURLWithPath: model.session.worktreePath, isDirectory: true)))
+        .contentShape(Rectangle())
+        .onDrop(of: ChatAttachmentDrop.types, isTargeted: $dropTargeted, perform: receiveDrop)
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor, lineWidth: 3)
+                    .padding(4).allowsHitTesting(false)
+            }
+        }
         .task { await model.connect() }
         .onDisappear { model.disconnect() }
+    }
+    private func receiveDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !model.sending, !draft.loadingAttachments, providers.contains(where: ChatAttachmentDrop.accepts) else { return false }
+        guard model.target?.isLocal != false else {
+            model.error = "Local files cannot be attached to an SSH session. Transfer them to the remote host first."
+            return false
+        }
+        draft.loadingAttachments = true
+        // Capture this session's binding before asynchronous provider loading.
+        let destination = $draft
+        Task {
+            defer { destination.wrappedValue.loadingAttachments = false }
+            do {
+                let files = try await ChatAttachmentDrop.load(providers)
+                destination.wrappedValue.append(files)
+                model.error = nil
+            } catch { model.error = error.localizedDescription }
+        }
+        return true
     }
     private var status: String {
         guard model.connected else { return model.error == nil ? "Connecting to Orca" : "Disconnected" }

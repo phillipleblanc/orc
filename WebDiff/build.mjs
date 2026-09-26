@@ -20,3 +20,12 @@ for (const [location, pkg] of Object.entries(lock.packages)) {
 }
 await writeFile(path.join(output, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n---\n\n'));
 console.log('Bundled offline diff renderer into ' + output);
+
+const markdownOutput = path.resolve(root, '../dist/MarkdownView');
+await mkdir(markdownOutput, { recursive: true });
+await build({ entryPoints: [path.join(root, 'markdown.mjs')], outfile: path.join(markdownOutput, 'markdown.js'),
+  bundle: true, minify: true, format: 'iife', target: ['safari17'], legalComments: 'linked' });
+await copyFile(path.join(root, 'markdown.html'), path.join(markdownOutput, 'index.html'));
+await copyFile(path.join(root, 'markdown.css'), path.join(markdownOutput, 'markdown.css'));
+await writeFile(path.join(markdownOutput, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n---\n\n'));
+console.log('Bundled offline Markdown renderer into ' + markdownOutput);

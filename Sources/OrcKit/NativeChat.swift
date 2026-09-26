@@ -12,6 +12,7 @@ public struct ChatTarget: Equatable {
     public let streamingText: String?
     public let supported: Bool
     public let hasLiveAgent: Bool
+    public let isLocal: Bool
     public let launchDraft: String?
 
     public init?(tab: [String: Any]) {
@@ -28,9 +29,9 @@ public struct ChatTarget: Equatable {
         launchDraft = tab["launchDraft"] as? String
         streamingText = state == "working" && status["lastAssistantMessageIsToolOutput"] as? Bool != true
             ? status["lastAssistantMessage"] as? String : nil
-        let local = status["connectionId"] == nil || status["connectionId"] is NSNull
+        isLocal = status["connectionId"] == nil || status["connectionId"] is NSNull
         supported = ["claude", "openclaude", "codex", "grok", "omp", "pi"].contains(agent ?? "")
-            && (local || !["grok", "omp", "pi"].contains(agent ?? ""))
+            && (isLocal || !["grok", "omp", "pi"].contains(agent ?? ""))
     }
     public var identity: String? {
         guard supported, let agent, let sessionID else { return nil }
@@ -152,24 +153,21 @@ public struct ChatHistory {
 /// Desktop writes do not claim a viewport or take the phone's input floor.
 /// Every write is guarded by Orca so chat text cannot land at a shell prompt.
 @MainActor public enum ChatWriter {
-    public static func send(_ text: String, target: ChatTarget, connection: StreamConnection, clientID: String) async throws {
+    public static func send(_ text: String, attachments: [ChatAttachment] = [], target: ChatTarget, connection: StreamConnection, clientID: String) async throws {
         guard target.canSend else { throw OrcError("Use Attach to finish the agent's prompt before sending a message.") }
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard text.utf8.count <= 64 * 1024 else { throw OrcError("Messages must be 64 KiB or smaller.") }
-        guard !text.hasPrefix("/") else { throw OrcError("Use Attach for agent slash commands.") }
-        guard !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t" }) else {
-            throw OrcError("Messages cannot contain terminal control characters.")
-        }
+        let writes = try ChatInput.writes(text, attachments: attachments, target: target)
+        guard !writes.isEmpty else { return }
         // Control bytes must be their own write; pasting them with message text
         // can insert literal Ctrl-U into an agent's multi-line editor.
         let lines = min(40, (target.launchDraft?.components(separatedBy: "\n").count ?? 1) + 8)
         let clear = String(repeating: "\u{15}", count: 2 * lines - 1) + String(repeating: "\u{b}", count: 2 * lines - 1)
         try await write(["text": clear, "enter": false], target: target, connection: connection, clientID: clientID)
-        try await write(["text": text, "enter": false], target: target, connection: connection, clientID: clientID)
-        // Codex's paste detector treats an immediate Enter as part of a paste.
-        // Allow the editor to settle before the separately guarded submit.
-        try await Task.sleep(for: .milliseconds(300))
+        for text in writes {
+            try await write(["text": text, "enter": false], target: target, connection: connection, clientID: clientID)
+            // Let image recognition and paste detection settle before the next
+            // attachment, text body, or separately guarded submit.
+            try await Task.sleep(for: .milliseconds(300))
+        }
         try await write(["enter": true], target: target, connection: connection, clientID: clientID)
     }
     public static func stop(target: ChatTarget, connection: StreamConnection, clientID: String) async throws {

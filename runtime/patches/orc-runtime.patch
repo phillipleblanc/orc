@@ -1,0 +1,319 @@
+--- a/package.json
++++ b/package.json
+@@ -86,7 +86,7 @@
+     "verify:localization-extraction": "node config/scripts/verify-localization-extraction.mjs",
+     "verify:localization-coverage": "node config/scripts/audit-localization-coverage.mjs --check",
+     "audit:localization": "node config/scripts/audit-localization-coverage.mjs",
+-    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json && node config/scripts/install-dev-cli.mjs",
++    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json",
+     "test:linux-cli-contract": "node config/scripts/run-linux-cli-launch-contract-docker.mjs --appimage dist/orca-linux.AppImage",
+     "test:repro:skills-cli-runtime": "pnpm run build:cli && pnpm run build:electron-vite && pnpm run verify:built-skills-cli",
+     "build:electron-vite": "node config/scripts/run-electron-vite-build.mjs",
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -1,3 +1,4 @@
++import './startup/orc-bundled-runtime-entry'
+ import { app, type BrowserWindow } from 'electron'
+ import { parseSkillShareId } from '../shared/skill-share-link'
+ import { createMacAppActivationHandler } from './window/macos-app-activation'
+--- /dev/null
++++ b/src/main/startup/orc-bundled-profile.ts
+@@ -0,0 +1,27 @@
++import { lstatSync, readFileSync, realpathSync } from 'node:fs'
++import { isAbsolute, join } from 'node:path'
++
++export function requireOrcProfile(path: string | undefined, version: string): string {
++  if (!path || !isAbsolute(path)) {
++    throw new Error(
++      'Orc runtime requires an absolute ORCA_USER_DATA_PATH for an Orc-managed profile.'
++    )
++  }
++  const profile = realpathSync(path)
++  const marker = join(profile, 'orc-runtime-profile.json')
++  if (!lstatSync(marker).isFile()) {
++    throw new Error('Orc runtime requires a regular profile ownership file.')
++  }
++  const owner = JSON.parse(readFileSync(marker, 'utf8'))
++  if (owner.schemaVersion !== 1 || owner.bundleIdentifier !== 'dev.phillipleblanc.orc.runtime') {
++    throw new Error(
++      'This profile is not owned by the bundled Orc runtime. Use a separate Orc profile.'
++    )
++  }
++  if (owner.runtimeVersion !== version) {
++    throw new Error(
++      'Orc profile version differs from this runtime. An explicit profile migration is required.'
++    )
++  }
++  return profile
++}
+--- /dev/null
++++ b/src/main/startup/orc-bundled-runtime-entry.ts
+@@ -0,0 +1,28 @@
++import { app } from 'electron'
++import { realpathSync } from 'node:fs'
++import { argvRequestsServeMode } from './serve-mode-argv'
++import { requireOrcProfile } from './orc-bundled-profile'
++
++try {
++  if (!argvRequestsServeMode(process.argv)) {
++    throw new Error('The bundled Orc runtime only supports serve mode.')
++  }
++  const profile = requireOrcProfile(process.env.ORCA_USER_DATA_PATH, app.getVersion())
++  const requested = app.commandLine.getSwitchValue('user-data-dir')
++  if (requested && realpathSync(requested) !== profile) {
++    throw new Error('The user-data-dir flag must match the Orc-managed profile.')
++  }
++  app.setPath('userData', profile)
++  app.setName('Orc Runtime')
++  process.env.ORCA_USER_DATA_PATH = profile
++  process.env.ORCA_BACKGROUND_LAUNCH = '1'
++  if (process.platform === 'darwin') {
++    app.setActivationPolicy('accessory')
++  }
++} catch (error) {
++  console.error(
++    '[orc-runtime]',
++    error instanceof Error ? error.message : 'Invalid runtime profile.'
++  )
++  app.exit(1)
++}
+--- a/src/main/startup/dev-instance-identity.ts
++++ b/src/main/startup/dev-instance-identity.ts
+@@ -2,8 +2,8 @@
+ import path from 'node:path'
+ import type { AppIdentity } from '../../shared/app-identity'
+ 
+-const BASE_APP_NAME = 'Orca'
+-const BASE_APP_USER_MODEL_ID = 'com.stablyai.orca'
++const BASE_APP_NAME = 'Orc Runtime'
++const BASE_APP_USER_MODEL_ID = 'dev.phillipleblanc.orc.runtime'
+ const MAX_LABEL_LENGTH = 80
+ 
+ export type DevInstanceIdentity = AppIdentity & {
+--- a/src/main/updater.ts
++++ b/src/main/updater.ts
+@@ -1,4 +1,4 @@
+-import type { BrowserWindow } from 'electron'
++import { app, type BrowserWindow } from 'electron'
+ import type {
+   LinuxPackageInstallInstructions,
+   UpdateCheckOptions,
+@@ -11,88 +11,91 @@
+ } from '../shared/remote-server-update'
+ import type { ReleaseBuild, ReleaseChannel } from '../shared/release-channel'
+ import type { ReleaseBuildListOptions } from './updater-release-build-cache'
+-import { UpdaterSetup, type UpdaterSetupOptions } from './updater/updater-setup'
++import type { UpdaterSetupOptions } from './updater/updater-setup'
+ import type { UpdateInstallMode } from './updater/updater-state'
+ 
+-// Keep one service instance so all public API calls share updater state and event listeners.
+-const updater = new UpdaterSetup()
++// Runtime artifacts are updated only as part of an Orc application update.
++function updateRequiresOrc(): never {
++  throw new Error('Update Orc to update its bundled runtime.')
++}
+ 
+ export type { UpdateInstallMode, UpdaterSetupOptions }
+ 
+-export function resolveUpdateInstallMode(isServeMode: boolean): UpdateInstallMode {
+-  return updater.resolveUpdateInstallMode(isServeMode)
++export function resolveUpdateInstallMode(_isServeMode: boolean): UpdateInstallMode {
++  return 'unsupported-headless-serve'
+ }
+ 
+ export function getUpdateStatus(): UpdateStatus {
+-  return updater.getUpdateStatus()
++  return { state: 'idle' }
+ }
+ 
+ export function getRemoteServerUpdateSupport(): RemoteServerUpdateSupport {
+-  return updater.getRemoteServerUpdateSupport()
++  return {
++    installMode: 'unsupported-headless-serve',
++    automatic: false,
++    reason: 'manual-service-update-required'
++  }
+ }
+ 
+ export function getRemoteServerUpdaterSnapshot(runtimeId: string): RemoteServerUpdaterSnapshot {
+-  return updater.getRemoteServerUpdaterSnapshot(runtimeId)
++  return {
++    appVersion: app.getVersion(),
++    runtimeId,
++    support: getRemoteServerUpdateSupport(),
++    status: getUpdateStatus()
++  }
+ }
+ 
+ export function checkForRemoteServerUpdate(
+-  runtimeId: string,
+-  options?: UpdateCheckOptions
++  _runtimeId: string,
++  _options?: UpdateCheckOptions
+ ): RemoteServerUpdaterSnapshot {
+-  return updater.checkForRemoteServerUpdate(runtimeId, options)
++  return updateRequiresOrc()
+ }
+ 
+-export function downloadRemoteServerUpdate(runtimeId: string): RemoteServerUpdaterSnapshot {
+-  return updater.downloadRemoteServerUpdate(runtimeId)
++export function downloadRemoteServerUpdate(_runtimeId: string): RemoteServerUpdaterSnapshot {
++  return updateRequiresOrc()
+ }
+ 
+-export function installRemoteServerUpdate(runtimeId: string): RemoteServerUpdateInstallResult {
+-  return updater.installRemoteServerUpdate(runtimeId)
++export function installRemoteServerUpdate(_runtimeId: string): RemoteServerUpdateInstallResult {
++  return updateRequiresOrc()
+ }
+ 
+-export function checkForUpdates(): void {
+-  updater.checkForUpdates()
+-}
++export function checkForUpdates(): void {}
+ 
+-export function checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
+-  updater.checkForUpdatesFromMenu(options)
++export function checkForUpdatesFromMenu(_options?: UpdateCheckOptions): void {
++  updateRequiresOrc()
+ }
+ 
+ export function downloadUpdate(): void {
+-  updater.downloadUpdate()
++  updateRequiresOrc()
+ }
+ 
+ export function quitAndInstall(): void {
+-  updater.quitAndInstall()
++  updateRequiresOrc()
+ }
+ 
+ export function isQuittingForUpdate(): boolean {
+-  return updater.isQuittingForUpdate()
++  return false
+ }
+ 
+ export async function getLinuxPackageInstallInstructions(): Promise<LinuxPackageInstallInstructions> {
+-  return updater.getLinuxPackageInstallInstructions()
++  return updateRequiresOrc()
+ }
+ 
+ export async function showLinuxPackage(): Promise<void> {
+-  return updater.showLinuxPackage()
++  return updateRequiresOrc()
+ }
+ 
+ export async function listAvailableReleaseBuilds(
+-  channel: ReleaseChannel,
+-  options?: ReleaseBuildListOptions
++  _channel: ReleaseChannel,
++  _options?: ReleaseBuildListOptions
+ ): Promise<ReleaseBuild[]> {
+-  return updater.listAvailableReleaseBuilds(channel, options)
++  return []
+ }
+ 
+-export function dismissNudge(): void {
+-  updater.dismissNudge()
+-}
++export function dismissNudge(): void {}
+ 
+-export function dismissAvailableUpdate(): void {
+-  updater.dismissAvailableUpdate()
+-}
++export function dismissAvailableUpdate(): void {}
+ 
+-export function setupAutoUpdater(mainWindow: BrowserWindow, opts?: UpdaterSetupOptions): void {
+-  updater.setupAutoUpdater(mainWindow, opts)
+-}
++export function setupAutoUpdater(_mainWindow: BrowserWindow, _opts?: UpdaterSetupOptions): void {}
+--- a/src/main/electron-updater-loader.ts
++++ b/src/main/electron-updater-loader.ts
+@@ -3,8 +3,5 @@
+ export type ElectronAutoUpdater = typeof electronUpdaterAutoUpdater
+ 
+ export function loadElectronAutoUpdater(): ElectronAutoUpdater {
+-  // Why: electron-updater validates app.getVersion() while loading. Keep the
+-  // require behind packaged-update guards so direct dev/E2E launches do not
+-  // fail before setupAutoUpdater() can return.
+-  return (require('electron-updater') as { autoUpdater: ElectronAutoUpdater }).autoUpdater
++  throw new Error('Update Orc to update its bundled runtime.')
+ }
+--- /dev/null
++++ b/src/main/orc-managed-runtime.test.ts
+@@ -0,0 +1,75 @@
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { requireOrcProfile } from './startup/orc-bundled-profile'
++import * as updater from './updater'
++import { loadElectronAutoUpdater } from './electron-updater-loader'
++
++vi.mock('electron', () => ({ app: { getVersion: () => '1.4.212' } }))
++const roots: string[] = []
++afterEach(() => {
++  roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))
++})
++function profile() {
++  const root = mkdtempSync(join(tmpdir(), 'orc-profile-test-'))
++  roots.push(root)
++  const path = join(root, 'profile')
++  mkdirSync(path)
++  return path
++}
++function mark(path: string, version = '1.4.212') {
++  writeFileSync(
++    join(path, 'orc-runtime-profile.json'),
++    JSON.stringify({
++      schemaVersion: 1,
++      bundleIdentifier: 'dev.phillipleblanc.orc.runtime',
++      runtimeVersion: version
++    })
++  )
++}
++
++describe('Orc-managed runtime', () => {
++  it('refuses an unowned profile and never writes to it', () => {
++    const path = profile()
++    writeFileSync(join(path, 'orca-data.json'), 'existing data')
++    expect(() => requireOrcProfile(path, '1.4.212')).toThrow()
++  })
++  it('accepts an owned profile only at the pinned version', () => {
++    const path = profile()
++    mark(path)
++    expect(requireOrcProfile(path, '1.4.212')).toMatch(/profile$/)
++    expect(() => requireOrcProfile(path, '1.4.211')).toThrow(/migration/)
++    expect(() => requireOrcProfile(path, '1.4.213')).toThrow(/migration/)
++  })
++  it('rejects relative paths and symlink ownership markers', () => {
++    expect(() => requireOrcProfile('relative', '1.4.212')).toThrow(/absolute/)
++    const path = profile()
++    const other = profile()
++    mark(other)
++    symlinkSync(join(other, 'orc-runtime-profile.json'), join(path, 'orc-runtime-profile.json'))
++    expect(() => requireOrcProfile(path, '1.4.212')).toThrow(/regular/)
++  })
++  it('reports manual updates and rejects every update mutation', async () => {
++    expect(updater.getRemoteServerUpdaterSnapshot('runtime').support).toEqual({
++      installMode: 'unsupported-headless-serve',
++      automatic: false,
++      reason: 'manual-service-update-required'
++    })
++    for (const action of [
++      () => updater.checkForRemoteServerUpdate('runtime'),
++      () => updater.downloadRemoteServerUpdate('runtime'),
++      () => updater.installRemoteServerUpdate('runtime'),
++      updater.checkForUpdatesFromMenu,
++      updater.downloadUpdate,
++      updater.quitAndInstall,
++      loadElectronAutoUpdater
++    ]) {
++      expect(action).toThrow(/Update Orc/)
++    }
++    updater.checkForUpdates()
++    expect(updater.isQuittingForUpdate()).toBe(false)
++    expect(await updater.listAvailableReleaseBuilds('stable')).toEqual([])
++    expect(updater.getUpdateStatus()).toEqual({ state: 'idle' })
++  })
++})

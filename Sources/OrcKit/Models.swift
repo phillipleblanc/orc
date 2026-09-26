@@ -159,6 +159,19 @@ public struct SessionService {
         let result = try await LocalRPC.call("worktree.list", ["limit": 10000])
         return try decode(result["worktrees"] ?? [])
     }
+    public func registerProject(at directory: URL, folder: Bool = false) async throws -> Workspace {
+        let path = directory.standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw OrcError("Choose an existing project directory.")
+        }
+        _ = try await LocalRPC.call("repo.add", ["path": path.path, "kind": folder ? "folder" : "git"], timeout: 60)
+        let projects = try await workspaces()
+        guard let project = projects.first(where: { $0.path == path.path && ($0.hostId == nil || $0.hostId == "local") }) else {
+            throw OrcError("The runtime accepted project registration but has not listed it yet. Check `orc projects` before trying again.")
+        }
+        return project
+    }
     public func create(name: String, worktree: String, command: String?) async throws -> String {
         let name = try validatedName(name)
         let existing = try await list()

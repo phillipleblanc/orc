@@ -2,6 +2,9 @@ import Foundation
 
 public enum SessionCreationDefaults {
     public static func project(_ query: String, in projects: [Workspace]) throws -> Workspace {
+        guard !query.isEmpty else {
+            throw OrcError("Choose a project with --project SELECTOR, or register a default with `orc projects add PATH --default`.")
+        }
         let matches = projects.filter {
             if query.hasPrefix("id:") { return $0.id == String(query.dropFirst(3)) }
             if query.hasPrefix("path:") { return $0.path == String(query.dropFirst(5)) }
@@ -10,7 +13,7 @@ public enum SessionCreationDefaults {
         }
         guard matches.count == 1, let project = matches.first else {
             if matches.isEmpty {
-                throw OrcError("Project '\(query)' is not registered in Orca. Run `orc projects` or use --project SELECTOR.")
+                throw OrcError("Project '\(query)' is not registered. Run `orc projects add PATH --default`, or use --project SELECTOR from `orc projects`.")
             }
             throw OrcError("Multiple projects match '\(query)'. Use --project id:ID or --project path:/absolute/path to choose one.")
         }

@@ -5,6 +5,8 @@ import OrcKit
 @main struct OrcApplication: App {
     @NSApplicationDelegateAdaptor(OrcApplicationDelegate.self) private var appDelegate
     @StateObject private var model = SessionModel()
+    @StateObject private var board = SessionBoardModel()
+    @Environment(\.openWindow) private var openWindow
     var body: some Scene {
         Window("Orc", id: "sessions") { SessionWindow(model: model) }
             .defaultSize(width: 380, height: 560)
@@ -12,9 +14,21 @@ import OrcKit
             .commands {
                 CommandGroup(replacing: .newItem) {
                     Button("New Session…") { model.revealWindow?(); model.showCreate = true }.keyboardShortcut("n")
+                        .disabled(model.needsRuntimeSetup)
                 }
-                CommandGroup(after: .newItem) { Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r") }
+                CommandGroup(after: .newItem) {
+                    Button("Session Overview") { openWindow(id: "overview") }
+                        .keyboardShortcut("o", modifiers: [.command, .shift])
+                    Button("Add Project…") { model.revealWindow?(); model.showProject = true }
+                        .disabled(model.needsRuntimeSetup)
+                    Button("Pair Phone…") { model.revealWindow?(); model.showPhonePairing = true }
+                        .disabled(model.needsRuntimeSetup)
+                    Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r")
+                }
             }
+        Window("Session Overview", id: "overview") { SessionBoardView(model: model, organization: board) }
+            .defaultSize(width: 1120, height: 780)
+            .windowResizability(.contentMinSize)
         Settings { ConnectionView().frame(width: 480) }
     }
 }
@@ -45,10 +59,19 @@ import OrcKit
     @Published var error: String?
     @Published var reviewError: String?
     @Published var showCreate = false
+    @Published var showProject = false
+    @Published var showPhonePairing = false
     @Published var showConnection = false
+    @Published var needsRuntimeSetup = RuntimeBootstrap.needsProfileChoice
     @Published var connected = Pairing.isConfigured
     @Published var loading = false
     @Published private(set) var notificationNavigation = UUID()
+    struct AttachmentRequest: Equatable {
+        let id = UUID()
+        let handle: String
+        let incarnation: String?
+    }
+    @Published var attachmentRequest: AttachmentRequest?
     let service = SessionService()
     var revealWindow: (() -> Void)?
     private var reviewState = AgentReviewState()
@@ -56,7 +79,8 @@ import OrcKit
     private var badgeCount: Int?
     private var badgeTask: Task<Void, Never>?
 
-    init() {
+    init(monitorSessions: Bool = true) {
+        guard monitorSessions else { return }
         do { reviewState = try AgentReviewStore.load(); unreadKeys = reviewState.unreadKeys }
         catch { reviewError = "Could not load agent review state: \(error.localizedDescription)" }
         IdleNotifications.shared.onSelect = { [weak self] target in
@@ -70,6 +94,20 @@ import OrcKit
         }
     }
     deinit { monitor?.cancel() }
+
+    func requestAttachment(to session: Session) {
+        attachmentRequest = AttachmentRequest(handle: session.handle, incarnation: session.incarnationId)
+    }
+    func takeAttachmentRequest() -> Session? {
+        guard let request = attachmentRequest else { return nil }
+        attachmentRequest = nil
+        guard let session = sessions.first(where: { $0.id == request.handle }), session.connected,
+              session.incarnationId == request.incarnation else {
+            error = "This session is no longer available to attach."
+            return nil
+        }
+        return session
+    }
 
     private func openNotification(_ target: IdleNotifications.Target) async {
         notificationNavigation = UUID()
@@ -117,6 +155,8 @@ import OrcKit
     }
     func refresh() async {
         guard !loading else { return }; loading = true; defer { loading = false }
+        needsRuntimeSetup = RuntimeBootstrap.needsProfileChoice
+        if needsRuntimeSetup { connected = false; error = nil; return }
         connected = Pairing.isConfigured
         do {
             async let listing = service.list()
@@ -125,6 +165,7 @@ import OrcKit
             let result = try await listing
             async let activity = service.activities(for: result.terminals)
             workspaces = try await spaces
+            connected = Pairing.isConfigured
             hierarchy = SessionHierarchy(sessions: result.terminals)
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
@@ -139,6 +180,7 @@ import OrcKit
             error = result.truncated ? "Orca returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
         } catch {
+            needsRuntimeSetup = error is RuntimeProfileChoiceRequired
             self.error = error.localizedDescription
             activities = [:]
             let previous = reviewState
@@ -172,9 +214,10 @@ struct SessionWindow: View {
     @State private var copied = false
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
+    @State private var requestedAttach: String?
     @State private var chatSession: String?
     @State private var pendingChat: String?
-    @State private var chatDrafts: [String: String] = [:]
+    @State private var chatDrafts: [String: ChatDraft] = [:]
     @State private var terminalGeneration = UUID()
     @State private var renamingSession: Session?
     @State private var creatingChildOf: Session?
@@ -187,11 +230,19 @@ struct SessionWindow: View {
     var visibleGroups: [SessionHierarchy.Group] { hierarchy.matching(search) }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                sidebar.frame(width: selected == nil ? nil : 260)
-                if let selected {
-                    Divider()
-                    detail(selected).frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.needsRuntimeSetup {
+                RuntimeSetupView {
+                    model.needsRuntimeSetup = false
+                    model.showProject = true
+                    Task { await model.refresh() }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: 0) {
+                    sidebar.frame(width: selected == nil ? nil : 260)
+                    if let selected {
+                        Divider()
+                        detail(selected).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             if let error = model.reviewError ?? model.error ?? notifications.warning {
@@ -202,8 +253,16 @@ struct SessionWindow: View {
         }
         .frame(minWidth: mode.minimumWidth, minHeight: 440)
         .background(SessionWindowSizer(mode: mode).allowsHitTesting(false).accessibilityHidden(true))
-        .toolbar { ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") } }
+        .toolbar {
+            ToolbarItem {
+                Button { openWindow(id: "overview") } label: { Label("Session Overview", systemImage: "square.grid.2x2") }
+                    .help("Session Overview (⇧⌘O)").accessibilityIdentifier("session-overview")
+            }
+            ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)").disabled(model.needsRuntimeSetup) }
+        }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
+        .sheet(isPresented: $model.showProject) { AddProjectView(model: model) }
+        .sheet(isPresented: $model.showPhonePairing) { PhonePairingView() }
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .sheet(isPresented: $model.showConnection, onDismiss: {
@@ -214,14 +273,20 @@ struct SessionWindow: View {
             pendingChat = nil
         }) { ConnectionView().frame(width: 500) }
         .onChange(of: model.selected) { previous, _ in
+            let explicitlyRequested = requestedAttach != nil && requestedAttach == model.selected
+            requestedAttach = nil
             let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
                 && model.sessions.contains { $0.id == previous && $0.connected }
             chatSession = nil; copied = false; pendingAttach = nil; pendingChat = nil
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
-            if (autoAttachSessions || wasAttached), let session = selected, session.connected { attach(session) }
+            if (explicitlyRequested || autoAttachSessions || wasAttached), let session = selected, session.connected { attach(session) }
             else { attachedSession = nil }
         }
-        .onAppear { model.revealWindow = { openWindow(id: "sessions") } }
+        .onAppear {
+            model.revealWindow = { openWindow(id: "sessions") }
+            openRequestedAttachment()
+        }
+        .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
         .onChange(of: model.notificationNavigation) { _, _ in search = "" }
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
@@ -254,7 +319,11 @@ struct SessionWindow: View {
                 }
             }.listStyle(.sidebar)
             if model.sessions.isEmpty, !model.loading {
-                Text("Create a session with + or ⌘N.").font(.callout).foregroundStyle(.secondary).padding()
+                if model.workspaces.isEmpty {
+                    Button("Add a Project…") { model.showProject = true }.padding()
+                } else {
+                    Text("Create a session with + or ⌘N.").font(.callout).foregroundStyle(.secondary).padding()
+                }
             }
             HStack {
                 Text("\(model.sessions.count) sessions").font(.caption).foregroundStyle(.secondary)
@@ -271,6 +340,8 @@ struct SessionWindow: View {
                     .accessibilityIdentifier("auto-attach-toggle")
                 Button { model.showConnection = true } label: { Image(systemName: model.connected ? "link" : "link.badge.plus") }
                     .buttonStyle(.borderless).help("Connection Settings").accessibilityLabel("Connection Settings")
+                Button { model.showPhonePairing = true } label: { Image(systemName: "iphone") }
+                    .buttonStyle(.borderless).help("Pair Phone").accessibilityLabel("Pair Phone")
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("Refresh Sessions").accessibilityLabel("Refresh Sessions")
             }.padding(12)
@@ -324,7 +395,7 @@ struct SessionWindow: View {
                     Button("Attach", systemImage: "terminal") { attach(session) }.disabled(!session.connected)
                 }.padding(14)
                 Divider()
-                ChatView(session: session, draft: Binding(get: { chatDrafts[session.id] ?? "" }, set: { chatDrafts[session.id] = $0 })) {
+                ChatView(session: session, draft: Binding(get: { chatDrafts[session.id] ?? ChatDraft() }, set: { chatDrafts[session.id] = $0 })) {
                     attach(session)
                 }.id(session.id)
             }
@@ -395,6 +466,12 @@ struct SessionWindow: View {
         chatSession = nil
         if Pairing.isConfigured { attachedSession = session.id }
         else { attachedSession = nil; pendingAttach = session.id; model.showConnection = true }
+    }
+    private func openRequestedAttachment() {
+        guard let session = model.takeAttachmentRequest() else { return }
+        search = ""
+        if model.selected == session.id { attach(session) }
+        else { requestedAttach = session.id; model.selected = session.id }
     }
     private func markVisibleOutputRead() {
         guard NSApplication.shared.isActive,
@@ -499,6 +576,7 @@ struct CreateSessionView: View {
     @State private var agent = "codex"
     @State private var customCommand = ""
     @State private var creating = false
+    @State private var showProject = false
     @State private var error: String?
     private var fullName: String {
         guard let parent else { return name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -521,6 +599,7 @@ struct CreateSessionView: View {
                     Text("Choose a project").tag("")
                     ForEach(model.workspaces) { Text("\($0.name) — \($0.path)").tag("id:" + $0.id) }
                 }
+                Button("Add Project…") { showProject = true }.disabled(creating)
                 Picker("Run", selection: $agent) {
                     Text("Pi").tag("pi"); Text("Codex").tag("codex"); Text("Claude Code").tag("claude")
                     Text("Terminal").tag("terminal"); Text("Custom command").tag("custom")
@@ -537,6 +616,9 @@ struct CreateSessionView: View {
                               fullName.utf8.count > 200 || workspace.isEmpty || (agent == "custom" && customCommand.isEmpty))
             }
         }.padding(24).frame(width: 550)
+        .sheet(isPresented: $showProject) {
+            AddProjectView(model: model) { project in workspace = "id:" + project.id }
+        }
         .onAppear {
             do {
                 let config = try OrcConfiguration.load()
@@ -572,7 +654,7 @@ struct CreateSessionView: View {
                 sessionName = name
             }
             let handle = try await model.service.create(name: sessionName, worktree: workspace,
-                command: agent == "terminal" ? nil : agent == "custom" ? customCommand : agent)
+                command: agent == "custom" ? customCommand : SessionType(rawValue: agent)?.command)
             await model.refresh(); model.selected = handle; dismiss()
         } catch { self.error = error.localizedDescription }
     }
@@ -622,20 +704,35 @@ struct ConnectionView: View {
     @State private var link = ""
     @State private var connecting = false
     @State private var error: String?
+    @State private var needsRuntimeSetup = RuntimeBootstrap.needsProfileChoice
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Connect to Orca").font(.title2.bold())
-            Text("In Orca, open Settings → Remote Orca Servers. Create an access link for this computer and paste it below.")
-            Text("Listing and creating sessions use the local Orca runtime. Inline terminals and `orc attach` share this connection.").foregroundStyle(.secondary)
-            SecureField("Orca runtime access link", text: $link)
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(connecting)
-                Button(connecting ? "Connecting…" : "Connect") { Task { await connect() } }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(link.isEmpty || connecting)
-            }
-        }.padding(24)
+        if needsRuntimeSetup {
+            RuntimeSetupView { needsRuntimeSetup = false; dismiss() }
+        } else {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Runtime Access").font(.title2.bold())
+                Text("Orc sets up local access when its bundled runtime starts. Terminal and chat views share that connection.")
+                Button(connecting ? "Starting…" : "Set Up Bundled Access") {
+                    Task {
+                        connecting = true; defer { connecting = false }
+                        do {
+                            _ = try await RuntimeBootstrap.ensureRunning()
+                            guard Pairing.isConfigured else { throw OrcError("The selected external runtime needs an access link below.") }
+                            dismiss()
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }.disabled(connecting)
+                Text("For an external Orca profile, paste its runtime access link from Settings → Remote Orca Servers.").foregroundStyle(.secondary)
+                SecureField("Orca runtime access link", text: $link)
+                if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(connecting)
+                    Button(connecting ? "Connecting…" : "Connect") { Task { await connect() } }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(link.isEmpty || connecting)
+                }
+            }.padding(24)
+        }
     }
     func connect() async {
         connecting = true; defer { connecting = false }

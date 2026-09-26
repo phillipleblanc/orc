@@ -9,8 +9,11 @@
 #include <spawn.h>
 #include <libproc.h>
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 
-int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int log_fd, int *pid) {
+int orc_executable_path(char *buffer, uint32_t capacity) { return _NSGetExecutablePath(buffer, &capacity); }
+
+int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int stdout_fd, int log_fd, int *pid) {
     posix_spawnattr_t attrs;
     posix_spawn_file_actions_t actions;
     int result = posix_spawnattr_init(&attrs);
@@ -20,7 +23,7 @@ int orc_spawn_backend(const char *executable, char *const argv[], char *const en
     // A separate session survives the app/CLI and its terminal.
     if (!(result = posix_spawnattr_setflags(&attrs, POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT)) &&
         !(result = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0)) &&
-        !(result = posix_spawn_file_actions_adddup2(&actions, log_fd, STDOUT_FILENO)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, stdout_fd, STDOUT_FILENO)) &&
         !(result = posix_spawn_file_actions_adddup2(&actions, log_fd, STDERR_FILENO)) &&
         !(result = posix_spawn_file_actions_addchdir_np(&actions, cwd))) {
         pid_t child;

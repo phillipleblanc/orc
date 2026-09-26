@@ -8,9 +8,12 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@pierre/diffs": "1.4.3"
+    "@pierre/diffs": "1.4.3",
+    "dompurify": "3.4.16",
+    "marked": "18.0.14"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "jsdom": "26.1.0"
   }
 }

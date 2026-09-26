@@ -7,6 +7,7 @@ public struct Pairing: Codable {
     public let deviceToken: String
     public let publicKeyB64: String
     public let scope: String?
+    public var profilePath: String?
     public static func parse(_ input: String) throws -> Pairing {
         let input = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard input.count <= 32768, let url = URLComponents(string: input), url.scheme == "orca", url.host == "pair",
@@ -27,19 +28,33 @@ public struct Pairing: Codable {
         if let path = ProcessInfo.processInfo.environment["ORC_CONFIG_DIR"] { return URL(fileURLWithPath: path) }
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/orc")
     }
-    public static var isConfigured: Bool { FileManager.default.fileExists(atPath: directory.appendingPathComponent("connection.json").path) }
+    public static var isConfigured: Bool { (try? load()) != nil }
     public static func load() throws -> Pairing {
-        do { return try JSONDecoder().decode(Pairing.self, from: Data(contentsOf: directory.appendingPathComponent("connection.json"))) }
-        catch { throw OrcError("Connect Orc once: open Orc’s Connection settings, or run `orc connect` and paste a runtime access link from Orca → Settings → Remote Orca Servers.") }
+        try load(from: directory, profile: RuntimeMetadata.directory)
     }
-    public func save() throws {
-        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temp = Self.directory.appendingPathComponent(".connection-\(UUID().uuidString)")
+    static func load(from directory: URL, profile: URL) throws -> Pairing {
+        let pairing: Pairing
+        do { pairing = try JSONDecoder().decode(Self.self, from: Data(contentsOf: directory.appendingPathComponent("connection.json"))) }
+        catch { throw OrcError("Runtime access is not configured. Start the bundled runtime with `orc status`, or use `orc connect` with an access link for the selected external profile.") }
+        if let path = pairing.profilePath, URL(fileURLWithPath: path).resolvingSymlinksInPath().path != profile.resolvingSymlinksInPath().path {
+            throw OrcError("The saved connection belongs to another runtime profile. Use that profile's ORC_CONFIG_DIR or connect this profile explicitly.")
+        }
+        if try RuntimeProfile.ownership(at: profile) != nil,
+           pairing.publicKeyB64 != (try BootstrapAccess.publicKey(profile: profile)) {
+            throw OrcError("The saved connection does not match this profile's server key. Connect this profile explicitly; existing credentials were preserved.")
+        }
+        return pairing
+    }
+    public func save(to directory: URL = Self.directory, profile: URL = RuntimeMetadata.directory) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temp = directory.appendingPathComponent(".connection-\(UUID().uuidString)")
         let fd = Darwin.open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw OrcError("Cannot save the Orc connection.") }
         defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temp) }
-        try writeAll(fd, JSONEncoder().encode(self))
-        guard Darwin.rename(temp.path, Self.directory.appendingPathComponent("connection.json").path) == 0 else {
+        var scoped = self
+        scoped.profilePath = profile.resolvingSymlinksInPath().path
+        try writeAll(fd, JSONEncoder().encode(scoped))
+        guard Darwin.rename(temp.path, directory.appendingPathComponent("connection.json").path) == 0 else {
             throw OrcError("Cannot save the Orc connection.")
         }
     }

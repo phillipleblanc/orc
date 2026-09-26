@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import socket
@@ -22,7 +23,7 @@ import uuid
 assert sys.argv[1:] == ['--restart-test-runtime']
 assert os.environ.get('ORCA_USER_DATA_PATH') and os.environ.get('ORC_CONFIG_DIR')
 ROOT = Path(__file__).resolve().parents[1]
-CLI = str(ROOT / '.build/debug/orc')
+CLI = str(Path(os.environ.get('ORC_TEST_CLI', ROOT / '.build/debug/orc')).resolve())
 PROFILE = Path(os.environ['ORCA_USER_DATA_PATH']).resolve()
 assert PROFILE != (Path.home() / 'Library/Application Support/orca').resolve()
 assert Path(os.environ['ORC_CONFIG_DIR']).resolve() != (Path.home() / '.config/orc').resolve()
@@ -55,7 +56,8 @@ def stop_runtime(owned):
     assert {t['handle'] for t in rpc('terminal.list', limit=10000)['terminals']} == set(owned), 'Unowned sessions present'
     meta = metadata()
     args = subprocess.check_output(['ps', '-p', str(meta['pid']), '-o', 'args='], text=True)
-    assert '--serve' in args and '--user-data-dir=' + str(PROFILE) in args, 'Unowned runtime'
+    selected_profile = re.search(r'--user-data-dir=(.*?) --serve(?: |$)', args)
+    assert selected_profile and Path(selected_profile[1]).resolve() == PROFILE, 'Unowned runtime'
     os.kill(meta['pid'], signal.SIGTERM)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:

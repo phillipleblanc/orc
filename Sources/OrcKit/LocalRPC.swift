@@ -10,8 +10,7 @@ public struct RuntimeMetadata: Decodable {
     public let transports: [Transport]?
     public let transport: Transport?
     public static var directory: URL {
-        if let path = ProcessInfo.processInfo.environment["ORCA_USER_DATA_PATH"] { return URL(fileURLWithPath: path) }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/orca")
+        RuntimeProfile.directory()
     }
     public static func load() throws -> RuntimeMetadata {
         try load(from: directory)
