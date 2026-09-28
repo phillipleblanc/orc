@@ -31,10 +31,13 @@ struct SessionBoardView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var search = ""
     @State private var labelFilter: String?
-    @State private var dragging: String?
-    @State private var dragLocation: CGPoint?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+    @State private var drag: SessionBoardDrag?
+    @State private var scroll = BoardScrollContext()
     @State private var dropTargets: [String: BoardDropLocation] = [:]
     @GestureState private var dragActive = false
+    @State private var dragBlockedUntilRelease = false
     @State private var groupEditor: GroupEditor?
 
     private struct GroupEditor: Identifiable {
@@ -42,6 +45,15 @@ struct SessionBoardView: View {
         let name: String
         let isNew: Bool
     }
+
+    private var displayedBoard: SessionBoard {
+        if let drag, drag.phase == .dragging { return drag.preview }
+        return organization.board
+    }
+    private var gridAnimation: Animation? {
+        reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 0.84)
+    }
+    private var viewport: CGRect { dropTargets["viewport"]?.frame ?? .zero }
 
     private var filteredSessions: [Session] {
         model.sessions.filter { session in
@@ -71,12 +83,18 @@ struct SessionBoardView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 24) {
-                        ForEach(organization.board.groups) { group in
+                        ForEach(displayedBoard.groups) { group in
                             section(id: group.id, name: group.name)
                         }
                         section(id: nil, name: "Ungrouped")
-                    }.padding(24)
-                }.background(Color(nsColor: .underPageBackgroundColor))
+                    }
+                    .padding(24)
+                    .animation(gridAnimation, value: displayedBoard)
+                    .animation(gridAnimation, value: drag?.phase)
+                    .background(BoardScrollProbe(scroll: scroll).frame(width: 0, height: 0))
+                }
+                .background(Color(nsColor: .underPageBackgroundColor))
+                .modifier(BoardDropTarget(id: "viewport", groupID: nil, anchor: nil))
             }
             if let error = organization.error ?? model.reviewError ?? model.error {
                 Divider()
@@ -90,12 +108,22 @@ struct SessionBoardView: View {
         .frame(minWidth: 700, minHeight: 440)
         .coordinateSpace(name: "sessionBoard")
         .onPreferenceChange(BoardDropLocations.self) { dropTargets = $0 }
+        .overlay(alignment: .topLeading) { floatingCard }
+        .simultaneousGesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("sessionBoard"))
+            .updating($dragActive) { _, active, _ in active = true }
+            .onChanged { value in updateDrag(start: value.startLocation, location: value.location) }
+            .onEnded { value in
+                updateDrag(start: value.startLocation, location: value.location)
+                endDrag(commit: viewport.contains(value.location))
+                dragBlockedUntilRelease = false
+            })
+        .onExitCommand { endDrag(commit: false) }
         .navigationTitle("Session Overview")
         .toolbar {
             ToolbarItem {
                 Button { groupEditor = GroupEditor(id: UUID().uuidString, name: "", isNew: true) } label: {
                     Label("New Group", systemImage: "folder.badge.plus")
-                }.help("Create a group").disabled(!organization.loaded || model.needsRuntimeSetup)
+                }.help("Create a group").disabled(!organization.loaded || model.needsRuntimeSetup || drag != nil)
             }
             ToolbarItem {
                 Button { Task { await model.refresh() } } label: { Label("Refresh Sessions", systemImage: "arrow.clockwise") }
@@ -111,9 +139,30 @@ struct SessionBoardView: View {
             }
         }
         .onAppear { reconcile() }
-        .onChange(of: model.sessions) { _, _ in reconcile() }
+        .onChange(of: model.sessions) { _, _ in
+            reconcile()
+            if let drag, !model.sessions.contains(where: { $0.id == drag.session.id }) { self.drag = nil }
+        }
         .onChange(of: dragActive) { _, active in
-            if !active { dragging = nil; dragLocation = nil }
+            if active { dragBlockedUntilRelease = false }
+            if !active, drag?.phase == .dragging { endDrag(commit: false) }
+        }
+        .onChange(of: controlActiveState) { _, state in
+            if state != .key { endDrag(commit: false) }
+        }
+        .onChange(of: search) { _, _ in drag = nil }
+        .onChange(of: labelFilter) { _, _ in drag = nil }
+        .onDisappear { drag = nil }
+        .task(id: drag?.id) {
+            while !Task.isCancelled, drag?.phase == .dragging {
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+                guard let current = drag, current.phase == .dragging else { return }
+                if scroll.scroll(pointer: current.location, viewport: viewport) {
+                    // Geometry preferences arrive after the scroll view lays out its new visible cells.
+                    await Task.yield()
+                    drag?.reflow(at: current.location, targets: Array(dropTargets.values))
+                }
+            }
         }
     }
 
@@ -135,8 +184,8 @@ struct SessionBoardView: View {
     }
 
     private func section(id: String?, name: String) -> some View {
-        let sessions = organization.board.sessions(in: id, from: filteredSessions)
-        let allSessions = organization.board.sessions(in: id, from: model.sessions)
+        let sessions = displayedBoard.sessions(in: id, from: filteredSessions)
+        let allSessions = displayedBoard.sessions(in: id, from: model.sessions)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: id == nil ? "tray" : "rectangle.3.group").foregroundStyle(.secondary)
@@ -165,35 +214,69 @@ struct SessionBoardView: View {
                         model.requestAttachment(to: session)
                         openWindow(id: "sessions")
                     }
-                    .opacity(dragging == session.notesKey ? 0.5 : 1)
-                    .simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("sessionBoard"))
-                        .updating($dragActive) { _, active, _ in active = true }
-                        .onChanged { value in
-                            dragging = session.notesKey
-                            dragLocation = value.location
+                    .opacity(drag?.key == session.notesKey ? 0 : 1)
+                    .overlay {
+                        if drag?.key == session.notesKey {
+                            RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.06))
+                                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(0.35),
+                                    style: StrokeStyle(lineWidth: 1.5, dash: [5])))
+                                .allowsHitTesting(false)
                         }
-                        .onEnded { value in
-                            finishDrag(session.notesKey, at: value.location)
-                        })
-                    .modifier(BoardDropTarget(id: "card:" + session.id, groupID: id, anchor: session.notesKey,
-                                              targeted: target(at: dragLocation)?.anchor == session.notesKey && dragging != nil))
+                    }
+                    .modifier(BoardDropTarget(id: "card:" + session.id, groupID: id, anchor: session.notesKey))
                 }
             }
             BoardDropArea(empty: sessions.isEmpty, message: emptyMessage(allSessions: allSessions))
-                .modifier(BoardDropTarget(id: "group:" + (id ?? "ungrouped"), groupID: id, anchor: nil,
-                                          targeted: target(at: dragLocation)?.id == "group:" + (id ?? "ungrouped")))
+                .modifier(BoardDropTarget(id: "group:" + (id ?? "ungrouped"), groupID: id, anchor: nil))
+        }
+        .frame(minHeight: drag?.phase == .dragging ? drag?.sectionHeights["section:" + (id ?? "ungrouped")] : nil,
+               alignment: .top)
+        .modifier(BoardDropTarget(id: "section:" + (id ?? "ungrouped"), groupID: id, anchor: nil))
+    }
+
+    @ViewBuilder private var floatingCard: some View {
+        if let drag {
+            BoardSessionCard(session: drag.session, activity: model.activity(for: drag.session), organization: organization,
+                             earlier: nil, later: nil, attach: {})
+                .frame(width: drag.cardFrame.width, height: drag.cardFrame.height)
+                .scaleEffect(drag.phase == .settling || reduceMotion ? 1 : 1.025)
+                .shadow(color: .black.opacity(drag.phase == .settling ? 0 : 0.24), radius: 16, y: 8)
+                .position(x: drag.cardFrame.midX, y: drag.cardFrame.midY)
+                .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86), value: drag.phase)
+                .allowsHitTesting(false).accessibilityHidden(true)
         }
     }
 
-    private func target(at location: CGPoint?) -> BoardDropLocation? {
-        guard let location, let dragging else { return nil }
-        return dropTargets.values.first { $0.frame.contains(location) && $0.anchor != dragging }
+    private func updateDrag(start: CGPoint, location: CGPoint) {
+        guard !dragBlockedUntilRelease else { return }
+        if drag == nil {
+            guard organization.loaded, viewport.contains(start),
+                  let source = dropTargets.values.first(where: { $0.anchor != nil && $0.frame.contains(start) }),
+                  let session = filteredSessions.first(where: { $0.notesKey == source.anchor }) else { return }
+            let heights = dropTargets.filter { $0.key.hasPrefix("section:") }.mapValues { $0.frame.height }
+            drag = SessionBoardDrag(session: session, board: organization.board, frame: source.frame,
+                                    start: start, sectionHeights: heights)
+        }
+        guard drag?.phase == .dragging else { return }
+        drag?.reflow(at: location, targets: Array(dropTargets.values))
     }
 
-    private func finishDrag(_ key: String, at location: CGPoint) {
-        defer { dragging = nil; dragLocation = nil }
-        guard model.sessions.contains(where: { $0.notesKey == key }), let destination = target(at: location) else { return }
-        organization.update { $0.move(key, to: destination.groupID, before: destination.anchor) }
+    private func endDrag(commit: Bool) {
+        guard let current = drag, current.phase == .dragging else { return }
+        if !commit { dragBlockedUntilRelease = true }
+        drag?.phase = .ending
+        if commit, model.sessions.contains(where: { $0.id == current.session.id }) {
+            organization.update { current.apply(to: &$0) }
+        }
+        Task { @MainActor in
+            // Settle into the saved layout, including a restored layout after cancellation or a failed save.
+            try? await Task.sleep(for: .milliseconds(32))
+            guard drag?.id == current.id else { return }
+            if let frame = dropTargets["card:" + current.session.id]?.frame { drag?.landingFrame = frame }
+            drag?.phase = .settling
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 240))
+            if drag?.id == current.id { drag = nil }
+        }
     }
 
     private func emptyMessage(allSessions: [Session]) -> String {
@@ -358,13 +441,6 @@ private struct BoardDropArea: View {
     }
 }
 
-private struct BoardDropLocation: Equatable {
-    let id: String
-    let groupID: String?
-    let anchor: String?
-    let frame: CGRect
-}
-
 private struct BoardDropLocations: PreferenceKey {
     static var defaultValue: [String: BoardDropLocation] = [:]
     static func reduce(value: inout [String: BoardDropLocation], nextValue: () -> [String: BoardDropLocation]) {
@@ -376,10 +452,8 @@ private struct BoardDropTarget: ViewModifier {
     let id: String
     let groupID: String?
     let anchor: String?
-    let targeted: Bool
     func body(content: Content) -> some View {
         content
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.accentColor, lineWidth: targeted ? 3 : 0).allowsHitTesting(false))
             .background(GeometryReader { geometry in
                 Color.clear.preference(key: BoardDropLocations.self, value: [id: BoardDropLocation(
                     id: id, groupID: groupID, anchor: anchor, frame: geometry.frame(in: .named("sessionBoard")))])
