@@ -3,6 +3,7 @@ import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { AgentDirectory } from './agents.ts'
 import { Devices, pairingLink } from './devices.ts'
 import { loadOrCreateKeypair } from './e2ee.ts'
 import { createHandlers } from './methods.ts'
@@ -49,8 +50,9 @@ await projects.load()
 const devices = new Devices(profile)
 await devices.load()
 const keypair = await loadOrCreateKeypair(profile)
+const agents = new AgentDirectory(store, projects, profile)
 const discovered = await store.discover()
-const handlers = createHandlers({ runtimeId, version: VERSION, store, projects })
+const handlers = createHandlers({ runtimeId, version: VERSION, store, projects, agents })
 const websocket = new WebSocketRpcServer({
   host: values.host!, port: Number(values.port), keypair, devices, runtimeId, handlers,
   streaming: { 'terminal.multiplex': terminalMultiplex(store) },

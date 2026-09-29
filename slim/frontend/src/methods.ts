@@ -1,43 +1,57 @@
-import { homedir, userInfo } from 'node:os'
+import { homedir } from 'node:os'
+import type { AgentMonitor, AgentState } from './agent-monitor.ts'
+import { isAgentKind, type AgentKind } from './agent-hooks.ts'
+import type { AgentDirectory } from './agents.ts'
 import { rowText } from './emulator.ts'
+import { loginEnvironment, userShell } from './login-environment.ts'
 import { RpcError, type Handlers } from './rpc-server.ts'
 import type { Projects } from './projects.ts'
+import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
-export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1']
+export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1']
 
 export type Runtime = {
   runtimeId: string
   version: string
   store: SessionStore
   projects: Projects
+  agents: AgentDirectory
 }
 
-const STRIPPED_PREFIXES = ['ORCA_', 'ORC_', 'ELECTRON_', 'HERDR_', 'TERM_PROGRAM']
-const STRIPPED_KEYS = new Set(['NODE_OPTIONS', 'NODE_REPL_EXTERNAL_MODULE', 'TMUX', 'TMUX_PANE', 'TERM_SESSION_ID', 'ITERM_SESSION_ID'])
+const MAX_WAIT_MS = 10 * 60_000
 
-/** The environment a session's program starts with: the frontend's own, minus host-terminal and runtime identity. */
-export function sessionEnvironment(base: NodeJS.ProcessEnv, name: string): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined || STRIPPED_KEYS.has(key) || STRIPPED_PREFIXES.some((prefix) => key.startsWith(prefix))) continue
-    env[key] = value
+/** `codex …`, `claude …` or `pi …` commands start an agent with status reporting. */
+function agentCommand(command: string): { agent: AgentKind; args: string[] } | null {
+  const words = command.trim().split(/\s+/)
+  const agent = words[0]?.split('/').pop()
+  if (!isAgentKind(agent) || words.some((word) => /['"\\$`;&|<>()]/.test(word))) return null
+  return { agent, args: words.slice(1).filter((word) => !(agent === 'codex' && word === '--no-daemon')) }
+}
+
+/** Orc's `terminal.agentStatus` vocabulary. */
+function terminalStatus(state: AgentState | undefined): string | null {
+  return state === 'working' ? 'working' : state === 'permission' ? 'permission' : state === 'idle' ? 'idle' : null
+}
+
+/** Orca's session-tab `agentStatus` shape, which Orc and the mobile app read for activity and chat. */
+function tabAgentStatus(monitor: AgentMonitor | undefined): Record<string, unknown> | null {
+  if (!monitor || monitor.state === 'ended') return null
+  const state = monitor.effectiveState
+  return {
+    agentType: monitor.kind,
+    state: state === 'working' ? 'working' : state === 'permission' ? 'blocked' : state === 'idle' ? 'done' : 'waiting',
+    ...(monitor.providerSession.id ? { providerSession: monitor.providerSession } : {}),
+    ...(monitor.lastAssistantMessage ? { lastAssistantMessage: monitor.lastAssistantMessage } : {}),
+    ...(monitor.dialog ? { interactivePrompt: monitor.dialog } : {}),
+    restoredUnconfirmed: false
   }
-  env.TERM = 'xterm-256color'
-  env.COLORTERM = 'truecolor'
-  env.LANG ??= 'en_US.UTF-8'
-  env.ORC_SESSION_NAME = name
-  return env
-}
-
-function userShell(): string {
-  return userInfo().shell || process.env.SHELL || '/bin/zsh'
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects } = runtime
+  const { store, projects, agents } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -60,7 +74,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       worktreePath: worktree.path,
       connected: target.connected,
       writable: target.connected,
-      agentIdentity: null,
+      agentIdentity: target.meta.agent ?? null,
       incarnationId: target.meta.incarnationId,
       tabId: target.meta.id,
       leafId: target.meta.id,
@@ -72,17 +86,24 @@ export function createHandlers(runtime: Runtime): Handlers {
     const project = params.worktree ? projects.resolve(String(params.worktree)) : undefined
     if (params.worktree && !project) throw new RpcError('not_found', `no project ${params.worktree}`)
     const name = String(params.name ?? params.title ?? '')
+    const cwd = typeof params.cwd === 'string' ? params.cwd : project?.path ?? homedir()
+    const launch = isAgentKind(params.agent) ? { agent: params.agent as AgentKind, args: [] }
+      : typeof params.command === 'string' && !Array.isArray(params.argv) ? agentCommand(params.command) : null
+    if (launch) {
+      const created = await agents.launch({ agent: launch.agent, args: launch.args, name, cwd, project: project ? projects.worktreeId(project) : undefined,
+        cols: Number(params.cols ?? 120), rows: Number(params.rows ?? 40) })
+      return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
+    }
     const argv: string[] = Array.isArray(params.argv) ? params.argv.map(String)
       : params.command ? [userShell(), '-l', '-c', String(params.command)] : [userShell(), '-l']
     const created = await store.create({
       name,
-      cwd: typeof params.cwd === 'string' ? params.cwd : project?.path ?? homedir(),
+      cwd,
       argv,
-      env: sessionEnvironment(process.env, name),
+      env: sessionEnvironment(await loginEnvironment(), name, { ORCA_USER_DATA_PATH: store.profile }),
       cols: Number(params.cols ?? 120),
       rows: Number(params.rows ?? 40),
       project: project?.id,
-      agent: typeof params.agent === 'string' ? params.agent : undefined,
       parent: typeof params.parent === 'string' ? params.parent : undefined
     })
     return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
@@ -119,7 +140,8 @@ export function createHandlers(runtime: Runtime): Handlers {
     'session.tabs.listAll': () => ({
       snapshots: [{
         tabs: store.list().map((target) => ({
-          type: 'terminal', terminal: target.handle, parentTabId: target.meta.id, leafId: target.meta.id, title: target.meta.name, agentStatus: null
+          type: 'terminal', terminal: target.handle, parentTabId: target.meta.id, leafId: target.meta.id, title: target.meta.name,
+          agentStatus: tabAgentStatus(agents.monitor(target)), ...(target.meta.agent ? { launchAgent: target.meta.agent } : {})
         }))
       }]
     }),
@@ -157,13 +179,44 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'terminal.agentStatus': (params) => {
       const target = session(params.terminal)
-      return { agentStatus: { handle: target.handle, isRunningAgent: false, status: null } }
+      const monitor = agents.monitor(target)
+      const running = Boolean(monitor && monitor.state !== 'ended' && target.connected)
+      return { agentStatus: { handle: target.handle, isRunningAgent: running, status: running ? terminalStatus(monitor!.effectiveState) : null } }
     },
+
+    'agent.spawn': (params) => {
+      if (!isAgentKind(params.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude or pi')
+      if (typeof params.name !== 'string') throw new RpcError('invalid_argument', 'name is required')
+      return agents.spawn({
+        agent: params.agent, name: params.name,
+        project: typeof params.project === 'string' ? params.project : undefined,
+        cwd: typeof params.cwd === 'string' ? params.cwd : undefined,
+        prompt: typeof params.prompt === 'string' ? params.prompt : undefined,
+        parent: typeof params.parent === 'string' ? params.parent : undefined,
+        model: typeof params.model === 'string' ? params.model : undefined,
+        effort: typeof params.effort === 'string' ? params.effort : undefined,
+        args: Array.isArray(params.args) ? params.args.map(String) : undefined,
+        timeoutMs: Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 90_000))
+      })
+    },
+
+    'agent.send': (params) => {
+      if (typeof params.to !== 'string' || typeof params.text !== 'string') throw new RpcError('invalid_argument', 'to and text are required')
+      return agents.send(params.to, params.text, typeof params.from === 'string' && params.from ? params.from : undefined)
+    },
+
+    'agent.list': () => ({ agents: agents.list() }),
+
+    'agent.status': (params) => agents.status(String(params.name)),
+
+    'agent.wait': (params) => agents.wait(String(params.name), Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 30_000))),
+
+    'agent.stop': (params) => agents.stop(String(params.name), params.kill === true),
 
     'terminal.read': async (params) => {
       const target = session(params.terminal)
       const state = await target.state(Number(params.scrollbackRows ?? 0))
-      return { read: { handle: target.handle, lines: state.normal.map(rowText) } }
+      return { read: { handle: target.handle, lines: (state.alternate ?? state.normal).map(rowText) } }
     },
 
     'slim.screen': async (params) => {

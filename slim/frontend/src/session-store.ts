@@ -27,6 +27,8 @@ export type CreateOptions = {
   project?: string
   agent?: string
   parent?: string
+  /** Where the agent's status hooks append lifecycle events. */
+  events?: string
 }
 
 export type StoreOptions = {
@@ -108,7 +110,8 @@ export class SessionStore extends EventEmitter {
       argv: options.argv,
       ...(options.project ? { project: options.project } : {}),
       ...(options.agent ? { agent: options.agent } : {}),
-      ...(options.parent ? { parent: options.parent } : {})
+      ...(options.parent ? { parent: options.parent } : {}),
+      ...(options.events ? { events: options.events } : {})
     }
     try {
       await writeFile(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), { mode: 0o600 })
@@ -149,6 +152,7 @@ export class SessionStore extends EventEmitter {
 
   private track(session: TerminalSession): void {
     this.sessions.set(session.meta.name, session)
+    this.emit('added', session)
     const finish = async () => {
       if (this.sessions.get(session.meta.name) !== session) return
       this.sessions.delete(session.meta.name)

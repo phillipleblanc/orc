@@ -24,6 +24,8 @@ export type SessionMeta = {
   project?: string
   agent?: string
   parent?: string
+  /** Where the agent's status hooks append lifecycle events. */
+  events?: string
 }
 
 /**
@@ -109,6 +111,7 @@ export class TerminalSession extends EventEmitter {
     this.term = term
     this.feed = new TerminalFeed(term)
     this.serializer = serializer
+    term.onTitleChange((title) => this.emit('title', title))
   }
 
   static async open(dir: string, meta: SessionMeta, options: { policy?: Partial<CheckpointPolicy>; answerQueries?: boolean } = {}): Promise<TerminalSession> {
@@ -260,6 +263,26 @@ export class TerminalSession extends EventEmitter {
     this.subscribers.delete(subscriber)
   }
 
+  /** The window title most recently set by the program. */
+  get title(): string {
+    return (this.term as any)._core._inputHandler._windowTitle ?? ''
+  }
+
+  /** Text of the visible rows, top to bottom, once everything received has been parsed. */
+  screenText(): Promise<string[]> {
+    return this.barrier(() => {
+      const buffer = this.term.buffer.active
+      const rows: string[] = []
+      for (let y = buffer.viewportY; y < buffer.viewportY + this.term.rows; y++) rows.push(buffer.getLine(y)?.translateToString(true) ?? '')
+      return rows
+    })
+  }
+
+  /** Whether the program asked for pasted text to be bracketed, so newlines in it are not submitted. */
+  bracketedPaste(): Promise<boolean> {
+    return this.barrier(() => this.term.modes.bracketedPasteMode)
+  }
+
   state(scrollbackRows?: number) {
     return this.barrier(() => ({ ...screenState(this.term, scrollbackRows), appliedOffset: this.appliedOffset }))
   }
@@ -311,6 +334,7 @@ export class TerminalSession extends EventEmitter {
       this.appliedOffset = end
       if (end >= this.liveFrom) this.parsingLive = true
       for (const subscriber of this.subscribers) subscriber.output(bytes, start)
+      this.emit('applied')
       this.scheduleCheckpoint()
     })
   }

@@ -23,6 +23,7 @@ flowchart TB
         pairing["Devices and pairing"]
         store["Session store<br/>create · discover · rename · retire"]
         sessions["Terminal session × N<br/>holder client · TerminalFeed<br/>xterm emulator · checkpoints"]
+        agents["Agent directory<br/>status monitors · message queues"]
     end
 
     subgraph holders["Holders · Swift · one per session"]
@@ -43,12 +44,16 @@ flowchart TB
     ws --> methods
     ws --> mux
     methods --> store
+    methods --> agents
+    agents --> store
+    agents -- "reads agent-events" --> events[("agent-events/UUID.jsonl")]
     store --> sessions
     mux --> sessions
     sessions -- "holder protocol<br/>sessions/NAME/sock" --> holderA
     sessions -- "holder protocol" --> holderB
     holderA -- "PTY" --> programA
     holderB -- "PTY" --> programB
+    programA -. "status hooks append" .-> events
 ```
 
 | | Holder | Frontend |
@@ -74,6 +79,12 @@ flowchart LR
     subgraph sessionFiles["sessions/NAME/ · written by the frontend"]
         meta["meta.json"]
         checkpoint["checkpoint.json"]
+        queue["queue.json"]
+    end
+
+    agentProcess(["agent status hooks"])
+    subgraph eventFiles["written by agents"]
+        events["agent-events/UUID.jsonl"]
     end
 
     subgraph profileFiles["profile · written by the frontend"]
@@ -81,12 +92,14 @@ flowchart LR
         identity["orca-e2ee-keypair.json · orca-devices.json"]
         projects["projects.json"]
         binaries["holders/HASH/orc-holder"]
+        hookFiles["agent-hooks/HASH/<br/>orc-agent-hook · claude-settings.json · orc-agent-status.ts"]
         ended["ended/NAME.TIME/"]
     end
 
     holderProcess --> holderFiles
     frontendProcess --> sessionFiles
     frontendProcess --> profileFiles
+    agentProcess --> eventFiles
 ```
 
 The session directory's name is the session's identity. A holder writes only its socket and its own
@@ -124,6 +137,33 @@ sequenceDiagram
 A checkpoint holds xterm's exact internal state for the build that wrote it, plus a serialized screen
 with 500 rows of scrollback that any build can replay. Output after the checkpoint stays in the
 holder's ring until the next checkpoint trims it.
+
+## Agent status and messages
+
+```mermaid
+sequenceDiagram
+    participant L as Sender (orc agent send)
+    participant F as Frontend
+    participant E as agent-events file
+    participant H as Holder
+    participant A as Agent
+
+    L->>F: agent.send(to, text, from)
+    F->>F: add to the agent's queue
+    A->>E: Stop hook appends an event
+    F->>E: read new events: idle
+    F->>H: input: bracketed paste of "[from SENDER]" and the text, then Enter
+    H->>A: typed on the PTY
+    A->>E: UserPromptSubmit
+    F->>E: read new events: working, delivery confirmed
+    Note over F: the next queued message waits for idle
+    A->>E: Stop
+    L->>F: agent.wait resolves: done
+```
+
+Hooks and the Pi extension are supplied on the agent's command line when it starts, and write only to
+the event file named by `ORC_AGENT_EVENTS`. The frontend derives each agent's state from that file, so
+a frontend that starts later replays it and reaches the same state.
 
 ## Frontend start
 
@@ -179,3 +219,6 @@ flowchart TB
 | Untrimmed output exceeds the holder's ring | The oldest output is dropped; the next attach reports a gap. |
 | A client reads too slowly | The holder disconnects it; the client reattaches from its last offset. |
 | A session name is taken | Creation fails; names are unique per profile. |
+| An agent runs while no frontend runs | Its hooks keep appending events; the next frontend replays them. Queued messages wait in `queue.json`. |
+| A message cannot be confirmed within 20 s | The next queued message may be delivered; the agent reports an unconfirmed delivery. |
+| An agent was started without Orc's hooks | It reports no agent state. |

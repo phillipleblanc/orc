@@ -1,0 +1,123 @@
+import assert from 'node:assert/strict'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { test } from 'node:test'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { destroyProfile, FRONTEND, Frontend, HOLDER, isolatedEnvironment, makeProfile, until } from './harness.ts'
+
+// Real agents answering one-word prompts: each turn is a small model request on the developer's account.
+const ENABLED = process.env.SLIM_AGENT_TESTS === '1'
+const here = dirname(fileURLToPath(import.meta.url))
+const ORC = process.env.ORC_CLI ?? resolve(here, '../../../.build/debug/orc')
+// Claude asks to trust every new folder; its test runs only in a folder the developer already trusts.
+const CLAUDE_DIR = process.env.SLIM_CLAUDE_TRUSTED_DIR
+const run = promisify(execFile)
+
+test('agents spawn, take messages by name, report status, and survive a frontend restart', { skip: (!ENABLED && 'set SLIM_AGENT_TESTS=1') || (!existsSync(ORC) && `build the orc CLI (${ORC})`) }, async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const project = join(profile, 'project')
+  await mkdir(project)
+  execFileSync('git', ['init', '-q', project])
+  const launcher = join(profile, 'launch-frontend')
+  await writeFile(launcher, `#!/bin/sh\nfor argument; do case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac; done\n` +
+    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}"\n`)
+  await chmod(launcher, 0o755)
+  let frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: join(profile, 'orc-config'), ORCA_USER_DATA_PATH: profile, ORCA_APP_EXECUTABLE: launcher }
+  const orc = async (args: string[], options: { caller?: string; input?: string; cwd?: string } = {}) => {
+    const child = spawn(ORC, args, { env: { ...env, ...(options.caller ? { ORC_SESSION_NAME: options.caller } : {}) }, cwd: options.cwd ?? project })
+    let stdout = '', stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.stdin.end(options.input ?? '')
+    const code = await new Promise((resolveExit) => child.on('exit', resolveExit))
+    return { code, stdout, stderr, json: () => JSON.parse(stdout) }
+  }
+  const trustProject = ['-c', `projects={"${realpathSync(project)}"={trust_level="trusted"}}`]
+  const events = async (name: string) => {
+    const agents = (await frontend.rpc('agent.list')).agents as { name: string }[]
+    assert.ok(agents.some((agent) => agent.name === name))
+    const meta = JSON.parse(await readFile(join(profile, 'sessions', name, 'meta.json'), 'utf8'))
+    return (await readFile(meta.events, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+  }
+
+  // Spawn delivers the prompt verbatim once Codex is ready.
+  const coder = await frontend.rpc('agent.spawn', { agent: 'codex', name: 'coder', cwd: project, prompt: 'Reply with only the word ALPHA.', effort: 'low', args: trustProject })
+  assert.equal(coder.delivered, true)
+  const first = await orc(['agent', 'wait', 'coder', '--json'])
+  assert.equal(first.code, 0, first.stderr)
+  assert.equal(first.json().lastAssistantMessage, 'ALPHA')
+  assert.equal((await frontend.rpc('terminal.agentStatus', { terminal: 'coder' })).agentStatus.status, 'idle')
+
+  // Another agent messages it by name; the message starts with a line naming the sender.
+  const sent = await orc(['agent', 'send', 'coder', '--json'], { caller: 'lead', input: 'Reply with only the word BRAVO.\n' })
+  assert.equal(sent.code, 0, sent.stderr)
+  const second = await orc(['agent', 'wait', 'coder', '--json'])
+  assert.equal(second.json().lastAssistantMessage, 'BRAVO')
+  const prompts = (await events('coder')).filter((event) => event.event === 'UserPromptSubmit').map((event) => event.payload.prompt)
+  assert.deepEqual(prompts, ['Reply with only the word ALPHA.', '[from lead]\nReply with only the word BRAVO.'])
+
+  // Messages sent while the agent is busy are delivered one turn at a time.
+  await orc(['agent', 'send', 'coder'], { caller: 'lead', input: 'Reply with only the word ONE.' })
+  await orc(['agent', 'send', 'coder'], { caller: 'lead', input: 'Reply with only the word TWO.' })
+  const third = await orc(['agent', 'wait', 'coder', '--json'])
+  assert.equal(third.json().lastAssistantMessage, 'TWO')
+  const turns = (await events('coder')).filter((event) => event.event === 'Stop').length
+  assert.equal(turns, 4)
+
+  // An approval prompt shows as permission until the agent is interrupted.
+  await frontend.rpc('agent.spawn', { agent: 'codex', name: 'asker', cwd: project, effort: 'low', args: [...trustProject, '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="on-request"'] })
+  await orc(['agent', 'send', 'asker'], { input: 'Run the shell command `touch approval-probe` in the current directory. Do not do anything else.' })
+  await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state === 'permission', 60_000, 'asker to ask for approval')
+  assert.equal((await frontend.rpc('terminal.agentStatus', { terminal: 'asker' })).agentStatus.status, 'permission')
+  const stopped = await orc(['agent', 'stop', 'asker', '--json'])
+  assert.equal(stopped.json().interrupted, true)
+  await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state !== 'permission', 20_000, 'asker to leave the approval prompt')
+  assert.equal(existsSync(join(project, 'approval-probe')), false)
+
+  // Status comes back from the event files after a frontend restart.
+  await frontend.kill('SIGKILL')
+  frontend = await Frontend.start(profile)
+  const listed = await orc(['agent', 'list', '--json'])
+  const byName = Object.fromEntries((listed.json().agents as { name: string }[]).map((agent) => [agent.name, agent]))
+  assert.equal((byName.coder as any).state, 'idle')
+  assert.equal((byName.coder as any).lastAssistantMessage, 'TWO')
+  assert.ok((byName.coder as any).providerSession.transcriptPath.endsWith('.jsonl'))
+
+  // Pi reports through its extension; the prompt comes from standard input.
+  const helper = await orc(['agent', 'spawn', 'pi', 'helper', '--effort', 'low', '--json'], { caller: 'lead', input: 'Reply with only the word DELTA.' })
+  assert.equal(helper.code, 0, helper.stderr + helper.stdout)
+  assert.equal(helper.json().parent, 'lead')
+  const helped = await orc(['agent', 'wait', 'helper', '--json'])
+  assert.equal(helped.json().lastAssistantMessage.trim(), 'DELTA')
+
+  if (CLAUDE_DIR) {
+    const reviewer = await orc(['agent', 'spawn', 'claude', 'reviewer', '--model', 'haiku', '--json'], { input: 'Reply with only the word ECHO.', cwd: CLAUDE_DIR })
+    assert.equal(reviewer.code, 0, reviewer.stderr + reviewer.stdout)
+    await orc(['agent', 'wait', 'reviewer'])
+    const screen = await frontend.rpc('terminal.read', { terminal: 'reviewer' })
+    assert.ok(screen.read.lines.some((line: string) => line.includes('ECHO')))
+    assert.equal((await frontend.rpc('agent.status', { name: 'reviewer' })).state, 'idle')
+    // Claude reports no hook for an interrupted turn; its idle title ends the turn instead.
+    await orc(['agent', 'send', 'reviewer'], { input: 'Write a 600-word story about a lighthouse. Do not use any tools.' })
+    await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start working')
+    await orc(['agent', 'stop', 'reviewer'])
+    await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'idle', 15_000, 'reviewer to be idle after the interrupt')
+  }
+
+  // `orc new codex` starts the agent with status reporting too.
+  await orc(['projects', 'add', project, '--folder', '--json'])
+  const created = await orc(['new', 'codex', '--name', 'plain', '--project', `path:${project}`, '--json'])
+  assert.equal(created.code, 0, created.stderr)
+  const listedSessions = (await orc(['list', '--json'])).json() as { title: string; agentIdentity: string | null }[]
+  assert.equal(listedSessions.find((session) => session.title === 'plain')?.agentIdentity, 'codex')
+  await until(async () => (await frontend.rpc('terminal.agentStatus', { terminal: 'plain' })).agentStatus.isRunningAgent, 20_000, 'plain to report an agent')
+
+  for (const name of ['coder', 'asker', 'helper', 'plain', ...(CLAUDE_DIR ? ['reviewer'] : [])]) await orc(['agent', 'stop', name, '--kill'])
+  await until(async () => (await frontend.rpc('agent.list')).agents.length === 0, 20_000, 'agents to end')
+})

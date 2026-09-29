@@ -99,6 +99,11 @@ The scroll wheel uses your terminal's native scrollback for normal-screen sessio
 
 ## Task-bound agents
 
+With a runtime that advertises `orc.agents.v1`, such as the [slim runtime](slim/README.md), agents are
+sessions addressed by name: `orc agent spawn codex NAME < brief.md`, `orc agent send NAME < note.md`,
+`orc agent wait NAME`, `orc agent list`, `orc agent status NAME` and `orc agent stop NAME [--kill]`.
+The rest of this section applies to the bundled Orca runtime.
+
 Run these commands from your own Orc coordinator session:
 
 ```sh

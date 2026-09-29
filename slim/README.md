@@ -34,8 +34,10 @@ directory is the uniqueness check, and a rename moves the directory.
 | `exit.json` | holder | Exit code or signal, final output offset |
 | `meta.json` | frontend | Session id, incarnation id, name, cwd, argv, project, agent, parent |
 | `checkpoint.json` | frontend | Emulator checkpoint and the output offset it covers |
+| `queue.json` | frontend | An agent's undelivered messages |
 
-Finished sessions move to `<profile>/ended/`. Holder binaries are installed under
+An agent's lifecycle events are appended to `<profile>/agent-events/<uuid>.jsonl`, named in `meta.json`.
+The path stays valid when the session is renamed. Finished sessions move to `<profile>/ended/`. Holder binaries are installed under
 `<profile>/holders/<sha256 prefix>/orc-holder` and never replaced in place, so a session keeps the
 holder it started with while newer sessions use a newer build.
 
@@ -91,6 +93,46 @@ After the child exits, the holder serves its final output and exit status until 
 - **Snapshots and output are ordered.** A subscriber receives its snapshot inside the feed, then every
   later output chunk, so nothing is missed or repeated.
 
+## Agents
+
+An agent is a session started with Orc's status reporting. Its session name is its identity.
+`agent.spawn` and `terminal.create` with a `codex`, `claude` or `pi` command start one; programs run
+with the login shell's environment, without variables that mark the frontend's own host session.
+
+Status reporting is supplied per launch; nothing is written to `~/.codex`, `~/.claude` or `~/.pi`:
+
+| Agent | Mechanism |
+|---|---|
+| Codex | `-c hooks=…` plus `-c hooks.state=…` with the trust hash of each of Orc's hooks, so Codex's review stays in force for every other hook. Codex caps the `Interrupt` hook's timeout at 3 s and hashes the capped value. |
+| Claude | `--settings <agent-hooks>/claude-settings.json` |
+| Pi | `-e <agent-hooks>/orc-agent-status.ts` |
+
+Hooks run `orc-agent-hook`, which appends one line per event to `$ORC_AGENT_EVENTS` and prints
+nothing. The frontend's `AgentMonitor` replays the file when it starts and follows it afterwards:
+
+| Events | State |
+|---|---|
+| `SessionStart` | `idle` (ready for a prompt) |
+| `UserPromptSubmit`, tool and subagent events | `working` |
+| `PermissionRequest`, Claude permission notifications | `permission` |
+| `Stop`, Codex `Interrupt` | `idle` |
+| `SessionEnd`, program exit | `ended` |
+
+Codex fires no hook before its first prompt, so it counts as ready once its title settles without a
+spinner. Claude fires no hook for an interrupted turn, so a `working` Claude whose title shows its
+idle mark for 1.5 s without new events becomes `idle`; after `agent.stop`, the same applies to a
+pending permission prompt. A trust or hook-review dialog on screen reports `permission` whatever the
+hooks say, because a typed Enter would answer it.
+
+Messages wait in the agent's queue and are typed only while it is ready, idle and free of dialogs:
+the text as a bracketed paste, then Enter. The next message waits until a hook shows the agent
+started a turn, or 20 s. `agent.send` prefixes the text with `[from SENDER]`; `agent.spawn` types its
+prompt unchanged. `agent.wait` resolves once the agent has finished a turn after the last delivered
+message and nothing is queued.
+
+`orc agent spawn|send|list|status|wait|stop` uses these methods when the runtime advertises
+`orc.agents.v1`; commands run inside a session send its `ORC_SESSION_NAME` as the sender and parent.
+
 ## Orca compatibility
 
 The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSocket transports) and
@@ -99,7 +141,8 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 
 - **Local socket:** `status.get`, `terminal.list`, `terminal.create`, `terminal.rename`, `terminal.send`,
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
-  and `repo.add` use Orca's request and result shapes. `slim.pairing.*` issues and revokes access
+  and `repo.add` use Orca's request and result shapes, including agent identity and status.
+  `agent.*` implements the agent commands. `slim.pairing.*` issues and revokes access
   links; it is not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streaming `terminal.multiplex`.
@@ -119,6 +162,10 @@ Opt-in suites:
 
 - `SLIM_AGENT_TESTS=1 node --test test/agents.test.ts` uses the installed `codex`, `claude`, `pi` and
   `top`. It sends arrows and unsent text only, never Enter.
+- `SLIM_AGENT_TESTS=1 node --test test/agent-commands.test.ts` drives agents through `orc agent` with
+  one-word prompts, which are small model requests. Build the CLI first (`ORC_CLI_ONLY=1 swift build
+  --product orc` in the repository root). Set `SLIM_CLAUDE_TRUSTED_DIR` to a folder Claude already
+  trusts to include Claude.
 - `test/orc-cli.test.ts` uses `ORC_CLI` (default: the installed Orc).
 - `SLIM_NEXT_HOLDER=/path/to/other/orc-holder node --test test/holder-upgrade.test.ts` needs a
   second holder build.

@@ -29,7 +29,20 @@ import COrcSupport
         guard let command = args.first, command != "--help", command != "help" else { print(help); return }
         if command == "agent" {
             let arguments = Array(args.dropFirst())
-            if arguments.isEmpty || arguments == ["--help"] || arguments == ["help"] { print(AgentCommand.help); return }
+            if arguments.isEmpty || arguments == ["--help"] || arguments == ["help"] {
+                print(SessionAgentCommand.help + "\n\nWith a runtime that uses Orca orchestration:\n\n" + AgentCommand.help); return
+            }
+            if try await SessionAgentService.isSupported() {
+                let command = try SessionAgentCommand(arguments)
+                let result = try await SessionAgentService.execute(command)
+                if command.json {
+                    print(String(decoding: try JSONSerialization.data(withJSONObject: result.body, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+                } else {
+                    print(SessionAgentService.describe(command, result.body))
+                }
+                if !result.succeeded { exit(2) }
+                return
+            }
             do {
                 let agent = try AgentCommand(arguments)
                 if [.spawn, .send, .stop, .release].contains(agent.action) {
@@ -264,7 +277,7 @@ import COrcSupport
         return String(cString: buffer)
     }
     static let help = """
-    orc agent                  Spawn and manage task-bound agents (orc agent --help)
+    orc agent                  Spawn agents and message them by name (orc agent --help)
     orc — native clients for your running Orca sessions
 
     orc list [--json]                         List sessions and handles
