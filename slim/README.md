@@ -19,6 +19,9 @@ holder × N (Swift, one per session)   PTY, child process, raw output since the 
 - **Frontend** (`frontend/`): rebuilds its view of every session from the holders whenever it starts.
   Killing or upgrading it does not affect running programs.
 
+[ARCHITECTURE.md](ARCHITECTURE.md) has diagrams of the processes, on-disk state, output and checkpoint
+flow, frontend start, upgrades and failure behavior.
+
 ## Session directory
 
 Each session is `<profile>/sessions/<name>/`. The name is the session's identity: creating the
