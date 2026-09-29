@@ -1,9 +1,10 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { writeJsonFile } from './json-file.ts'
 
 export type DeviceScope = 'runtime' | 'mobile'
-export type Device = { deviceId: string; name: string; token: string; scope: DeviceScope; pairedAt: number; lastSeenAt: number }
+export type Device = { deviceId: string; name: string; token: string; scope: DeviceScope; pairedAt: number; lastSeenAt: number; address?: string }
 
 /** Paired clients and their access tokens, `<profile>/orca-devices.json`. */
 export class Devices {
@@ -35,8 +36,12 @@ export class Devices {
     return this.devices.map(({ token: _token, ...device }) => device)
   }
 
-  async create(scope: DeviceScope, name: string): Promise<Device> {
-    const device: Device = { deviceId: randomUUID(), name, token: randomBytes(24).toString('hex'), scope, pairedAt: Date.now(), lastSeenAt: 0 }
+  all(): Device[] {
+    return [...this.devices]
+  }
+
+  async create(scope: DeviceScope, name: string, address?: string): Promise<Device> {
+    const device: Device = { deviceId: randomUUID(), name, token: randomBytes(24).toString('hex'), scope, pairedAt: Date.now(), lastSeenAt: 0, ...(address ? { address } : {}) }
     this.devices.push(device)
     await this.save()
     return device
@@ -55,8 +60,7 @@ export class Devices {
   }
 
   private async save(): Promise<void> {
-    await writeFile(`${this.file}.tmp`, JSON.stringify({ devices: this.devices }, null, 2), { mode: 0o600 })
-    await rename(`${this.file}.tmp`, this.file)
+    await writeJsonFile(this.file, { devices: this.devices })
   }
 }
 

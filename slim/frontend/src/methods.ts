@@ -2,6 +2,9 @@ import { homedir } from 'node:os'
 import type { AgentMonitor, AgentState } from './agent-monitor.ts'
 import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
+import type { Catalog } from './catalog.ts'
+import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
+import type { StreamingHandler } from './websocket-server.ts'
 import { rowText } from './emulator.ts'
 import { loginEnvironment, userShell } from './login-environment.ts'
 import { RpcError, type Handlers } from './rpc-server.ts'
@@ -19,7 +22,12 @@ export type Runtime = {
   store: SessionStore
   projects: Projects
   agents: AgentDirectory
+  catalog: Catalog
+  subscriptions: ConnectionSubscriptions
 }
+
+// Orca waits this long after typing a message before pressing Enter, so the program has read the text.
+const ENTER_DELAY_MS = 500
 
 const MAX_WAIT_MS = 10 * 60_000
 
@@ -36,22 +44,8 @@ function terminalStatus(state: AgentState | undefined): string | null {
   return state === 'working' ? 'working' : state === 'permission' ? 'permission' : state === 'idle' ? 'idle' : null
 }
 
-/** Orca's session-tab `agentStatus` shape, which Orc and the mobile app read for activity and chat. */
-function tabAgentStatus(monitor: AgentMonitor | undefined): Record<string, unknown> | null {
-  if (!monitor || monitor.state === 'ended') return null
-  const state = monitor.effectiveState
-  return {
-    agentType: monitor.kind,
-    state: state === 'working' ? 'working' : state === 'permission' ? 'blocked' : state === 'idle' ? 'done' : 'waiting',
-    ...(monitor.providerSession.id ? { providerSession: monitor.providerSession } : {}),
-    ...(monitor.lastAssistantMessage ? { lastAssistantMessage: monitor.lastAssistantMessage } : {}),
-    ...(monitor.dialog ? { interactivePrompt: monitor.dialog } : {}),
-    restoredUnconfirmed: false
-  }
-}
-
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents } = runtime
+  const { store, projects, agents, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -60,10 +54,7 @@ export function createHandlers(runtime: Runtime): Handlers {
     return found
   }
 
-  const worktreeFor = (target: TerminalSession) => {
-    const project = target.meta.project ? projects.list().find((candidate) => candidate.id === target.meta.project) : undefined
-    return { id: project ? projects.worktreeId(project) : `local::${target.meta.cwd}`, path: project?.path ?? target.meta.cwd }
-  }
+  const worktreeFor = (target: TerminalSession) => catalog.worktreeFor(target)
 
   const describe = (target: TerminalSession) => {
     const worktree = worktreeFor(target)
@@ -78,7 +69,8 @@ export function createHandlers(runtime: Runtime): Handlers {
       incarnationId: target.meta.incarnationId,
       tabId: target.meta.id,
       leafId: target.meta.id,
-      executionHostId: 'local'
+      executionHostId: 'local',
+      orphaned: false
     }
   }
 
@@ -103,7 +95,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       env: sessionEnvironment(await loginEnvironment(), name, { ORCA_USER_DATA_PATH: store.profile }),
       cols: Number(params.cols ?? 120),
       rows: Number(params.rows ?? 40),
-      project: project?.id,
+      project: (project ?? projects.containing(cwd))?.id,
       parent: typeof params.parent === 'string' ? params.parent : undefined
     })
     return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
@@ -118,8 +110,47 @@ export function createHandlers(runtime: Runtime): Handlers {
       minCompatibleMobileVersion: 2,
       capabilities: CAPABILITIES,
       appVersion: runtime.version,
-      desktopWindowStatus: 'unavailable'
+      desktopWindowStatus: 'unavailable',
+      floatingWorkspaceEnabled: false,
+      hostPlatform: process.platform
     }),
+
+    'runtime.clientCapabilities.update': (params) => ({ clientCapabilities: Array.isArray(params.clientCapabilities) ? params.clientCapabilities : [] }),
+
+    'worktree.ps': (params) => {
+      const worktrees = catalog.worktreeRows()
+      if (!('afterSnapshotId' in params)) return { worktrees, totalCount: worktrees.length, truncated: false }
+      const snapshotId = catalog.snapshotId(worktrees)
+      return params.afterSnapshotId === snapshotId ? { unchanged: true, snapshotId } : { worktrees, totalCount: worktrees.length, truncated: false, snapshotId }
+    },
+
+    'worktree.show': (params) => {
+      const worktree = catalog.resolveWorktree(String(params.worktree ?? ''))
+      if (!worktree) throw new RpcError('selector_not_found', `no workspace ${String(params.worktree)}`)
+      return { worktree: { worktreeId: worktree.id, displayName: worktree.name, repo: worktree.project?.displayName ?? worktree.name, path: worktree.path } }
+    },
+
+    'worktree.activate': () => ({}),
+
+    'repo.list': () => ({ repos: catalog.repoRows() }),
+
+    'session.tabs.list': (params) => {
+      const worktree = catalog.resolveWorktree(String(params.worktree ?? ''))
+      if (!worktree) throw new RpcError('selector_not_found', `no workspace ${String(params.worktree)}`)
+      return catalog.tabSnapshot(worktree)
+    },
+
+    'session.tabs.unsubscribe': (params, context) => {
+      const worktree = catalog.resolveWorktree(String(params.worktree ?? ''))
+      const unsubscribed = worktree ? subscriptions.cancel(context.connectionId, `tabs:${worktree.id}`) : subscriptions.cancelPrefix(context.connectionId, 'tabs:') > 0
+      return { unsubscribed }
+    },
+
+    'session.tabs.activate': () => ({}),
+
+    'terminal.setDisplayMode': () => ({}),
+
+    'orchestration.workerTerminalUserInput': () => ({ changed: 0 }),
 
     'worktree.list': () => {
       const worktrees = projects.list().map((project) => ({ id: projects.worktreeId(project), path: project.path, displayName: project.displayName, hostId: 'local' }))
@@ -129,21 +160,18 @@ export function createHandlers(runtime: Runtime): Handlers {
     'repo.add': async (params) => {
       if (typeof params.path !== 'string') throw new RpcError('invalid_argument', 'path is required')
       const project = await projects.add(params.path, params.kind === 'folder' ? 'folder' : 'git')
+      catalog.changed()
       return { repo: { id: project.id, path: project.path, displayName: project.displayName } }
     },
 
-    'terminal.list': () => {
-      const terminals = store.list().map(describe)
+    'terminal.list': (params) => {
+      const worktree = typeof params.worktree === 'string' ? catalog.resolveWorktree(params.worktree) : undefined
+      const terminals = (worktree ? catalog.sessionsIn(worktree.id) : store.list()).map(describe)
       return { terminals, totalCount: terminals.length, truncated: false, visualLayouts: [] }
     },
 
     'session.tabs.listAll': () => ({
-      snapshots: [{
-        tabs: store.list().map((target) => ({
-          type: 'terminal', terminal: target.handle, parentTabId: target.meta.id, leafId: target.meta.id, title: target.meta.name,
-          agentStatus: tabAgentStatus(agents.monitor(target)), ...(target.meta.agent ? { launchAgent: target.meta.agent } : {})
-        }))
-      }]
+      snapshots: catalog.worktrees().filter((worktree) => catalog.sessionsIn(worktree.id).length > 0).map((worktree) => catalog.tabSnapshot(worktree))
     }),
 
     'terminal.create': (params) => {
@@ -167,8 +195,13 @@ export function createHandlers(runtime: Runtime): Handlers {
       const target = session(params.terminal)
       if (params.claimViewport && params.viewport) await target.resize(Number(params.viewport.cols), Number(params.viewport.rows))
       const text = typeof params.text === 'string' ? params.text : ''
-      target.input(text + (params.enter ? '\r' : ''))
-      return { send: { handle: target.handle, accepted: target.connected } }
+      if (!target.connected) return { send: { handle: target.handle, accepted: false, bytesWritten: 0 } }
+      if (text) target.input(text)
+      if (params.enter) {
+        if (text) await new Promise((resolve) => setTimeout(resolve, ENTER_DELAY_MS))
+        target.input('\r')
+      }
+      return { send: { handle: target.handle, accepted: true, bytesWritten: Buffer.byteLength(text) + (params.enter ? 1 : 0) } }
     },
 
     'terminal.close': async (params) => {
@@ -178,6 +211,7 @@ export function createHandlers(runtime: Runtime): Handlers {
     },
 
     'terminal.agentStatus': (params) => {
+      // Orc's activity vocabulary: working, permission or idle.
       const target = session(params.terminal)
       const monitor = agents.monitor(target)
       const running = Boolean(monitor && monitor.state !== 'ended' && target.connected)
@@ -241,6 +275,31 @@ export function createHandlers(runtime: Runtime): Handlers {
     'slim.signal': async (params) => {
       await session(params.terminal).signal(String(params.signal), params.target === 'child' ? 'child' : 'foreground')
       return {}
+    }
+  }
+}
+
+/** Streams served over the WebSocket. */
+export function createSessionStreams(runtime: Runtime): Record<string, StreamingHandler> {
+  const { catalog, subscriptions } = runtime
+  return {
+    'session.tabs.subscribe': (params, context, emit) => {
+      const worktree = catalog.resolveWorktree(String(params.worktree ?? ''))
+      if (!worktree) throw new RpcError('selector_not_found', `no workspace ${String(params.worktree)}`)
+      return holdStream(subscriptions, context, `tabs:${worktree.id}`, () => {
+        let tabs = ''
+        const publish = (type: 'snapshot' | 'updated') => {
+          const snapshot = catalog.tabSnapshot(worktree)
+          const next = JSON.stringify(snapshot.tabs)
+          if (type === 'updated' && next === tabs) return
+          tabs = next
+          emit({ type, ...snapshot })
+        }
+        const changed = () => publish('updated')
+        catalog.on('changed', changed)
+        publish('snapshot')
+        return () => catalog.off('changed', changed)
+      })
     }
   }
 }

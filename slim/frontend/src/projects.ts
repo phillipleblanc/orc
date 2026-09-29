@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { writeJsonFile } from './json-file.ts'
 
 export type Project = { id: string; path: string; displayName: string; kind: 'git' | 'folder'; createdAt: string }
 
@@ -35,6 +37,15 @@ export class Projects {
     return this.projects.find((project) => this.worktreeId(project) === value || project.id === value || project.path === value)
   }
 
+  /** The registered project whose folder contains `path`, preferring the deepest. */
+  containing(path: string): Project | undefined {
+    const real = (value: string) => { try { return realpathSync(value) } catch { return value } }
+    const inside = (child: string, parent: string) => child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+    const target = real(path)
+    const candidates = this.projects.filter((project) => inside(path, project.path) || inside(target, real(project.path)))
+    return candidates.sort((left, right) => right.path.length - left.path.length)[0]
+  }
+
   /** Keeps the caller's spelling of the path, which clients compare against; duplicates are found by real path. */
   async add(path: string, kind: 'git' | 'folder'): Promise<Project> {
     const given = resolve(path)
@@ -45,8 +56,7 @@ export class Projects {
     }
     const project: Project = { id: randomUUID(), path: given, displayName: basename(given), kind, createdAt: new Date().toISOString() }
     this.projects.push(project)
-    await writeFile(`${this.file}.tmp`, JSON.stringify(this.projects, null, 2), { mode: 0o600 })
-    await rename(`${this.file}.tmp`, this.file)
+    await writeJsonFile(this.file, this.projects)
     return project
   }
 }

@@ -18,8 +18,10 @@ flowchart TB
     subgraph frontend["Frontend · Node · one per profile · restartable"]
         unix["Local RPC<br/>rpc.sock · NDJSON · auth token"]
         ws["WebSocket RPC<br/>E2EE v1 · device tokens"]
-        methods["Methods<br/>terminal.* · session.tabs.listAll<br/>worktree.list · repo.add · status.get"]
+        methods["Methods<br/>terminal.* · session.tabs.* · worktree.*<br/>repo.* · agent.* · status.get"]
         mux["terminal.multiplex<br/>snapshots · output · viewport claims"]
+        phoneStreams["Phone streams<br/>terminal.subscribe · session.tabs.subscribe<br/>nativeChat.subscribe · runtime.clientEvents"]
+        catalog["Catalog<br/>workspaces · tabs · agent status"]
         pairing["Devices and pairing"]
         store["Session store<br/>create · discover · rename · retire"]
         sessions["Terminal session × N<br/>holder client · TerminalFeed<br/>xterm emulator · checkpoints"]
@@ -43,8 +45,15 @@ flowchart TB
     unix --> pairing
     ws --> methods
     ws --> mux
+    ws --> phoneStreams
     methods --> store
     methods --> agents
+    methods --> catalog
+    phoneStreams --> catalog
+    phoneStreams --> sessions
+    phoneStreams -- "reads" --> transcripts[("agent transcripts<br/>~/.claude · ~/.codex · Pi sessions")]
+    catalog --> store
+    catalog --> agents
     agents --> store
     agents -- "reads agent-events" --> events[("agent-events/UUID.jsonl")]
     store --> sessions
@@ -88,7 +97,7 @@ flowchart LR
     end
 
     subgraph profileFiles["profile · written by the frontend"]
-        runtime["orca-runtime.json · rpc.sock · frontend.lock"]
+        runtime["orca-runtime.json · rpc.sock · frontend.lock · frontend.json"]
         identity["orca-e2ee-keypair.json · orca-devices.json"]
         projects["projects.json"]
         binaries["holders/HASH/orc-holder"]
@@ -165,6 +174,35 @@ Hooks and the Pi extension are supplied on the agent's command line when it star
 the event file named by `ORC_AGENT_EVENTS`. The frontend derives each agent's state from that file, so
 a frontend that starts later replays it and reaches the same state.
 
+## Phones
+
+```mermaid
+sequenceDiagram
+    participant U as orc pair-phone
+    participant F as Frontend
+    participant P as Orca mobile app
+    participant H as Holder
+
+    U->>F: orc.phone.create(address) over the local socket
+    F->>F: listen on address:port, issue a mobile device token
+    F-->>U: orca://pair link, shown as a QR code
+    P->>F: e2ee_hello, e2ee_auth(device token)
+    F-->>P: e2ee_authenticated
+    P->>F: status.get, worktree.ps, repo.list, runtime.clientEvents.subscribe
+    P->>F: session.tabs.subscribe(workspace)
+    F-->>P: snapshot, then updated on every change
+    P->>F: terminal.subscribe(terminal, viewport)
+    F->>H: resize to the phone's viewport
+    F-->>P: subscribed(streamId), binary snapshot, binary output
+    P->>F: terminal.send(text, enter)
+    F->>H: input: text, then Enter 500 ms later
+    P->>F: terminal.unsubscribe
+    Note over F,H: 300 ms after the last phone leaves, the earlier size returns
+```
+
+A mobile device token reaches only the methods the Orca app uses. The chat view reads the agent's own
+transcript file, located from the session id and path its hooks reported, and follows it as it grows.
+
 ## Frontend start
 
 ```mermaid
@@ -222,3 +260,5 @@ flowchart TB
 | An agent runs while no frontend runs | Its hooks keep appending events; the next frontend replays them. Queued messages wait in `queue.json`. |
 | A message cannot be confirmed within 20 s | The next queued message may be delivered; the agent reports an unconfirmed delivery. |
 | An agent was started without Orc's hooks | It reports no agent state. |
+| The frontend restarts while a phone is connected | The phone reconnects to the same port and resubscribes; its tab snapshots start a new publication epoch. |
+| A phone stops viewing a terminal | The PTY takes the next viewing phone's size, or its size from before the first phone. A resize from elsewhere in the meantime stands. |

@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from 'node:net'
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { chmod, unlink } from 'node:fs/promises'
 
 export class RpcError extends Error {
@@ -10,7 +10,15 @@ export class RpcError extends Error {
   }
 }
 
-export type Handler = (params: Record<string, any>) => Promise<unknown> | unknown
+/** Who is calling: the owner over the local socket, or a paired device over the WebSocket. */
+export type CallContext = {
+  connectionId: string
+  scope: 'local' | 'runtime' | 'mobile'
+  /** Runs when the caller's connection closes. */
+  onClose(handler: () => void): void
+}
+
+export type Handler = (params: Record<string, any>, context: CallContext) => Promise<unknown> | unknown
 export type Handlers = Record<string, Handler>
 
 const MAX_LINE = 1 << 20
@@ -50,6 +58,9 @@ export class UnixRpcServer {
   }
 
   private accept(socket: Socket): void {
+    const closeHandlers: (() => void)[] = []
+    socket.on('close', () => { for (const handler of closeHandlers.splice(0)) handler() })
+    const context: CallContext = { connectionId: `local-${randomUUID()}`, scope: 'local', onClose: (handler) => closeHandlers.push(handler) }
     let buffered = ''
     socket.setEncoding('utf8')
     socket.on('error', () => {})
@@ -63,12 +74,12 @@ export class UnixRpcServer {
       while ((newline = buffered.indexOf('\n')) >= 0) {
         const line = buffered.slice(0, newline)
         buffered = buffered.slice(newline + 1)
-        if (line.trim()) void this.handle(line, socket)
+        if (line.trim()) void this.handle(line, socket, context)
       }
     })
   }
 
-  private async handle(line: string, socket: Socket): Promise<void> {
+  private async handle(line: string, socket: Socket, context: CallContext): Promise<void> {
     let id: unknown = null
     const reply = (body: Record<string, unknown>) => {
       if (!socket.destroyed) socket.write(JSON.stringify({ id, ...body, _meta: { runtimeId: this.runtimeId } }) + '\n')
@@ -79,8 +90,8 @@ export class UnixRpcServer {
       const token = Buffer.from(typeof request.authToken === 'string' ? request.authToken : '')
       if (token.length !== this.token.length || !timingSafeEqual(token, this.token)) throw new RpcError('unauthorized', 'invalid auth token')
       const handler = typeof request.method === 'string' ? this.handlers[request.method] : undefined
-      if (!handler) throw new RpcError('method_not_found', `unknown method ${String(request.method)}`)
-      const result = await handler((request.params ?? {}) as Record<string, any>)
+      if (!handler) throw new RpcError('method_not_found', `Unknown method: ${String(request.method)}`)
+      const result = await handler((request.params ?? {}) as Record<string, any>, context)
       reply({ ok: true, result: result ?? {} })
     } catch (error) {
       const code = error instanceof RpcError || (error as { code?: unknown }).code ? String((error as { code: unknown }).code) : 'internal_error'

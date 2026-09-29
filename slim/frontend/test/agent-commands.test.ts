@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { destroyProfile, FRONTEND, Frontend, HOLDER, isolatedEnvironment, makeProfile, until } from './harness.ts'
+import { connectWithGrant, type RuntimeClient } from './runtime-client.ts'
 
 // Real agents answering one-word prompts: each turn is a small model request on the developer's account.
 const ENABLED = process.env.SLIM_AGENT_TESTS === '1'
@@ -15,6 +16,22 @@ const ORC = process.env.ORC_CLI ?? resolve(here, '../../../.build/debug/orc')
 // Claude asks to trust every new folder; its test runs only in a folder the developer already trusts.
 const CLAUDE_DIR = process.env.SLIM_CLAUDE_TRUSTED_DIR
 const run = promisify(execFile)
+
+/** The phone's view of an agent: its session tab and the text of the last assistant message in its chat. */
+async function phoneView(phone: RuntimeClient, name: string) {
+  const { worktrees } = await phone.request('worktree.ps', { limit: 10000 })
+  const { repos } = await phone.request('repo.list')
+  for (const row of worktrees) {
+    const { tabs } = await phone.request('session.tabs.list', { worktree: `id:${row.worktreeId}` })
+    const tab = tabs.find((candidate: any) => candidate.title === name)
+    if (!tab) continue
+    const { agentType, providerSession } = tab.agentStatus
+    const chat = await phone.request('nativeChat.readSession', { agent: agentType, sessionId: providerSession.id, transcriptPath: providerSession.transcriptPath, limit: 40 })
+    const replies = chat.messages.filter((message: any) => message.role === 'assistant' && message.blocks[0]?.type === 'text')
+    return { tab, repo: repos.find((repo: any) => repo.id === row.repoId), lastReply: replies.at(-1)?.blocks[0].text as string | undefined }
+  }
+  throw new Error(`no tab for ${name}`)
+}
 
 test('agents spawn, take messages by name, report status, and survive a frontend restart', { skip: (!ENABLED && 'set SLIM_AGENT_TESTS=1') || (!existsSync(ORC) && `build the orc CLI (${ORC})`) }, async (t) => {
   const profile = await makeProfile()
@@ -89,12 +106,24 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   assert.equal((byName.coder as any).lastAssistantMessage, 'TWO')
   assert.ok((byName.coder as any).providerSession.transcriptPath.endsWith('.jsonl'))
 
+  // A phone sees the agent's tab with what its chat view needs, and reads the conversation.
+  const phone = await connectWithGrant(frontend.rpc.bind(frontend), 'mobile')
+  t.after(() => phone.close())
+  const coderView = await phoneView(phone, 'coder')
+  assert.deepEqual([coderView.tab.launchAgent, coderView.tab.agentStatus.agentType, coderView.tab.agentStatus.state], ['codex', 'codex', 'done'])
+  assert.equal(coderView.lastReply, 'TWO')
+
   // Pi reports through its extension; the prompt comes from standard input.
   const helper = await orc(['agent', 'spawn', 'pi', 'helper', '--effort', 'low', '--json'], { caller: 'lead', input: 'Reply with only the word DELTA.' })
   assert.equal(helper.code, 0, helper.stderr + helper.stdout)
   assert.equal(helper.json().parent, 'lead')
   const helped = await orc(['agent', 'wait', 'helper', '--json'])
   assert.equal(helped.json().lastAssistantMessage.trim(), 'DELTA')
+  // The Orca app renders Pi conversations as omp, which it offers only for a listed local repository.
+  const helperView = await phoneView(phone, 'helper')
+  assert.deepEqual([helperView.tab.launchAgent, helperView.tab.agentStatus.agentType], ['omp', 'omp'])
+  assert.equal(helperView.repo?.connectionId, null)
+  assert.equal(helperView.lastReply?.trim(), 'DELTA')
 
   if (CLAUDE_DIR) {
     const reviewer = await orc(['agent', 'spawn', 'claude', 'reviewer', '--model', 'haiku', '--json'], { input: 'Reply with only the word ECHO.', cwd: CLAUDE_DIR })
@@ -103,6 +132,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     const screen = await frontend.rpc('terminal.read', { terminal: 'reviewer' })
     assert.ok(screen.read.lines.some((line: string) => line.includes('ECHO')))
     assert.equal((await frontend.rpc('agent.status', { name: 'reviewer' })).state, 'idle')
+    assert.equal((await phoneView(phone, 'reviewer')).lastReply, 'ECHO')
     // Claude reports no hook for an interrupted turn; its idle title ends the turn instead.
     await orc(['agent', 'send', 'reviewer'], { input: 'Write a 600-word story about a lighthouse. Do not use any tools.' })
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start working')

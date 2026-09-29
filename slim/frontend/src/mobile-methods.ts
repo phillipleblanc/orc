@@ -1,0 +1,25 @@
+/** Methods a mobile-scope device may call: the ones the Orca mobile app uses to view and type into sessions. */
+export const MOBILE_METHODS = new Set([
+  'status.get',
+  'runtime.clientCapabilities.update',
+  'runtime.clientEvents.subscribe',
+  'runtime.clientEvents.unsubscribe',
+  'repo.list',
+  'worktree.ps',
+  'worktree.show',
+  'worktree.activate',
+  'session.tabs.list',
+  'session.tabs.subscribe',
+  'session.tabs.unsubscribe',
+  'session.tabs.activate',
+  'terminal.list',
+  'terminal.subscribe',
+  'terminal.unsubscribe',
+  'terminal.send',
+  'terminal.updateViewport',
+  'terminal.setDisplayMode',
+  'nativeChat.subscribe',
+  'nativeChat.unsubscribe',
+  'nativeChat.readSession',
+  'orchestration.workerTerminalUserInput'
+])

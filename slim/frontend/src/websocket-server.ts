@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { createServer, type Server } from 'node:http'
 import { WebSocketServer, type RawData, type WebSocket } from 'ws'
 import type { Devices, Device } from './devices.ts'
 import { E2EEChannel, type ServerKeypair } from './e2ee.ts'
-import { RpcError, type Handlers } from './rpc-server.ts'
+import { RpcError, type CallContext, type Handlers } from './rpc-server.ts'
 import { decodeFrame, type TerminalFrame } from './terminal-frames.ts'
 
-export type StreamContext = {
-  connectionId: string
+export type StreamContext = CallContext & {
   device: Device
   sendBinary(frame: Uint8Array): void
   /** Receives binary terminal frames for `streamId` until the returned function is called. */
@@ -18,7 +18,8 @@ export type StreamContext = {
 export type StreamingHandler = (params: Record<string, any>, context: StreamContext, emit: (event: Record<string, unknown>) => void) => Promise<void>
 
 export type WebSocketOptions = {
-  host: string
+  /** Addresses to listen on, all with the same port. */
+  hosts: string[]
   port: number
   keypair: ServerKeypair
   devices: Devices
@@ -38,32 +39,50 @@ const MAX_MESSAGE_BYTES = 16 << 20
  */
 export class WebSocketRpcServer {
   private readonly options: WebSocketOptions
-  private server: WebSocketServer | null = null
+  private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES })
+  private readonly listeners = new Map<string, Server>()
+  private readonly devicesByConnection = new Map<WebSocket, () => Device | null>()
+  port = 0
 
   constructor(options: WebSocketOptions) {
     this.options = options
+    this.port = options.port
   }
 
-  listen(): Promise<number> {
+  /** Listens on every configured host; returns the port, which is chosen by the first host when 0. */
+  async listen(): Promise<number> {
+    for (const host of this.options.hosts) await this.addHost(host)
+    return this.port
+  }
+
+  /** Starts listening on another address with the same port. */
+  addHost(host: string): Promise<void> {
+    if (this.listeners.has(host)) return Promise.resolve()
     return new Promise((resolve, reject) => {
-      const server = new WebSocketServer({ host: this.options.host, port: this.options.port, maxPayload: MAX_MESSAGE_BYTES })
+      const server = createServer((_request, response) => response.writeHead(426).end())
+      server.on('upgrade', (request, socket, head) => this.sockets.handleUpgrade(request, socket, head, (ws) => this.accept(ws)))
       server.once('error', reject)
-      server.once('listening', () => {
+      server.listen(this.port, host, () => {
         server.off('error', reject)
-        this.server = server
         const address = server.address()
-        resolve(typeof address === 'object' && address ? address.port : this.options.port)
+        if (this.port === 0 && typeof address === 'object' && address) this.port = address.port
+        this.listeners.set(host, server)
+        resolve()
       })
-      server.on('connection', (socket) => this.accept(socket))
     })
   }
 
-  close(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.server) return resolve()
-      for (const client of this.server.clients) client.terminate()
-      this.server.close(() => resolve())
-    })
+  /** Closes every connection authenticated as `deviceId`. */
+  disconnectDevice(deviceId: string): void {
+    for (const [socket, device] of this.devicesByConnection) {
+      if (device()?.deviceId === deviceId) socket.close(4001, 'revoked')
+    }
+  }
+
+  async close(): Promise<void> {
+    for (const client of this.sockets.clients) client.terminate()
+    await Promise.all([...this.listeners.values()].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
+    this.listeners.clear()
   }
 
   private accept(socket: WebSocket): void {
@@ -78,6 +97,7 @@ export class WebSocketRpcServer {
     }
     const context = (): StreamContext => ({
       connectionId,
+      scope: device!.scope,
       device: device!,
       sendBinary: (frame) => { if (channel && socket.readyState === socket.OPEN) socket.send(channel.seal(frame), { binary: true }) },
       onFrames: (streamId, handler) => {
@@ -87,8 +107,10 @@ export class WebSocketRpcServer {
       onClose: (handler) => closeHandlers.push(handler)
     })
 
+    this.devicesByConnection.set(socket, () => device)
     socket.on('close', () => {
       clearTimeout(timer)
+      this.devicesByConnection.delete(socket)
       for (const handler of closeHandlers.splice(0)) handler()
     })
     socket.on('error', () => {})
@@ -108,7 +130,7 @@ export class WebSocketRpcServer {
         const auth = parseJSON(opened)
         const found = auth?.type === 'e2ee_auth' && typeof auth.deviceToken === 'string' ? this.options.devices.find(auth.deviceToken) : undefined
         if (!found) {
-          sendJSON({ type: 'e2ee_error', error: 'unauthorized' })
+          sendJSON({ type: 'e2ee_error', error: { code: 'unauthorized' } })
           return socket.close(4001, 'unauthorized')
         }
         device = found
@@ -141,8 +163,11 @@ export class WebSocketRpcServer {
         return
       }
       const handler = this.options.handlers[request.method]
-      if (!handler) throw new RpcError('method_not_found', `unknown method ${request.method}`)
-      sendJSON({ id, ok: true, result: (await handler(params)) ?? {}, _meta: meta })
+      if (!handler) throw new RpcError('method_not_found', `Unknown method: ${request.method}`)
+      const result = (await handler(params, context())) ?? {}
+      // Orca stamps the caller's grant scope onto status replies.
+      const stamped = request.method === 'status.get' ? { ...(result as object), deviceScope: device.scope } : result
+      sendJSON({ id, ok: true, result: stamped, _meta: meta })
     } catch (error) {
       const code = (error as { code?: unknown }).code ? String((error as { code: unknown }).code) : 'internal_error'
       sendJSON({ id, ok: false, error: { code, message: (error as Error).message }, _meta: meta })

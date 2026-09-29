@@ -142,12 +142,41 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 - **Local socket:** `status.get`, `terminal.list`, `terminal.create`, `terminal.rename`, `terminal.send`,
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
   and `repo.add` use Orca's request and result shapes, including agent identity and status.
-  `agent.*` implements the agent commands. `slim.pairing.*` issues and revokes access
-  links; it is not served over the WebSocket.
+  `agent.*` implements the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
+  access links; they are not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
-  It serves the same methods plus the streaming `terminal.multiplex`.
+  It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
+  `session.tabs.subscribe`, `nativeChat.subscribe` and `runtime.clientEvents.subscribe`. Every
+  streamed reply carries `streaming: true` and a stream ends with `{type: "end"}`.
 - **Launching:** Orc starts `ORCA_APP_EXECUTABLE` with `--user-data-dir=PROFILE --serve …` when no
   runtime is running. `frontend/test/orc-cli.test.ts` shows a launcher that runs this frontend instead.
+
+## Phones
+
+The unmodified Orca mobile app pairs with this runtime and shows its sessions.
+
+- **Pairing:** `orc pair-phone` calls `orc.phone.create` with one of the host's IPv4 addresses
+  (Tailscale first). The frontend starts listening on that address and returns an `orca://pair` link
+  with a mobile-scope device token. The WebSocket port is kept in `frontend.json`, so paired phones
+  reconnect after restarts; a phone whose token is revoked with `orc.phone.revoke` is disconnected.
+- **Scope:** a mobile token may call only the methods in `mobile-methods.ts`; others fail with
+  `forbidden`.
+- **Workspaces:** `worktree.ps` lists each project, and one folder workspace per working directory
+  outside every project (repository id `local`). Workspace ids are `REPO_ID::PATH`; the app reads the
+  repository id from them.
+- **Tabs:** each session is a terminal tab. An agent's tab carries Orca's `agentStatus`: Orc's
+  `working`, `permission` and `idle` map to `working`, `blocked` and `done`. Pi reports agent type
+  `omp`, the transcript format the app can render.
+- **Terminal view:** `terminal.subscribe` with a mobile viewport resizes the PTY to it (20–240 columns,
+  8–120 rows). The most recent phone's size applies; when the last phone leaves, the size from before
+  the first phone returns after 300 ms, unless something else resized the PTY. Output frames end on
+  UTF-8 character boundaries because the app decodes each frame on its own.
+- **Chat view:** `nativeChat.*` decodes Claude, Codex and Pi transcripts into Orca's message shape
+  and follows the file as it grows. Text blocks sent to phones are clipped to 64,000 characters and
+  tool bodies to 4,000.
+- **Input:** `terminal.send` with `enter` types the text, waits 500 ms, then sends Enter.
+
+Workspace creation, files, notifications, relay connections and floating workspaces are not served.
 
 ## Build and test
 

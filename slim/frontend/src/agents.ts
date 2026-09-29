@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentArgv, installAgentHooks, isAgentKind, type AgentHooks, type AgentKind } from './agent-hooks.ts'
@@ -49,7 +50,7 @@ const DEFAULT_TIMEOUT_MS = 90_000
  * Agents are sessions started with Orc's status hooks. They are addressed by session name; messages
  * wait in a per-agent queue until the agent is idle and are typed in one at a time.
  */
-export class AgentDirectory {
+export class AgentDirectory extends EventEmitter {
   private readonly store: SessionStore
   private readonly projects: Projects
   private readonly profile: string
@@ -57,6 +58,7 @@ export class AgentDirectory {
   private hooks: Promise<AgentHooks> | null = null
 
   constructor(store: SessionStore, projects: Projects, profile: string) {
+    super()
     this.store = store
     this.projects = projects
     this.profile = profile
@@ -67,7 +69,7 @@ export class AgentDirectory {
   /** Starts an agent in a new session, without waiting for it. */
   async launch(options: SpawnOptions): Promise<TerminalSession> {
     if (!isAgentKind(options.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude or pi')
-    const project = options.project ? this.projects.resolve(options.project) : undefined
+    const project = options.project ? this.projects.resolve(options.project) : options.cwd ? this.projects.containing(options.cwd) : undefined
     if (options.project && !project) throw new RpcError('not_found', `no project ${options.project}`)
     const cwd = options.cwd ?? project?.path
     if (!cwd) throw new RpcError('invalid_argument', 'choose a project or a working directory')
@@ -189,6 +191,7 @@ export class AgentDirectory {
     monitor.on('change', () => {
       if (record.delivering && monitor.state !== 'idle' && monitor.state !== 'starting') this.confirm(record)
       void this.pump(record)
+      this.emit('change', session)
     })
     await monitor.start()
     void this.pump(record)
