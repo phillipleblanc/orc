@@ -48,6 +48,8 @@ export class SessionStore extends EventEmitter {
   readonly endedDir: string
   private readonly options: StoreOptions
   private readonly sessions = new Map<string, TerminalSession>()
+  /** Names of finished sessions whose directories are still being moved to `ended/`. */
+  private readonly retiring = new Map<string, Promise<void>>()
   private holderPath: string | null = null
 
   constructor(options: StoreOptions) {
@@ -95,6 +97,8 @@ export class SessionStore extends EventEmitter {
     const dir = join(this.sessionsDir, options.name)
     if (join(dir, 'sock').length > SOCKET_PATH_LIMIT) throw new SessionError('invalid_argument', 'session name is too long for this profile path')
     await mkdir(this.sessionsDir, { recursive: true, mode: 0o700 })
+    // A session that just finished frees its name once its directory has moved.
+    await this.retiring.get(options.name)
     try {
       await mkdir(dir, { mode: 0o700 })
     } catch (error) {
@@ -129,6 +133,7 @@ export class SessionStore extends EventEmitter {
   async rename(session: TerminalSession, name: string): Promise<void> {
     if (name === session.meta.name) return
     validateName(name)
+    await this.retiring.get(name)
     if (this.sessions.has(name) || existsSync(join(this.sessionsDir, name))) throw new SessionError('name_taken', `a session named ${name} already exists`)
     const target = join(this.sessionsDir, name)
     if (join(target, 'sock').length > SOCKET_PATH_LIMIT) throw new SessionError('invalid_argument', 'session name is too long for this profile path')
@@ -154,11 +159,20 @@ export class SessionStore extends EventEmitter {
     this.sessions.set(session.meta.name, session)
     this.emit('added', session)
     const finish = async () => {
-      if (this.sessions.get(session.meta.name) !== session) return
-      this.sessions.delete(session.meta.name)
-      await session.checkpoint().catch(() => {})
-      await session.close().catch(() => {})
-      await this.retire(session.meta.name, session.dir, session.exit ? 'exited' : 'lost')
+      const name = session.meta.name
+      if (this.sessions.get(name) !== session) return
+      this.sessions.delete(name)
+      const retired = (async () => {
+        await session.checkpoint().catch(() => {})
+        await session.close().catch(() => {})
+        await this.retire(name, session.dir, session.exit ? 'exited' : 'lost')
+      })()
+      this.retiring.set(name, retired.catch(() => {}))
+      try {
+        await retired
+      } finally {
+        this.retiring.delete(name)
+      }
       this.emit('ended', session)
     }
     session.on('exit', () => void finish())
