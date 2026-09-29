@@ -6,9 +6,10 @@ import OrcKit
     @NSApplicationDelegateAdaptor(OrcApplicationDelegate.self) private var appDelegate
     @StateObject private var model = SessionModel()
     @StateObject private var board = SessionBoardModel()
+    @StateObject private var sidebarOrder = SessionSidebarModel()
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
-        Window("Orc", id: "sessions") { SessionWindow(model: model) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder) }
             .defaultSize(width: 380, height: 560)
             .windowResizability(.contentMinSize)
             .commands {
@@ -49,7 +50,9 @@ import OrcKit
 }
 
 @MainActor final class SessionModel: ObservableObject {
-    @Published var sessions: [Session] = []
+    @Published var sessions: [Session] = [] {
+        didSet { hierarchy = SessionHierarchy(sessions: sessions) }
+    }
     private(set) var hierarchy = SessionHierarchy(sessions: [])
     @Published var workspaces: [Workspace] = []
     @Published var chatTargets: [String: ChatTarget] = [:]
@@ -166,7 +169,6 @@ import OrcKit
             async let activity = service.activities(for: result.terminals)
             workspaces = try await spaces
             connected = Pairing.isConfigured
-            hierarchy = SessionHierarchy(sessions: result.terminals)
             sessions = result.terminals
             chatTargets = ChatTarget.targets(in: await tabs ?? [:])
             activities = await activity
@@ -206,6 +208,7 @@ enum SessionWindowMode: Equatable {
 
 struct SessionWindow: View {
     @ObservedObject var model: SessionModel
+    @ObservedObject var sidebarOrder: SessionSidebarModel
     @ObservedObject private var notifications = IdleNotifications.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
@@ -227,7 +230,9 @@ struct SessionWindow: View {
     var chatting: Bool { selected != nil && chatSession == selected?.id }
     var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : chatSession != nil ? .chat : .details }
     var hierarchy: SessionHierarchy { model.hierarchy }
-    var visibleGroups: [SessionHierarchy.Group] { hierarchy.matching(search) }
+    var visibleRows: [SessionSidebarOrder.Row] {
+        sidebarOrder.order.rows(in: hierarchy, matching: search, collapsed: collapsedParents)
+    }
     var body: some View {
         VStack(spacing: 0) {
             if model.needsRuntimeSetup {
@@ -245,7 +250,7 @@ struct SessionWindow: View {
                     }
                 }
             }
-            if let error = model.reviewError ?? model.error ?? notifications.warning {
+            if let error = sidebarOrder.error ?? model.reviewError ?? model.error ?? notifications.warning {
                 Divider()
                 HStack { Image(systemName: "exclamationmark.triangle"); Text(error).textSelection(.enabled); Spacer() }
                     .font(.callout).foregroundStyle(.orange).padding(12)
@@ -299,25 +304,19 @@ struct SessionWindow: View {
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
     }
     private var sidebar: some View {
-        VStack(spacing: 0) {
+        let rows = visibleRows
+        return VStack(spacing: 0) {
             HStack {
                 Text("Sessions").font(.title2.bold())
                 Spacer()
             }.padding(.horizontal, 16).padding(.top, 12)
             TextField("Find a session", text: $search).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Find a session").padding(12)
-            List(selection: $model.selected) {
-                ForEach(visibleGroups) { group in
-                    sessionRow(group.session, name: group.session.name,
-                               hasChildren: !group.children.isEmpty, isChild: false)
-                    if !collapsedParents.contains(group.id) || !search.isEmpty {
-                        ForEach(group.children) { child in
-                            sessionRow(child, name: hierarchy.displayName(for: child),
-                                       hasChildren: false, isChild: true)
-                        }
-                    }
-                }
-            }.listStyle(.sidebar)
+            SessionSidebarList(organization: sidebarOrder, hierarchy: hierarchy, search: search,
+                               collapsed: collapsedParents, selection: $model.selected) { row in
+                sessionRow(row.session, name: hierarchy.displayName(for: row.session),
+                           hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: rows)
+            }
             if model.sessions.isEmpty, !model.loading {
                 if model.workspaces.isEmpty {
                     Button("Add a Project…") { model.showProject = true }.padding()
@@ -342,12 +341,13 @@ struct SessionWindow: View {
                     .buttonStyle(.borderless).help("Connection Settings").accessibilityLabel("Connection Settings")
                 Button { model.showPhonePairing = true } label: { Image(systemName: "iphone") }
                     .buttonStyle(.borderless).help("Pair Phone").accessibilityLabel("Pair Phone")
-                Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                Button { sidebarOrder.reload(); Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("Refresh Sessions").accessibilityLabel("Refresh Sessions")
             }.padding(12)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
+    private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool,
+                            rows: [SessionSidebarOrder.Row]) -> some View {
         HStack(spacing: 6) {
             if isChild { Color.clear.frame(width: 16, height: 16).accessibilityHidden(true) }
             if hasChildren {
@@ -371,15 +371,24 @@ struct SessionWindow: View {
                 Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 5).tag(session.id)
+        .padding(.vertical, 5)
         .accessibilityElement(children: hasChildren ? .contain : .combine)
         .accessibilityValue(model.activity(for: session).label)
-        .help(model.activity(for: session).label)
+        .help(model.activity(for: session).label + (search.isEmpty ? " · Drag to reorder" : " · Clear search to reorder"))
         .contextMenu {
             if !isChild, hierarchy.canCreateChild(of: session) {
                 Button("Create Child…", systemImage: "plus") { creatingChildOf = session }
             }
             Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
+            Divider()
+            Button("Move Up", systemImage: "arrow.up") {
+                sidebarOrder.move(session.id, by: -1, rows: rows, search: search)
+            }
+            .disabled(!search.isEmpty || !sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: -1, rows: rows))
+            Button("Move Down", systemImage: "arrow.down") {
+                sidebarOrder.move(session.id, by: 1, rows: rows, search: search)
+            }
+            .disabled(!search.isEmpty || !sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: 1, rows: rows))
             Divider()
             Button("Copy Attach Command") { copy(session) }
         }
