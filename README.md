@@ -170,12 +170,12 @@ Requires Apple Silicon, macOS 14+, Python 3.12+, Node.js 20+ with npm, and the X
 xcodebuild -downloadComponent MetalToolchain
 bash scripts/build.sh
 bash scripts/install.sh
-open ~/Applications/Orc.app
+open /Applications/Orc.app
 ```
 
-Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`, and installs the locked web-renderer dependencies in `WebDiff`. It builds libghostty and the pinned Orca source runtime, stages the complete signed inner app with its license notices, and signs the outer `dist/Orc.app` ad hoc. Installation verifies and replaces the complete bundle at `~/Applications/Orc.app` and links `~/.local/bin/orc`. Pi extensions are included in the app. Node.js and Homebrew libraries are not required at runtime.
+Build downloads checksum-pinned Zig 0.15.2, Ghostty 1.3.1, and libsodium 1.0.22 into `.build/deps`, and installs the locked web-renderer dependencies in `WebDiff`. It builds libghostty and the pinned Orca source runtime, stages the complete signed inner app with its license notices, and signs the outer `dist/Orc.app` ad hoc. Installation verifies and replaces the complete bundle at `/Applications/Orc.app` and links `~/.local/bin/orc`. Pi extensions are included in the app. Node.js and Homebrew libraries are not required at runtime.
 
-Use `bash scripts/build.sh --offline` with prepared native dependencies, npm cache, and a completed verified runtime cache. `bash scripts/install.sh --offline` installs an existing bundle without building or downloading. `ORC_INSTALL_ROOT` selects an alternate installation root for testing. Installation refuses to replace a destination while Orc or its bundled runtime is using it; close that app and explicitly stop its backend before installing. This development signing configuration is not a notarized public distribution.
+Use `bash scripts/build.sh --offline` with prepared native dependencies, npm cache, and a completed verified runtime cache. `bash scripts/install.sh --offline` installs an existing bundle without building or downloading. `ORC_INSTALL_ROOT` selects an alternate installation root for testing, placing the app in `$ORC_INSTALL_ROOT/Applications` and user files under that same root. Installation refuses to replace a destination while Orc or its bundled runtime is using it; close that app and explicitly stop its backend before installing. This development signing configuration is not a notarized public distribution.
 
 For CLI-only development:
 
