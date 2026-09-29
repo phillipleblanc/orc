@@ -5,6 +5,8 @@ import concurrent.futures
 import json
 import os
 from pathlib import Path
+import pty
+import select
 import shutil
 import signal
 import socket
@@ -84,6 +86,52 @@ def main():
             time.sleep(.1)
         raise AssertionError("Owned test runtime did not stop")
 
+    def live_install(session):
+        before = metadata()
+        helpers = app / "Contents/Helpers"
+        inodes = {path.relative_to(helpers): path.stat().st_ino
+                  for path in helpers.rglob("*") if path.is_file() and not path.is_symlink()}
+        master, slave = pty.openpty()
+        attached = subprocess.Popen([str(cli), "attach", session["handle"], "--no-reconnect"],
+                                    env=env, stdin=slave, stdout=slave, stderr=slave)
+        output = b""
+
+        def receive(marker):
+            nonlocal output
+            deadline = time.monotonic() + 15
+            while marker not in output and time.monotonic() < deadline:
+                assert attached.poll() is None, "Live attachment exited during install"
+                if select.select([master], [], [], .1)[0]:
+                    output += os.read(master, 65536)
+            assert marker in output, "Live terminal stopped responding"
+
+        try:
+            receive(b"\x1b[?2026l")
+            os.write(master, b"printf '%s%s\\n' ORC_LIVE_ BEFORE\r")
+            receive(b"ORC_LIVE_BEFORE")
+            stale = app / "Contents/Resources/live-install-test"
+            stale.write_text("remove during frontend update")
+            command(["bash", ROOT / "scripts/install.sh", "--offline"])
+            assert not stale.exists()
+            after = metadata()
+            assert (after["pid"], after["runtimeId"]) == (before["pid"], before["runtimeId"])
+            assert {path: (helpers / path).stat().st_ino for path in inodes} == inodes
+            assert status()["runtimeId"] == before["runtimeId"]
+            current = next(t for t in rpc("terminal.list", limit=10000)["terminals"] if t["handle"] == session["handle"])
+            assert current["incarnationId"] == session["incarnationId"] and current["connected"]
+            os.write(master, b"printf '%s%s\\n' ORC_LIVE_ AFTER\r")
+            receive(b"ORC_LIVE_AFTER")
+            os.write(master, b"\x1d")
+            attached.wait(timeout=5)
+            assert attached.returncode == 0
+            report["frontendInstallPreservesRuntimeAndLiveAttachment"] = True
+        finally:
+            if attached.poll() is None:
+                attached.kill()
+                attached.wait()
+            os.close(master)
+            os.close(slave)
+
     try:
         command(["bash", ROOT / "scripts/install.sh", "--offline"])
         stale = app / "Contents/Resources/stale-install-test"
@@ -131,15 +179,13 @@ def main():
         assert connection.stat().st_mode & 0o777 == 0o600
         assert status(dict(env, ORCA_USER_DATA_PATH=str(profile), ORCA_APP_EXECUTABLE="/missing/Orca"))["runtimeId"] == meta["runtimeId"]
         report["symlinkedCLIReusesRuntimeAfterExit"] = True
-        refused = command(["bash", ROOT / "scripts/install.sh", "--offline"], success=False)
-        assert "left running" in refused.stderr and metadata()["pid"] == meta["pid"]
-        report["installRefusesLiveRuntime"] = True
-
         project = root / "project"
         project.mkdir()
         added = json.loads(command([cli, "projects", "add", project, "--folder", "--default", "--json"]).stdout)
         assert json.loads((config / "config.json").read_text())["defaultProject"] == "id:" + added["id"]
         created = json.loads(command([cli, "new", "terminal", "--name", "bundled-default-test", "--json"]).stdout)
+        live_session = next(t for t in rpc("terminal.list", limit=10000)["terminals"] if t["handle"] == created["handle"])
+        live_install(live_session)
         rpc("terminal.close", terminal=created["handle"])
         command([cli, "projects", "add", ROOT, "--json"])
         report["projectRegistrationAndDefault"] = True
