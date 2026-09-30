@@ -206,7 +206,7 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'terminal.close': async (params) => {
       const target = session(params.terminal)
-      await target.close()
+      await store.end(target)
       return { close: { handle: target.handle } }
     },
 

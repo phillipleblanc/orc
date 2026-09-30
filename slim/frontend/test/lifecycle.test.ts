@@ -33,6 +33,17 @@ test('a session survives frontend SIGKILL and SIGTERM with an identical screen',
   assert.equal(rowText(actual.normal.at(-2)), 'line 299')
 })
 
+test('closing a session ends it and frees its name before the call returns', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  await frontend.rpc('terminal.create', { name: 'closer', cwd: profile, argv: ['/bin/sh', '-c', 'sleep 60'] })
+  await frontend.rpc('terminal.close', { terminal: 'closer' })
+  assert.deepEqual((await frontend.rpc('terminal.list')).terminals, [])
+  await frontend.rpc('terminal.create', { name: 'closer', cwd: profile, argv: ['/bin/sh', '-c', 'sleep 60'] })
+})
+
 test('names are unique and a finished session frees its name', async (t) => {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))

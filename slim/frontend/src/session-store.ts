@@ -144,6 +144,21 @@ export class SessionStore extends EventEmitter {
     await writeFile(join(target, 'meta.json'), JSON.stringify(session.meta, null, 2), { mode: 0o600 })
   }
 
+  /**
+   * Ends a session's program and resolves once the session has left the store and freed its name,
+   * or after `timeoutMs` if the program outlives its hangup.
+   */
+  async end(session: TerminalSession, timeoutMs = 10_000): Promise<void> {
+    if (!this.list().includes(session)) return this.retiring.get(session.meta.name)
+    await new Promise<void>((resolve, reject) => {
+      const done = () => { clearTimeout(timer); this.off('ended', onEnded) }
+      const onEnded = (ended: TerminalSession) => { if (ended === session) { done(); resolve() } }
+      const timer = setTimeout(() => { done(); resolve() }, timeoutMs)
+      this.on('ended', onEnded)
+      session.close().catch((error) => { done(); reject(error) })
+    })
+  }
+
   /** Saves checkpoints and disconnects from every holder without ending sessions. */
   async detachAll(): Promise<void> {
     const sessions = this.list()

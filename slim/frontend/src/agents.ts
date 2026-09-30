@@ -125,7 +125,7 @@ export class AgentDirectory extends EventEmitter {
     const dropped = record.queue.length
     record.queue = []
     void this.save(record)
-    if (kill) return record.session.close().then(() => ({ ...this.describe(record), dropped, killed: true }))
+    if (kill) return this.store.end(record.session).then(() => ({ ...this.describe(record), dropped, killed: true }))
     record.monitor.noteInterrupt()
     record.session.input('\x1b')
     return { ...this.describe(record), dropped, interrupted: true }
