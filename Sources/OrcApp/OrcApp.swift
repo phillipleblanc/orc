@@ -43,7 +43,8 @@ import OrcKit
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationDidFinishLaunching(_ notification: Notification) {
         IdleNotifications.shared.start()
-        guard let url = Bundle.main.url(forResource: "Orc", withExtension: "icns"),
+        guard let iconName = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+              let url = Bundle.main.url(forResource: iconName, withExtension: "icns"),
               let icon = NSImage(contentsOf: url) else { return }
         NSApplication.shared.applicationIconImage = icon
     }
