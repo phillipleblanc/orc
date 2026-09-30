@@ -8,7 +8,10 @@ const STRIPPED_KEYS = new Set([
   'CODEX_CI', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'CODEX_VERSION', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED'
 ])
 
-/** The environment a session's program starts with. `ORC_SESSION_NAME` is the session's identity. */
+/**
+ * The environment a session's program starts with. `ORC_SESSION_NAME` is the session's identity and
+ * `ORC_RUNTIME_DIR` its runtime profile, so `orc` run inside the session reaches the same runtime.
+ */
 export function sessionEnvironment(base: Record<string, string | undefined>, name: string, extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {

@@ -41,7 +41,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   execFileSync('git', ['init', '-q', project])
   const launcher = join(profile, 'launch-frontend')
   await writeFile(launcher, `#!/bin/sh\nfor argument; do case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac; done\n` +
-    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}"\n`)
+    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}" --port 0\n`)
   await chmod(launcher, 0o755)
   let frontend = await Frontend.start(profile)
   t.after(() => frontend.kill('SIGKILL'))

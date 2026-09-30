@@ -23,7 +23,7 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
   // Orc starts this in place of the bundled Orca runtime whenever the profile has no running runtime.
   const launcher = join(profile, 'launch-frontend')
   await writeFile(launcher, `#!/bin/sh\nfor argument; do case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac; done\n` +
-    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}"\n`)
+    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}" --port 0\n`)
   await chmod(launcher, 0o755)
   const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: config, ORCA_USER_DATA_PATH: profile, ORCA_APP_EXECUTABLE: launcher }
   const orc = async (...args: string[]) => (await run(ORC, args, { env, timeout: 60_000 })).stdout

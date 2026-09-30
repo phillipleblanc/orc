@@ -4,7 +4,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { writeJsonFile } from './json-file.ts'
 
-export type Project = { id: string; path: string; displayName: string; kind: 'git' | 'folder'; createdAt: string }
+export type Project = { id: string; path: string; displayName: string; createdAt: string }
 
 /** Registered project folders, persisted in `<profile>/projects.json`. */
 export class Projects {
@@ -47,14 +47,14 @@ export class Projects {
   }
 
   /** Keeps the caller's spelling of the path, which clients compare against; duplicates are found by real path. */
-  async add(path: string, kind: 'git' | 'folder'): Promise<Project> {
+  async add(path: string): Promise<Project> {
     const given = resolve(path)
     const real = await realpath(given)
     if (!(await stat(real)).isDirectory()) throw new Error(`${path} is not a directory`)
     for (const project of this.projects) {
       if (project.path === given || (await realpath(project.path).catch(() => '')) === real) return project
     }
-    const project: Project = { id: randomUUID(), path: given, displayName: basename(given), kind, createdAt: new Date().toISOString() }
+    const project: Project = { id: randomUUID(), path: given, displayName: basename(given), createdAt: new Date().toISOString() }
     this.projects.push(project)
     await writeJsonFile(this.file, this.projects)
     return project

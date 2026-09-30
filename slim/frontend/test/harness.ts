@@ -39,8 +39,10 @@ export class Frontend {
     this.ready = ready
   }
 
+  /** Starts a frontend on a free port unless `extraArgs` names one; the default port belongs to the developer's runtime. */
   static async start(profile: string, extraArgs: string[] = []): Promise<Frontend> {
-    const child = spawn(process.execPath, [FRONTEND, '--profile', profile, '--holder', HOLDER, '--json', ...extraArgs], {
+    const port = extraArgs.includes('--port') ? [] : ['--port', '0']
+    const child = spawn(process.execPath, [FRONTEND, '--profile', profile, '--holder', HOLDER, '--json', ...port, ...extraArgs], {
       env: isolatedEnvironment(), stdio: ['ignore', 'pipe', 'pipe']
     })
     let stderr = ''
@@ -188,6 +190,19 @@ export async function until<T>(probe: () => Promise<T | undefined | null | false
     await sleep(25)
   }
   throw new Error(`timed out waiting for ${label}${describe ? ` (${describe()})` : ''}${last ? `: ${(last as Error).message}` : ''}`)
+}
+
+/** A port nothing is listening on right now. */
+export async function freePort(): Promise<number> {
+  const { createServer } = await import('node:net')
+  return new Promise((resolvePort, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      server.close(() => resolvePort(typeof address === 'object' && address ? address.port : 0))
+    })
+  })
 }
 
 export const uniqueName = (prefix: string) => `${prefix}-${randomUUID().slice(0, 6)}`

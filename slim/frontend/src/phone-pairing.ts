@@ -24,7 +24,8 @@ function isTailscale(address: string): boolean {
 
 /**
  * `orc.phone.*`, served only on the owner-authenticated local socket: phones never administer
- * pairing. Offers use mobile scope and a direct endpoint on the chosen address.
+ * pairing. Offers use mobile scope and a direct endpoint on the chosen address; the WebSocket
+ * listens on every interface.
  */
 export function phonePairingHandlers(options: { runtimeId: string; devices: Devices; keypair: ServerKeypair; websocket: WebSocketRpcServer }): Handlers {
   const { runtimeId, devices, keypair, websocket } = options
@@ -44,10 +45,9 @@ export function phonePairingHandlers(options: { runtimeId: string; devices: Devi
     'orc.phone.create': async (params) => {
       const address = typeof params.address === 'string' ? params.address : ''
       if (!reachableAddresses().some((entry) => entry.address === address)) throw new RpcError('invalid_argument', 'choose an address of this host')
-      await websocket.addHost(address)
-      const unused = phones().filter((device) => device.lastSeenAt === 0 && device.address === address)
+      const unused = phones().filter((device) => device.lastSeenAt === 0)
       if (params.rotate === true) for (const device of unused) await devices.revoke(device.deviceId)
-      const device = params.rotate === true || unused.length === 0 ? await devices.create('mobile', 'Phone', address) : unused[0]
+      const device = params.rotate === true || unused.length === 0 ? await devices.create('mobile', 'Phone') : unused[0]
       const endpoint = `ws://${address}:${websocket.port}`
       const publicKeyB64 = Buffer.from(keypair.publicKey).toString('base64')
       return reply({

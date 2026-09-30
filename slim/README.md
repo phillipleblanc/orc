@@ -133,6 +133,10 @@ message and nothing is queued.
 `orc agent spawn|send|list|status|wait|stop` uses these methods when the runtime advertises
 `orc.agents.v1`; commands run inside a session send its `ORC_SESSION_NAME` as the sender and parent.
 
+Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) and `ORC_RUNTIME_DIR`
+(its runtime profile, so `orc` run inside it reaches the same runtime); agents also get
+`ORC_AGENT_EVENTS`.
+
 ## Orca compatibility
 
 The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSocket transports) and
@@ -157,9 +161,11 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 The unmodified Orca mobile app pairs with this runtime and shows its sessions.
 
 - **Pairing:** `orc pair-phone` calls `orc.phone.create` with one of the host's IPv4 addresses
-  (Tailscale first). The frontend starts listening on that address and returns an `orca://pair` link
-  with a mobile-scope device token. The WebSocket port is kept in `frontend.json`, so paired phones
-  reconnect after restarts; a phone whose token is revoked with `orc.phone.revoke` is disconnected.
+  (Tailscale first) and returns an `orca://pair` link to that address with a mobile-scope device
+  token. The WebSocket listens on every interface at port 6768 (Orca's port; `--port` overrides it),
+  so paired phones reconnect after restarts. A phone whose token is revoked with `orc.phone.revoke`
+  is disconnected.
+- **Branches:** a project whose folder is a Git checkout shows its branch; other folders show none.
 - **Scope:** a mobile token may call only the methods in `mobile-methods.ts`; others fail with
   `forbidden`.
 - **Workspaces:** `worktree.ps` lists each project, and one folder workspace per working directory

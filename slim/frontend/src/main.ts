@@ -8,13 +8,12 @@ import { Devices, pairingLink } from './devices.ts'
 import { loadOrCreateKeypair } from './e2ee.ts'
 import { Catalog } from './catalog.ts'
 import { clientEventMethods } from './client-events.ts'
-import { writeJsonFile } from './json-file.ts'
 import { createHandlers, createSessionStreams } from './methods.ts'
 import { MOBILE_METHODS } from './mobile-methods.ts'
 import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
-import { phonePairingHandlers, reachableAddresses } from './phone-pairing.ts'
+import { phonePairingHandlers } from './phone-pairing.ts'
 import { Projects } from './projects.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
@@ -22,6 +21,8 @@ import { ConnectionSubscriptions } from './subscriptions.ts'
 import { WebSocketRpcServer } from './websocket-server.ts'
 
 const VERSION = '0.1.0'
+// Orca's port: paired phones keep the endpoint they were given.
+const DEFAULT_PORT = 6768
 const here = dirname(fileURLToPath(import.meta.url))
 
 const { values } = parseArgs({
@@ -41,7 +42,7 @@ const policy = {
   ...(values['checkpoint-max-bytes'] ? { maxUntrimmedBytes: Number(values['checkpoint-max-bytes']) } : {})
 }
 if (!values.profile) {
-  process.stderr.write('usage: node src/main.ts --profile DIR [--holder PATH] [--json]\n')
+  process.stderr.write('usage: node src/main.ts --profile DIR [--holder PATH] [--port PORT] [--json]\n')
   process.exit(2)
 }
 const profile = resolve(values.profile)
@@ -72,13 +73,20 @@ const streaming = {
   ...mobileTerminal.streaming,
   ...clientEvents.streaming
 }
-// Paired phones store the endpoint, so the port stays the same across restarts once chosen.
-const settingsPath = join(profile, 'frontend.json')
-const settings = JSON.parse(await readFile(settingsPath, 'utf8').catch(() => '{}')) as { websocketPort?: number }
-const phoneHosts = [...new Set(devices.all().filter((device) => device.scope === 'mobile' && device.address).map((device) => device.address!))]
-  .filter((address) => reachableAddresses().some((entry) => entry.address === address))
-const websocket = await listenWebSocket(Number(values.port ?? settings.websocketPort ?? 0), phoneHosts)
-if (websocket.port !== settings.websocketPort) await writeJsonFile(settingsPath, { ...settings, websocketPort: websocket.port })
+const websocket = new WebSocketRpcServer({
+  port: Number(values.port ?? DEFAULT_PORT), keypair, devices, runtimeId, handlers, streaming,
+  mobileMethods: MOBILE_METHODS,
+  // Only the Orca mobile app has a chat view.
+  mobileHandlers: nativeChat.handlers,
+  mobileStreaming: nativeChat.streaming
+})
+try {
+  await websocket.listen()
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+  process.stderr.write(`orc-frontend: port ${websocket.port} is in use; stop whatever holds it (paired phones expect this port)\n`)
+  process.exit(1)
+}
 const websocketEndpoint = `ws://127.0.0.1:${websocket.port}`
 const rpcPath = join(profile, 'rpc.sock')
 await unlink(rpcPath).catch(() => {})
@@ -130,29 +138,6 @@ async function shutdown(): Promise<void> {
 }
 process.on('SIGTERM', () => void shutdown())
 process.on('SIGINT', () => void shutdown())
-
-async function listenWebSocket(port: number, extraHosts: string[]): Promise<WebSocketRpcServer> {
-  const create = (chosen: number) => new WebSocketRpcServer({
-    hosts: ['127.0.0.1', ...extraHosts], port: chosen, keypair, devices, runtimeId, handlers,
-    streaming,
-    mobileMethods: MOBILE_METHODS,
-    // Only the Orca mobile app has a chat view.
-    mobileHandlers: nativeChat.handlers,
-    mobileStreaming: nativeChat.streaming
-  })
-  const server = create(port)
-  try {
-    await server.listen()
-    return server
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || port === 0) throw error
-    await server.close()
-    process.stderr.write(`orc-frontend: port ${port} is in use; paired phones must pair again with the new port\n`)
-    const fallback = create(0)
-    await fallback.listen()
-    return fallback
-  }
-}
 
 /** One frontend per profile. A lock left by a dead process is taken over. */
 async function acquireLock(path: string): Promise<void> {

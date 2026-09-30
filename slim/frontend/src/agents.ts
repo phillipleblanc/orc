@@ -84,7 +84,7 @@ export class AgentDirectory extends EventEmitter {
       name: options.name,
       cwd,
       argv: agentArgv(options.agent, executable, hooks, options),
-      env: sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: events, ORCA_USER_DATA_PATH: this.profile }),
+      env: sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: events, ORC_RUNTIME_DIR: this.profile }),
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,
       project: project?.id,

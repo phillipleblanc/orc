@@ -81,13 +81,14 @@ export class Catalog extends EventEmitter {
       const sessions = this.sessionsIn(worktree.id)
       const monitors = sessions.map((session) => this.agents.monitor(session)).filter((monitor): monitor is AgentMonitor => Boolean(monitor))
       const lastActivityAt = Math.max(0, ...sessions.map((session) => Date.parse(session.meta.createdAt)), ...monitors.map((monitor) => monitor.lastEventAt))
+      const branch = worktree.project ? this.branch(worktree.path) : ''
       return {
-        workspaceKind: worktree.project?.kind === 'git' ? 'git' : 'folder',
+        workspaceKind: branch ? 'git' : 'folder',
         worktreeId: worktree.id,
         repoId: worktree.repoId,
         repo: worktree.project?.displayName ?? worktree.name,
         path: worktree.path,
-        branch: worktree.project?.kind === 'git' ? this.branch(worktree.path) : '',
+        branch,
         displayName: worktree.name,
         isArchived: false,
         isMainWorktree: true,

@@ -18,8 +18,7 @@ export type StreamContext = CallContext & {
 export type StreamingHandler = (params: Record<string, any>, context: StreamContext, emit: (event: Record<string, unknown>) => void) => Promise<void>
 
 export type WebSocketOptions = {
-  /** Addresses to listen on, all with the same port. */
-  hosts: string[]
+  /** Listens on every interface; 0 picks a free port. */
   port: number
   keypair: ServerKeypair
   devices: Devices
@@ -43,34 +42,26 @@ const MAX_MESSAGE_BYTES = 16 << 20
 export class WebSocketRpcServer {
   private readonly options: WebSocketOptions
   private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES })
-  private readonly listeners = new Map<string, Server>()
+  private readonly server: Server
   private readonly devicesByConnection = new Map<WebSocket, () => Device | null>()
   port = 0
 
   constructor(options: WebSocketOptions) {
     this.options = options
     this.port = options.port
+    this.server = createServer((_request, response) => response.writeHead(426).end())
+    this.server.on('upgrade', (request, socket, head) => this.sockets.handleUpgrade(request, socket, head, (ws) => this.accept(ws)))
   }
 
-  /** Listens on every configured host; returns the port, which is chosen by the first host when 0. */
-  async listen(): Promise<number> {
-    for (const host of this.options.hosts) await this.addHost(host)
-    return this.port
-  }
-
-  /** Starts listening on another address with the same port. */
-  addHost(host: string): Promise<void> {
-    if (this.listeners.has(host)) return Promise.resolve()
+  /** Starts listening; returns the port. */
+  listen(): Promise<number> {
     return new Promise((resolve, reject) => {
-      const server = createServer((_request, response) => response.writeHead(426).end())
-      server.on('upgrade', (request, socket, head) => this.sockets.handleUpgrade(request, socket, head, (ws) => this.accept(ws)))
-      server.once('error', reject)
-      server.listen(this.port, host, () => {
-        server.off('error', reject)
-        const address = server.address()
-        if (this.port === 0 && typeof address === 'object' && address) this.port = address.port
-        this.listeners.set(host, server)
-        resolve()
+      this.server.once('error', reject)
+      this.server.listen(this.port, '0.0.0.0', () => {
+        this.server.off('error', reject)
+        const address = this.server.address()
+        if (typeof address === 'object' && address) this.port = address.port
+        resolve(this.port)
       })
     })
   }
@@ -84,8 +75,7 @@ export class WebSocketRpcServer {
 
   async close(): Promise<void> {
     for (const client of this.sockets.clients) client.terminate()
-    await Promise.all([...this.listeners.values()].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
-    this.listeners.clear()
+    await new Promise<void>((resolve) => this.server.close(() => resolve()))
   }
 
   private accept(socket: WebSocket): void {

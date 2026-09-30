@@ -92,7 +92,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       name,
       cwd,
       argv,
-      env: sessionEnvironment(await loginEnvironment(), name, { ORCA_USER_DATA_PATH: store.profile }),
+      env: sessionEnvironment(await loginEnvironment(), name, { ORC_RUNTIME_DIR: store.profile }),
       cols: Number(params.cols ?? 120),
       rows: Number(params.rows ?? 40),
       project: (project ?? projects.containing(cwd))?.id,
@@ -159,7 +159,7 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'repo.add': async (params) => {
       if (typeof params.path !== 'string') throw new RpcError('invalid_argument', 'path is required')
-      const project = await projects.add(params.path, params.kind === 'folder' ? 'folder' : 'git')
+      const project = await projects.add(params.path)
       catalog.changed()
       return { repo: { id: project.id, path: project.path, displayName: project.displayName } }
     },

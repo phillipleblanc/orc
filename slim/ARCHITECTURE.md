@@ -97,7 +97,7 @@ flowchart LR
     end
 
     subgraph profileFiles["profile · written by the frontend"]
-        runtime["orca-runtime.json · rpc.sock · frontend.lock · frontend.json"]
+        runtime["orca-runtime.json · rpc.sock · frontend.lock"]
         identity["orca-e2ee-keypair.json · orca-devices.json"]
         projects["projects.json"]
         binaries["holders/HASH/orc-holder"]
@@ -184,7 +184,7 @@ sequenceDiagram
     participant H as Holder
 
     U->>F: orc.phone.create(address) over the local socket
-    F->>F: listen on address:port, issue a mobile device token
+    F->>F: issue a mobile device token for ws://address:6768
     F-->>U: orca://pair link, shown as a QR code
     P->>F: e2ee_hello, e2ee_auth(device token)
     F-->>P: e2ee_authenticated
