@@ -380,7 +380,9 @@ struct SessionWindow: View {
                     AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
                     Text(name).font(.headline).lineLimit(1)
                 }
-                Text(URL(fileURLWithPath: session.worktreePath).lastPathComponent).font(.caption).foregroundStyle(.secondary)
+                Text([URL(fileURLWithPath: session.worktreePath).lastPathComponent, session.agentIdentity]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .padding(.vertical, 5)
