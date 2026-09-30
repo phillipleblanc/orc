@@ -10,7 +10,7 @@ public struct TerminalFrame {
     }
     public init(data: Data) throws {
         let bytes = [UInt8](data)
-        guard bytes.count >= 16, bytes[0] == 0x74, bytes[1] == 1 else { throw OrcError("Unsupported Orca terminal frame.") }
+        guard bytes.count >= 16, bytes[0] == 0x74, bytes[1] == 1 else { throw OrcError("Unsupported runtime terminal frame.") }
         func word(_ offset: Int) -> UInt32 { (0..<4).reduce(0) { $0 | UInt32(bytes[offset + $1]) << ($1 * 8) } }
         opcode = bytes[2]; streamID = word(4); sequence = UInt64(word(8)) << 32 | UInt64(word(12)); payload = Data(bytes.dropFirst(16))
     }
@@ -57,28 +57,28 @@ public struct TerminalFrame {
         do {
             try await task.send(.string(String(decoding: jsonData(["type": "e2ee_hello", "publicKeyB64": crypto.publicKey.base64EncodedString()]), as: UTF8.self)))
             guard case .string(let ready) = try await task.receive(), try jsonObject(Data(ready.utf8))["type"] as? String == "e2ee_ready" else {
-                throw OrcError("Orca rejected the encryption handshake.")
+                throw OrcError("The runtime rejected the encryption handshake.")
             }
             try await sendJSON(["type": "e2ee_auth", "deviceToken": pairing.deviceToken])
             guard case .string(let encrypted) = try await task.receive(), let data = Data(base64Encoded: encrypted),
                   try jsonObject(crypto.open(data))["type"] as? String == "e2ee_authenticated" else {
-                throw OrcError("Orca rejected this connection. Create a fresh runtime access link and run `orc connect`.")
+                throw OrcError("The runtime rejected this connection. Remove connection.json from Orc's configuration directory so Orc requests new access.")
             }
             receiving = Task { await receiveLoop() }
         } catch { close(); throw error }
     }
     private func sendJSON(_ value: [String: Any]) async throws {
-        guard let task, !closed else { throw OrcError("Orca connection is closed.") }
+        guard let task, !closed else { throw OrcError("Runtime connection is closed.") }
         try await task.send(.string(crypto.seal(jsonData(value)).base64EncodedString()))
     }
     public func request(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
         let id = UUID().uuidString
         return try await withCheckedThrowingContinuation { continuation in
-            guard !closed else { continuation.resume(throwing: OrcError("Orca connection is closed.")); return }
+            guard !closed else { continuation.resume(throwing: OrcError("Runtime connection is closed.")); return }
             pending[id] = continuation
             deadlines[id] = Task {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
-                if !Task.isCancelled { self.finish(id, .failure(OrcError("Orca request timed out. Input was not retried."))) }
+                if !Task.isCancelled { self.finish(id, .failure(OrcError("Runtime request timed out. Input was not retried."))) }
             }
             Task {
                 do { try await sendJSON(["id": id, "method": method, "params": params, "deviceToken": pairing.deviceToken]) }
@@ -91,7 +91,7 @@ public struct TerminalFrame {
         try await sendJSON(["id": id, "method": method, "params": params, "deviceToken": pairing.deviceToken])
     }
     public func send(_ frame: TerminalFrame) async throws {
-        guard let task, !closed else { throw OrcError("Orca connection is closed.") }
+        guard let task, !closed else { throw OrcError("Runtime connection is closed.") }
         try await task.send(.data(crypto.seal(frame.encoded)))
     }
     private func finish(_ id: String, _ result: Result<[String: Any], Error>) {
@@ -108,7 +108,7 @@ public struct TerminalFrame {
                     guard let data = Data(base64Encoded: text) else { throw OrcError("Invalid encrypted response.") }
                     let response = try jsonObject(crypto.open(data))
                     if response["_keepalive"] as? Bool == true { continue }
-                    guard let id = response["id"] as? String else { throw OrcError("Missing Orca response ID.") }
+                    guard let id = response["id"] as? String else { throw OrcError("Missing runtime response ID.") }
                     if streams.contains(id) {
                         let event = try rpcResult(response)
                         if id == "orc-stream" { onEvent?(event) }
@@ -123,7 +123,7 @@ public struct TerminalFrame {
             if !closed { close(error: error); onClose?(error) }
         }
     }
-    public func close(error: Error = OrcError("Detached from Orca.")) {
+    public func close(error: Error = OrcError("Detached from the runtime.")) {
         guard !closed else { return }; closed = true
         receiving?.cancel(); receiving = nil
         task?.cancel(with: .normalClosure, reason: nil); session.invalidateAndCancel()

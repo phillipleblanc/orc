@@ -40,12 +40,11 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   await mkdir(project)
   execFileSync('git', ['init', '-q', project])
   const launcher = join(profile, 'launch-frontend')
-  await writeFile(launcher, `#!/bin/sh\nfor argument; do case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac; done\n` +
-    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}" --port 0\n`)
+  await writeFile(launcher, `#!/bin/sh\nexec "${process.execPath}" "${FRONTEND}" --holder "${HOLDER}" --port 0 "$@"\n`)
   await chmod(launcher, 0o755)
   let frontend = await Frontend.start(profile)
   t.after(() => frontend.kill('SIGKILL'))
-  const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: join(profile, 'orc-config'), ORCA_USER_DATA_PATH: profile, ORCA_APP_EXECUTABLE: launcher }
+  const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: join(profile, 'orc-config'), ORC_RUNTIME_DIR: profile, ORC_RUNTIME_EXECUTABLE: launcher }
   const orc = async (args: string[], options: { caller?: string; input?: string; cwd?: string } = {}) => {
     const child = spawn(ORC, args, { env: { ...env, ...(options.caller ? { ORC_SESSION_NAME: options.caller } : {}) }, cwd: options.cwd ?? project })
     let stdout = '', stderr = ''
@@ -141,7 +140,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   }
 
   // `orc new codex` starts the agent with status reporting too.
-  await orc(['projects', 'add', project, '--folder', '--json'])
+  await orc(['projects', 'add', project, '--json'])
   const created = await orc(['new', 'codex', '--name', 'plain', '--project', `path:${project}`, '--json'])
   assert.equal(created.code, 0, created.stderr)
   const listedSessions = (await orc(['list', '--json'])).json() as { title: string; agentIdentity: string | null }[]

@@ -1,31 +1,17 @@
-/** Edit the current Orca terminal's Orc note with nvim inside Pi. */
-import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+/** Edit the current Orc session's notes with nvim inside Pi. The app shows the same file. */
+import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const HANDLE = /^term_[A-Za-z0-9_-]+$/;
-const PANE = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
-
-function noteFile(key: string): string {
-  const config = process.env.ORC_CONFIG_DIR || join(homedir(), ".config", "orc");
-  return join(config, "notes", `${key}.txt`);
+// The runtime's session-name rule; names are also file names.
+function validName(name: string | undefined): name is string {
+  return !!name && name.length <= 64 && !name.startsWith(".") && !/[\/\u0000-\u001f\u007f]/.test(name);
 }
 
-function migrateLegacyNote(handle: string | undefined, file: string): void {
-  if (existsSync(file)) return;
-  let legacy = "";
-  if (handle && HANDLE.test(handle)) {
-    const oldFile = noteFile(handle);
-    if (existsSync(oldFile)) legacy = readFileSync(oldFile, "utf8");
-    else try {
-      legacy = execFileSync("/usr/bin/defaults", ["read", "dev.phillipleblanc.orc", `sessionNotes.${handle}`],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).replace(/\n$/, "");
-    } catch { /* No note in the app's earlier UserDefaults store. */ }
-  }
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  try { writeFileSync(file, legacy, { flag: "wx", mode: 0o600 }); }
-  catch (error: any) { if (error?.code !== "EEXIST") throw error; }
+function noteFile(name: string): string {
+  const config = process.env.ORC_CONFIG_DIR || join(homedir(), ".config", "orc");
+  return join(config, "notes", `${name}.txt`);
 }
 
 async function openNvim(file: string, ui: any): Promise<number | null> {
@@ -49,20 +35,20 @@ async function openNvim(file: string, ui: any): Promise<number | null> {
 
 export default function (pi: any): void {
   pi.registerCommand("notes", {
-    description: "Edit this Orca session's Orc notes in nvim",
+    description: "Edit this Orc session's notes in nvim",
     handler: async (_args: string, ctx: any) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("/notes needs an interactive Pi terminal.", "error");
         return;
       }
-      const pane = process.env.ORCA_PANE_KEY;
-      if (!pane || !PANE.test(pane)) {
-        ctx.ui.notify("/notes needs an Orca pane identity; reload Pi in an Orca terminal.", "error");
+      const name = process.env.ORC_SESSION_NAME;
+      if (!validName(name)) {
+        ctx.ui.notify("/notes works in Pi sessions started by Orc.", "error");
         return;
       }
-      const file = noteFile(`pane_${pane.replace(":", "_")}`);
       try {
-        migrateLegacyNote(process.env.ORCA_TERMINAL_HANDLE, file);
+        const file = noteFile(name);
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
         const status = await openNvim(file, ctx.ui);
         if (status !== 0) ctx.ui.notify("nvim did not save the note successfully.", "error");
       } catch (error) {

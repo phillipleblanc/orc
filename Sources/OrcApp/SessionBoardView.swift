@@ -66,13 +66,7 @@ struct SessionBoardView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if model.needsRuntimeSetup {
-                ContentUnavailableView {
-                    Label("Set up Orc to see your sessions", systemImage: "square.grid.2x2")
-                } actions: {
-                    Button("Open Sessions") { openWindow(id: "sessions") }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !organization.loaded {
+            if !organization.loaded {
                 ContentUnavailableView {
                     Label("Board unavailable", systemImage: "exclamationmark.triangle")
                 } actions: {
@@ -121,7 +115,7 @@ struct SessionBoardView: View {
             ToolbarItem {
                 Button { groupEditor = GroupEditor(id: UUID().uuidString, name: "", isNew: true) } label: {
                     Label("New Group", systemImage: "folder.badge.plus")
-                }.help("Create a group").disabled(!organization.loaded || model.needsRuntimeSetup || drag != nil)
+                }.help("Create a group").disabled(!organization.loaded || drag != nil)
             }
             ToolbarItem {
                 Button { Task { await model.refresh() } } label: { Label("Refresh Sessions", systemImage: "arrow.clockwise") }
@@ -232,16 +226,16 @@ struct SessionBoardView: View {
                         model.requestAttachment(to: session)
                         openWindow(id: "sessions")
                     }
-                    .opacity(drag?.key == session.notesKey ? 0 : 1)
+                    .opacity(drag?.key == session.name ? 0 : 1)
                     .overlay {
-                        if drag?.key == session.notesKey {
+                        if drag?.key == session.name {
                             RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.06))
                                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(0.35),
                                     style: StrokeStyle(lineWidth: 1.5, dash: [5])))
                                 .allowsHitTesting(false)
                         }
                     }
-                    .modifier(BoardDropTarget(id: "card:" + session.id, groupID: id, anchor: session.notesKey))
+                    .modifier(BoardDropTarget(id: "card:" + session.id, groupID: id, anchor: session.name))
                 }
             }
             BoardDropArea(empty: sessions.isEmpty, message: emptyMessage(empty: sessions.isEmpty, allSessions: allSessions))
@@ -270,7 +264,7 @@ struct SessionBoardView: View {
         if drag == nil {
             guard organization.loaded, viewport.contains(start),
                   let source = dropTargets.values.first(where: { $0.anchor != nil && $0.frame.contains(start) }),
-                  let session = filteredSessions.first(where: { $0.notesKey == source.anchor }) else { return }
+                  let session = filteredSessions.first(where: { $0.name == source.anchor }) else { return }
             let heights = dropTargets.filter { $0.key.hasPrefix("section:") }.mapValues { $0.frame.height }
             drag = SessionBoardDrag(session: session, board: organization.board, frame: source.frame,
                                     start: start, sectionHeights: heights)
@@ -307,7 +301,7 @@ struct SessionBoardView: View {
 
     private func neighbor(of session: Session, in sessions: [Session], offset: Int) -> String? {
         guard let index = sessions.firstIndex(where: { $0.id == session.id }), sessions.indices.contains(index + offset) else { return nil }
-        return sessions[index + offset].notesKey
+        return sessions[index + offset].name
     }
     private func reconcile() { organization.update { $0.reconcile(model.sessions) } }
 }
@@ -345,7 +339,7 @@ private struct BoardSessionCard: View {
             HStack(spacing: 6) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
-                        ForEach(organization.board.labels(for: session.notesKey)) { label in
+                        ForEach(organization.board.labels(for: session.name)) { label in
                             Text(label.name).font(.caption).lineLimit(1).padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(Color.accentColor.opacity(0.12), in: Capsule()).help(label.name)
                         }
@@ -353,18 +347,18 @@ private struct BoardSessionCard: View {
                 }
                 Button { showLabels.toggle() } label: { Image(systemName: "tag") }
                     .buttonStyle(.borderless).help("Edit labels").accessibilityLabel("Edit labels for \(session.name)")
-                    .popover(isPresented: $showLabels) { BoardLabelPicker(organization: organization, key: session.notesKey) }
+                    .popover(isPresented: $showLabels) { BoardLabelPicker(organization: organization, key: session.name) }
                 Menu {
                     Menu("Move to Group") {
                         Button("Ungrouped") { move(to: nil) }
                         ForEach(organization.board.groups) { group in Button(group.name) { move(to: group.id) } }
                     }
                     Button("Move Earlier") {
-                        organization.update { $0.move(session.notesKey, to: $0.cards[session.notesKey]?.groupID, before: earlier) }
+                        organization.update { $0.move(session.name, to: $0.cards[session.name]?.groupID, before: earlier) }
                     }.disabled(earlier == nil)
                     Button("Move Later") {
                         guard let later else { return }
-                        organization.update { $0.move(later, to: $0.cards[session.notesKey]?.groupID, before: session.notesKey) }
+                        organization.update { $0.move(later, to: $0.cards[session.name]?.groupID, before: session.name) }
                     }.disabled(later == nil)
                 } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).fixedSize().help("Move session").accessibilityLabel("Move \(session.name)")
@@ -377,7 +371,7 @@ private struct BoardSessionCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("board-card-\(session.handle)")
     }
-    private func move(to groupID: String?) { organization.update { $0.move(session.notesKey, to: groupID) } }
+    private func move(to groupID: String?) { organization.update { $0.move(session.name, to: groupID) } }
 }
 
 private struct BoardLabelPicker: View {

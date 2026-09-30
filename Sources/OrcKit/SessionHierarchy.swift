@@ -1,6 +1,6 @@
 import Foundation
 
-/// A one-level view of Orca sessions. The saved Orca name is the only grouping
+/// A one-level view of sessions. The session name is the only grouping
 /// signal; no separate parent metadata needs to be kept in sync with renames.
 public struct SessionHierarchy {
     public struct Group: Identifiable {

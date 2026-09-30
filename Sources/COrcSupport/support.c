@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <readpassphrase.h>
 #include <spawn.h>
 #include <libproc.h>
 #include <fcntl.h>
@@ -41,18 +40,6 @@ uint64_t orc_process_start_time(int pid) {
     return info.pbi_start_tvsec * 1000000ULL + info.pbi_start_tvusec;
 }
 
-int orc_is_orca_process(int pid) {
-    char path[PROC_PIDPATHINFO_MAXSIZE];
-    if (pid <= 0 || proc_pidpath(pid, path, sizeof(path)) <= 0) return 0;
-    const char *name = strrchr(path, '/');
-    return name && strcmp(name + 1, "Orca") == 0;
-}
-
-char *orc_read_pairing(char *buffer, size_t capacity) {
-    // The system reader restores terminal echo before forwarding exit signals.
-    int flags = isatty(STDIN_FILENO) ? RPP_REQUIRE_TTY : RPP_STDIN;
-    return readpassphrase("", buffer, capacity, RPP_ECHO_OFF | flags);
-}
 
 int orc_connect_unix(const char *path, int timeout_seconds) {
     struct sockaddr_un addr = {0};

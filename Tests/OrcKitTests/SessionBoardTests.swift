@@ -2,12 +2,9 @@ import XCTest
 @testable import OrcKit
 
 final class SessionBoardTests: XCTestCase {
-    private func session(_ handle: String, pane: String? = nil, title: String? = nil, project: String = "project") -> Session {
-        var session = Session(handle: handle, title: title ?? handle, worktreeId: project, worktreePath: "/code/\(project)",
-                              connected: true, writable: true, agentIdentity: "pi", incarnationId: "process")
-        session.tabId = pane
-        session.leafId = pane.map { _ in "leaf" }
-        return session
+    private func session(_ handle: String, title: String? = nil, project: String = "project") -> Session {
+        Session(handle: handle, title: title ?? handle, worktreeId: project, worktreePath: "/code/\(project)",
+                connected: true, writable: true, agentIdentity: "pi", incarnationId: "process")
     }
 
     func testMovesWithinGridAndAcrossGroupsWithoutDuplicates() throws {
@@ -65,22 +62,22 @@ final class SessionBoardTests: XCTestCase {
         XCTAssertEqual(board, before)
     }
 
-    func testOrganizationSurvivesRenameHandleChangesAndMissingInventory() throws {
-        let old = session("old", pane: "stable", title: "Before rename")
-        let fresh = session("fresh", pane: "stable", title: "After rename")
+    func testOrganizationSurvivesHandleChangesAndMissingInventory() throws {
+        let old = session("old", title: "Same name")
+        let fresh = session("fresh", title: "Same name")
         let other = session("other")
         var board = SessionBoard()
         board.reconcile([old, other])
         let group = try XCTUnwrap(board.addGroup("Working"))
-        board.move(old.notesKey, to: group)
-        let label = board.addLabel("Backend", to: old.notesKey)
+        board.move(old.name, to: group)
+        let label = board.addLabel("Backend", to: old.name)
         let before = board
         board.reconcile([])
         board.reconcile([other])
         board.reconcile([fresh, other])
         XCTAssertEqual(board, before)
         XCTAssertEqual(board.sessions(in: group, from: [fresh, other]).map(\.handle), ["fresh"])
-        XCTAssertEqual(board.labels(for: fresh.notesKey).first?.id, label)
+        XCTAssertEqual(board.labels(for: fresh.name).first?.id, label)
     }
 
     func testLabelsAreReusableOnlyWithinTheirProject() throws {
@@ -143,8 +140,8 @@ final class SessionBoardTests: XCTestCase {
                         session("orc", title: "Review UI", project: "orc")]
         var board = SessionBoard()
         board.reconcile(sessions)
-        let spiceLabel = try XCTUnwrap(board.addLabel("Sumac", to: "spice"))
-        board.addLabel("Sumac", to: "orc")
+        let spiceLabel = try XCTUnwrap(board.addLabel("Sumac", to: "Review engine"))
+        board.addLabel("Sumac", to: "Review UI")
         func filtered(_ project: String? = nil, label: String? = nil, search: String = "") -> [String] {
             board.filteredSessions(from: sessions, project: SessionProjectFilter(projectID: project),
                                    labelID: label, search: search).map(\.id)

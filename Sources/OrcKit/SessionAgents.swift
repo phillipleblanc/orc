@@ -94,15 +94,6 @@ public struct SessionAgentCommand {
 }
 
 public enum SessionAgentService {
-    public static let capability = "orc.agents.v1"
-
-    /// Whether the selected runtime implements session agents.
-    public static func isSupported() async throws -> Bool {
-        _ = try await RuntimeBootstrap.ensureRunning()
-        let status = try await LocalRPC.call("status.get")
-        return (status["capabilities"] as? [String] ?? []).contains(capability)
-    }
-
     /// Runs the command and returns its result and whether it fully succeeded.
     public static func execute(_ command: SessionAgentCommand, environment: [String: String] = ProcessInfo.processInfo.environment) async throws -> (body: [String: Any], succeeded: Bool) {
         let caller = environment["ORC_SESSION_NAME"].flatMap { $0.isEmpty ? nil : $0 }

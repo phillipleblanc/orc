@@ -89,7 +89,7 @@ public struct InputDecoder {
                 let status = try await conn.request("status.get")
                 let capabilities = status["capabilities"] as? [String] ?? (status["runtime"] as? [String: Any])?["capabilities"] as? [String] ?? []
                 guard capabilities.contains("terminal.binary-stream.v1"), capabilities.contains("terminal.multiplex.v1") else {
-                    throw OrcError("Orca does not advertise terminal streaming with scrollback support.")
+                    throw OrcError("The runtime does not advertise terminal streaming with scrollback support.")
                 }
                 // Reconnecting to a replaced process must require another explicit attach.
                 let current = try await SessionService().list()
@@ -101,7 +101,7 @@ public struct InputDecoder {
                 snapshotDeadline = Task { [weak self, weak conn] in
                     try? await Task.sleep(nanoseconds: 15_000_000_000)
                     guard !Task.isCancelled, let self, !self.ready else { return }
-                    self.disconnected(OrcError("Orca did not send a terminal snapshot.")); conn?.close()
+                    self.disconnected(OrcError("The runtime did not send a terminal snapshot.")); conn?.close()
                 }
                 connectedOnce = true
                 await withCheckedContinuation { continuation in
@@ -112,7 +112,7 @@ public struct InputDecoder {
             } catch { failure = error; connection?.close() }
             snapshotDeadline?.cancel(); snapshotDeadline = nil
             if stopping || ended { break }
-            guard reconnect && connectedOnce && attempts < 5 else { throw failure ?? OrcError("Orca disconnected.") }
+            guard reconnect && connectedOnce && attempts < 5 else { throw failure ?? OrcError("The runtime disconnected.") }
             attempts += 1
             inputQueue.removeAll(); inputBytes = 0
             note("Connection lost. Reconnecting (\(attempts)/5); input is paused.")
@@ -239,7 +239,7 @@ public struct InputDecoder {
                 guard collectingSnapshot else { throw OrcError("Unexpected snapshot end.") }
                 if snapshotUnavailable {
                     snapshot.removeAll(); collectingSnapshot = false
-                    note("Orca could not provide retained scrollback; keeping the live screen.")
+                    note("The runtime could not provide retained scrollback; keeping the live screen.")
                     return
                 }
                 // A fresh snapshot may follow an alternate-screen application
@@ -262,7 +262,7 @@ public struct InputDecoder {
                     requestedScrollback = true
                     scrollbackSnapshotPending = true
                     // Desktop subscriptions initially contain only the viewport.
-                    // An untagged request replaces it with history and lets Orca
+                    // An untagged request replaces it with history and lets the runtime
                     // discard buffered live output already covered by the snapshot.
                     Task {
                         do { try await connection.send(TerminalFrame(opcode: 11, streamID: streamID,
@@ -271,8 +271,8 @@ public struct InputDecoder {
                     }
                 }
             case 5, 12: break
-            case 6: throw OrcError("Orca reported a terminal stream error.")
-            case 17: note("Orca refused terminal input.")
+            case 6: throw OrcError("The runtime reported a terminal stream error.")
+            case 17: note("The runtime refused terminal input.")
             default: throw OrcError("Unsupported terminal opcode \(frame.opcode); detach and update Orc.")
             }
         } catch { disconnected(error); connection?.close() }

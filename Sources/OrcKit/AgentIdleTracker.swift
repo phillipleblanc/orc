@@ -19,11 +19,11 @@ public struct AgentIdleTracker: Codable, Equatable {
             let identity = Identity(incarnation: session.incarnationId, agent: session.agentIdentity)
             switch activities[session.handle] ?? .unknown {
             case .active:
-                next[session.notesKey] = identity
+                next[session.handle] = identity
             case .needsAttention:
-                if working[session.notesKey] == identity { next[session.notesKey] = identity }
+                if working[session.handle] == identity { next[session.handle] = identity }
             case .idle:
-                if working[session.notesKey] == identity { completed.append(session) }
+                if working[session.handle] == identity { completed.append(session) }
             case .unread, .noAgent, .unknown, .offline:
                 break
             }

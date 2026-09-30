@@ -153,8 +153,10 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   `session.tabs.subscribe` and `runtime.clientEvents.subscribe`, and `nativeChat.*` to mobile
   devices only. Every streamed reply carries `streaming: true` and a stream ends with
   `{type: "end"}`.
-- **Launching:** Orc starts `ORCA_APP_EXECUTABLE` with `--user-data-dir=PROFILE --serve …` when no
-  runtime is running. `frontend/test/orc-cli.test.ts` shows a launcher that runs this frontend instead.
+- **Launching:** Orc runs `Orc.app/Contents/Resources/Runtime/orc-runtime --profile DIR` (or
+  `ORC_RUNTIME_EXECUTABLE`) when no frontend serves the profile. `orc-runtime` starts this frontend on
+  the bundled Node.js with the bundled holder. Orc then requests its own runtime-scope grant with
+  `slim.pairing.create` over the local socket.
 
 ## Phones
 

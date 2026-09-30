@@ -2,16 +2,13 @@ import XCTest
 @testable import OrcKit
 
 final class AgentReviewStateTests: XCTestCase {
-    private func session(_ handle: String, tab: String, incarnation: String = "process-one", agent: String = "pi") -> Session {
-        var session = Session(handle: handle, title: "Session", worktreeId: "project", worktreePath: "/code/project",
-                              connected: true, writable: true, agentIdentity: agent, incarnationId: incarnation)
-        session.tabId = tab
-        session.leafId = "leaf"
-        return session
+    private func session(_ handle: String, name: String, incarnation: String = "process-one", agent: String = "pi") -> Session {
+        Session(handle: handle, title: name, worktreeId: "project", worktreePath: "/code/project",
+                connected: true, writable: true, agentIdentity: agent, incarnationId: incarnation)
     }
 
     func testCompletionStaysUnreadUntilReadAndIsIndependentPerSession() {
-        let first = session("first", tab: "tab-one"), second = session("second", tab: "tab-two")
+        let first = session("first", name: "tab-one"), second = session("second", name: "tab-two")
         var state = AgentReviewState()
         _ = state.update(sessions: [first, second], activities: [first.handle: .active, second.handle: .active])
         XCTAssertEqual(state.update(sessions: [first, second], activities: [first.handle: .idle, second.handle: .idle]), [first, second])
@@ -24,23 +21,23 @@ final class AgentReviewStateTests: XCTestCase {
         XCTAssertEqual(state.activity(for: first, base: .idle), .idle)
     }
 
-    func testBadgeFollowsPaneAcrossHandleChangeButNotReplacementAgent() {
-        let original = session("old-handle", tab: "tab")
-        let reminted = session("new-handle", tab: "tab")
+    func testBadgeFollowsTheSessionAcrossARenameButNotAReplacementProcess() {
+        let original = session("handle", name: "before")
+        let reminted = session("handle", name: "after")
         var state = AgentReviewState()
         _ = state.update(sessions: [original], activities: [original.handle: .active])
         XCTAssertEqual(state.update(sessions: [reminted], activities: [reminted.handle: .idle]), [reminted])
         XCTAssertEqual(state.activity(for: reminted, base: .idle), .unread)
         XCTAssertEqual(state.activity(for: reminted, base: .offline), .offline)
         XCTAssertEqual(state.activity(for: reminted, base: .active), .active)
-        let replacement = session("new-handle", tab: "tab", incarnation: "process-two")
+        let replacement = session("handle", name: "after", incarnation: "process-two")
         _ = state.update(sessions: [replacement], activities: [replacement.handle: .idle])
         XCTAssertEqual(state.activity(for: replacement, base: .idle), .idle)
         XCTAssertTrue(state.unreadKeys.isEmpty)
     }
 
     func testActiveCycleAndUnreadStateSurviveRelaunch() throws {
-        let current = session("handle", tab: "tab")
+        let current = session("handle", name: "tab")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orc-review-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("agent-review.json")
@@ -60,7 +57,7 @@ final class AgentReviewStateTests: XCTestCase {
     }
 
     func testTruncatedOrUnavailableInventoryDoesNotLoseUnreadState() {
-        let current = session("handle", tab: "tab")
+        let current = session("handle", name: "tab")
         var state = AgentReviewState()
         _ = state.update(sessions: [current], activities: [current.handle: .active])
         _ = state.update(sessions: [current], activities: [current.handle: .idle])

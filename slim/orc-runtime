@@ -1,0 +1,5 @@
+#!/bin/sh
+# Starts the bundled runtime frontend from Orc.app/Contents/Resources/Runtime. Orc runs this with
+# --profile DIR; other frontend flags pass through.
+here="$(cd "$(dirname "$0")" && pwd -P)"
+exec "$here/node" "$here/frontend/src/main.ts" --holder "$here/orc-holder" "$@"

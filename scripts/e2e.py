@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Exercise a real isolated Orca runtime through the compiled CLI and PTYs.
+"""Exercise a real isolated runtime through the compiled CLI and PTYs.
 
-Requires ORCA_USER_DATA_PATH and ORC_CONFIG_DIR pointing to disposable profiles.
+Requires ORC_RUNTIME_DIR and ORC_CONFIG_DIR pointing to disposable profiles.
 No existing session is altered. Only sessions created by this invocation are closed.
 """
 import asyncio
@@ -27,11 +27,11 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = str(Path(os.environ.get('ORC_TEST_CLI', ROOT / '.build/debug/orc')).resolve())
-assert os.environ.get('ORCA_USER_DATA_PATH'), 'Use an isolated Orca profile'
+assert os.environ.get('ORC_RUNTIME_DIR'), 'Use an isolated runtime profile'
 assert os.environ.get('ORC_CONFIG_DIR'), 'Use an isolated Orc client profile'
-assert Path(os.environ['ORCA_USER_DATA_PATH']).resolve() != Path.home() / 'Library/Application Support/orca', 'Refusing the daily Orca profile'
+assert Path(os.environ['ORC_RUNTIME_DIR']).resolve() != Path.home() / '.config/orc/runtime', 'Refusing the daily runtime profile'
 assert Path(os.environ['ORC_CONFIG_DIR']).resolve() != Path.home() / '.config/orc', 'Refusing the daily Orc client credentials'
-meta = json.loads((Path(os.environ['ORCA_USER_DATA_PATH']) / 'orca-runtime.json').read_text())
+meta = json.loads((Path(os.environ['ORC_RUNTIME_DIR']) / 'orca-runtime.json').read_text())
 
 def rpc(method, params):
     endpoint = next(t['endpoint'] for t in meta['transports'] if t['kind'] == 'unix')
@@ -49,6 +49,22 @@ def rpc(method, params):
 
 def cli(*args):
     return subprocess.check_output([CLI, *args], text=True, timeout=30)
+
+def proxied_profile(directory, port):
+    """An environment whose runtime profile routes the WebSocket through `port`. Orc's saved access
+    is bound to a profile and its server key, so the stand-in profile gets both."""
+    directory = Path(directory).resolve()
+    proxy_meta = json.loads(json.dumps(meta))
+    for transport in proxy_meta['transports']:
+        if transport['kind'] == 'websocket': transport['endpoint'] = f'ws://127.0.0.1:{port}'
+    p = directory / 'orca-runtime.json'; p.write_text(json.dumps(proxy_meta)); p.chmod(0o600)
+    key = directory / 'orca-e2ee-keypair.json'
+    shutil.copyfile(Path(os.environ['ORC_RUNTIME_DIR']) / 'orca-e2ee-keypair.json', key); key.chmod(0o600)
+    config = directory / 'config'; config.mkdir(mode=0o700)
+    connection = json.loads((Path(os.environ['ORC_CONFIG_DIR']) / 'connection.json').read_text())
+    connection['profilePath'] = str(directory)
+    c = config / 'connection.json'; c.write_text(json.dumps(connection)); c.chmod(0o600)
+    return dict(os.environ, ORC_RUNTIME_DIR=str(directory), ORC_CONFIG_DIR=str(config))
 
 def alternate_screen(data):
     active = False
@@ -219,37 +235,6 @@ try:
     assert 'Orc — Attach to a session'.encode() not in t.transcript, 'Embedded views must finish when their session ends'
     print('PASS embedded session exit ends attachment without opening a picker', flush=True)
 
-    for exit_signal in (signal.SIGINT, signal.SIGTERM):
-        master, slave = pty.openpty()
-        # Keep a session leader alive to inspect the tty after the CLI exits.
-        # Exiting the controlling session leader revokes the slave on macOS.
-        supervisor = '''import subprocess, sys, termios, time
-before = termios.tcgetattr(0)
-child = subprocess.Popen([sys.argv[1], 'connect'])
-try:
-    deadline = time.monotonic() + 5
-    while termios.tcgetattr(0)[3] & termios.ECHO and time.monotonic() < deadline: time.sleep(0.01)
-    assert not termios.tcgetattr(0)[3] & termios.ECHO, 'pairing prompt must hide credentials'
-    child.send_signal(int(sys.argv[2]))
-    child.wait(timeout=5)
-    assert termios.tcgetattr(0) == before, 'interrupted pairing must restore terminal echo'
-finally:
-    if child.poll() is None: child.kill()
-'''
-        prompt = subprocess.Popen([sys.executable, '-c', supervisor, CLI, str(int(exit_signal))],
-                                  stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
-                                  preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
-        try:
-            transcript = b''
-            deadline = time.monotonic() + 15
-            while prompt.poll() is None and time.monotonic() < deadline:
-                if select.select([master], [], [], 0.05)[0]: transcript += os.read(master, 4096)
-            prompt.wait(timeout=5)
-            assert prompt.returncode == 0, transcript.decode(errors='replace')
-        finally:
-            os.close(master); os.close(slave)
-            if prompt.poll() is None: prompt.kill(); prompt.wait(timeout=5)
-    print('PASS pairing prompt hides credentials and restores echo on interruption', flush=True)
     initial = json.loads(cli('list', '--json'))
     with tempfile.TemporaryDirectory(prefix='orc-picker-new-') as directory:
         config = Path(directory) / 'config.json'
@@ -257,6 +242,8 @@ finally:
         shutil.copyfile(Path(os.environ['ORC_CONFIG_DIR']) / 'connection.json', connection)
         connection.chmod(0o600)
         env = dict(os.environ, ORC_CONFIG_DIR=directory)
+        # Creation needs a default project; the agent type keeps its default, Codex.
+        config.write_text(json.dumps(dict(defaultProject='spiceai-project')))
 
         def created_in_picker(picker, expected_type, project='spiceai-project'):
             start = len(picker.transcript)
@@ -367,7 +354,7 @@ finally:
     t.send("printf '__SIZE_'; stty size\r")
     t.read_until('__SIZE_36 112')
     assert next(s for s in json.loads(cli('list', '--json')) if s['handle'] == handle)['title'] == 'orc-e2e-' + suffix, 'Shell output must not erase the session name'
-    print('PASS window resize reaches the Orca PTY', flush=True)
+    print('PASS window resize reaches the PTY', flush=True)
     t.send("python3 -c 'for n in range(1, 181): print(\"__SCROLL_%03d__\" % n)'\r")
     t.read_until('__SCROLL_180__')
     t.close(); terminals.remove(t)
@@ -396,11 +383,7 @@ finally:
     target = urlparse(next(t['endpoint'] for t in meta['transports'] if t['kind'] == 'websocket')).port
     proxy = Proxy(target)
     with tempfile.TemporaryDirectory(prefix='orc-proxy-') as directory:
-        proxy_meta = json.loads(json.dumps(meta))
-        for transport in proxy_meta['transports']:
-            if transport['kind'] == 'websocket': transport['endpoint'] = f'ws://127.0.0.1:{proxy.port}'
-        p = Path(directory) / 'orca-runtime.json'; p.write_text(json.dumps(proxy_meta)); p.chmod(0o600)
-        env = dict(os.environ, ORCA_USER_DATA_PATH=directory)
+        env = proxied_profile(directory, proxy.port)
         t = Terminal(handle, env=env); terminals.append(t)
         t.read_until('\x1b[?2026l')
         reconnect_start = len(t.transcript)
@@ -481,11 +464,7 @@ finally:
     proxy = Proxy(target)
     try:
         with tempfile.TemporaryDirectory(prefix='orc-keyboard-proxy-') as directory:
-            proxy_meta = json.loads(json.dumps(meta))
-            for transport in proxy_meta['transports']:
-                if transport['kind'] == 'websocket': transport['endpoint'] = f'ws://127.0.0.1:{proxy.port}'
-            p = Path(directory) / 'orca-runtime.json'; p.write_text(json.dumps(proxy_meta)); p.chmod(0o600)
-            t = Terminal(handle, env=dict(os.environ, ORCA_USER_DATA_PATH=directory)); terminals.append(t)
+            t = Terminal(handle, env=proxied_profile(directory, proxy.port)); terminals.append(t)
             t.read_until('\x1b[?2026l')
             assert keyboard_flags(t.transcript) == 3
             proxy.drop(); t.read_until('Reconnecting')
@@ -506,4 +485,6 @@ finally:
         try: terminal.close()
         except Exception as error: print('cleanup:', error, file=sys.stderr)
     for handle in handles:
-        rpc('terminal.close', {'terminal': handle})
+        # Sessions that exited during the suite are already gone.
+        if any(t['handle'] == handle for t in rpc('terminal.list', {})['terminals']):
+            rpc('terminal.close', {'terminal': handle})

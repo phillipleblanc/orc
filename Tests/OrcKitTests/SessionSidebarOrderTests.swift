@@ -2,12 +2,9 @@ import XCTest
 @testable import OrcKit
 
 final class SessionSidebarOrderTests: XCTestCase {
-    private func session(_ handle: String, name: String? = nil, pane: String? = nil) -> Session {
-        var session = Session(handle: handle, title: name ?? handle, worktreeId: "project", worktreePath: "/code/project",
-                              connected: true, writable: true, agentIdentity: "pi", incarnationId: handle)
-        session.tabId = pane
-        session.leafId = pane.map { _ in "leaf" }
-        return session
+    private func session(_ handle: String, name: String? = nil) -> Session {
+        Session(handle: handle, title: name ?? handle, worktreeId: "project", worktreePath: "/code/project",
+                connected: true, writable: true, agentIdentity: "pi", incarnationId: handle)
     }
 
     private var hierarchy: SessionHierarchy {
@@ -80,20 +77,20 @@ final class SessionSidebarOrderTests: XCTestCase {
         }
     }
 
-    func testSavedOrderSurvivesRefreshRenameHandleChangeAndMissingPanes() {
-        let a = session("old-a", name: "Alpha", pane: "stable-a")
-        let b = session("old-b", name: "Beta", pane: "stable-b")
+    func testSavedOrderSurvivesRefreshHandleChangeAndMissingSessions() {
+        let a = session("old-a", name: "Alpha")
+        let b = session("old-b", name: "Beta")
         let c = session("c")
         var order = SessionSidebarOrder()
         order.move(fromOffsets: [1], toOffset: 0, rows: order.rows(in: SessionHierarchy(sessions: [a, b, c])))
         let saved = order
         XCTAssertTrue(order.rows(in: SessionHierarchy(sessions: [])).isEmpty)
         XCTAssertEqual(order.rows(in: SessionHierarchy(sessions: [c, a])).map(\.id), ["old-a", "c"])
-        let renamed = session("new-b", name: "Renamed", pane: "stable-b")
+        let reminted = session("new-b", name: "Beta")
         let new = session("new")
-        XCTAssertEqual(order.rows(in: SessionHierarchy(sessions: [new, c, a, renamed])).map(\.id), ["new-b", "old-a", "c", "new"])
+        XCTAssertEqual(order.rows(in: SessionHierarchy(sessions: [new, c, a, reminted])).map(\.id), ["new-b", "old-a", "c", "new"])
         XCTAssertEqual(order, saved)
-        let regrouped = session("new-b", name: "Alpha-review", pane: "stable-b")
+        let regrouped = session("new-b", name: "Alpha-review")
         let rows = order.rows(in: SessionHierarchy(sessions: [c, a, regrouped]))
         XCTAssertEqual(rows.map(\.id), ["old-a", "new-b", "c"])
         XCTAssertEqual(rows[1].parentID, "old-a")

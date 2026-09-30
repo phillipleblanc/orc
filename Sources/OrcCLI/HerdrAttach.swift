@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import OrcKit
 
-/// An Orca agent is visible to Herdr only while its terminal is attached in a Herdr pane.
+/// An agent is visible to Herdr only while its terminal is attached in a Herdr pane.
 struct HerdrAttach {
     static let pickerExitCode: Int32 = 74
     static let endedExitCode: Int32 = 75

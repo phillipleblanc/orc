@@ -72,7 +72,7 @@ public enum PhonePairingService {
             let current = try RuntimeMetadata.load()
             guard current.runtimeId == metadata.runtimeId else { throw OrcError("The runtime changed during phone pairing. No link was displayed.") }
             return try PhonePairingOffer.validated(response, metadata: current,
-                publicKey: BootstrapAccess.publicKey(profile: RuntimeMetadata.directory), address: address)
+                publicKey: Pairing.serverKey(profile: RuntimeMetadata.directory), address: address)
         }
     }
 
@@ -88,14 +88,7 @@ public enum PhonePairingService {
         try await Task.detached {
             let connection = try RuntimeStarter().connect(timeout: 15)
             defer { Darwin.close(connection.fd) }
-            let response: [String: Any]
-            do { response = try LocalRPC.exchange("orc.phone." + operation, params, connection: connection, timeout: 15) }
-            catch {
-                if error.localizedDescription.hasPrefix("Unknown method: orc.phone.") {
-                    throw OrcError("This running runtime does not support Orc phone pairing. Use an updated bundled runtime after explicitly stopping it when your sessions are ready. It was left running.")
-                }
-                throw error
-            }
+            let response = try LocalRPC.exchange("orc.phone." + operation, params, connection: connection, timeout: 15)
             guard response["schemaVersion"] as? Int == 1, response["runtimeId"] as? String == connection.metadata.runtimeId else {
                 throw OrcError("Phone pairing returned an incompatible runtime response.")
             }

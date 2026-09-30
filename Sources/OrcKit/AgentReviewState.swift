@@ -20,8 +20,8 @@ public struct AgentReviewState: Codable, Equatable {
 
     public mutating func update(sessions: [Session], activities: [String: AgentActivity], pruneMissing: Bool = true) -> [Session] {
         let completed = idleTracker.update(sessions: sessions, activities: activities)
-        for session in completed { unread[session.notesKey] = Identity(session) }
-        let current = Dictionary(sessions.map { ($0.notesKey, Identity($0)) }, uniquingKeysWith: { first, _ in first })
+        for session in completed { unread[session.handle] = Identity(session) }
+        let current = Dictionary(sessions.map { ($0.handle, Identity($0)) }, uniquingKeysWith: { first, _ in first })
         unread = unread.filter { key, identity in
             guard let currentIdentity = current[key] else { return !pruneMissing }
             return currentIdentity == identity
@@ -32,12 +32,12 @@ public struct AgentReviewState: Codable, Equatable {
     public mutating func resetCycles() { idleTracker.reset() }
 
     public mutating func markRead(_ session: Session) {
-        guard unread[session.notesKey] == Identity(session) else { return }
-        unread.removeValue(forKey: session.notesKey)
+        guard unread[session.handle] == Identity(session) else { return }
+        unread.removeValue(forKey: session.handle)
     }
 
     public func activity(for session: Session, base: AgentActivity) -> AgentActivity {
-        base == .idle && unread[session.notesKey] == Identity(session) ? .unread : base
+        base == .idle && unread[session.handle] == Identity(session) ? .unread : base
     }
 }
 

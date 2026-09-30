@@ -9,8 +9,11 @@ public struct RuntimeMetadata: Decodable {
     public let authToken: String
     public let transports: [Transport]?
     public let transport: Transport?
-    public static var directory: URL {
-        RuntimeProfile.directory()
+    /// The runtime profile: `ORC_RUNTIME_DIR`, or `runtime` in Orc's configuration directory.
+    public static var directory: URL { directory() }
+    static func directory(environment: [String: String] = ProcessInfo.processInfo.environment, config: URL = Pairing.directory) -> URL {
+        if let path = environment["ORC_RUNTIME_DIR"], !path.isEmpty { return URL(fileURLWithPath: path) }
+        return config.appendingPathComponent("runtime")
     }
     public static func load() throws -> RuntimeMetadata {
         try load(from: directory)
@@ -20,7 +23,7 @@ public struct RuntimeMetadata: Decodable {
     }
     public func endpoint(_ kind: String) throws -> String {
         guard let endpoint = (transports ?? transport.map { [$0] } ?? []).first(where: { $0.kind == kind })?.endpoint else {
-            throw OrcError("The running Orca has no \(kind) transport.")
+            throw OrcError("The running runtime has no \(kind) transport.")
         }
         return endpoint
     }
@@ -46,28 +49,28 @@ public enum LocalRPC {
         while Date() < deadline {
             let count = Darwin.read(fd, &chunk, chunk.count)
             if count < 0, errno == EINTR { continue }
-            guard count > 0 else { throw OrcError("Orca disconnected or timed out during \(method). Check its result before retrying a creation.") }
+            guard count > 0 else { throw OrcError("The runtime disconnected or timed out during \(method). Check its result before retrying a creation.") }
             buffer.append(contentsOf: chunk.prefix(count))
-            guard buffer.count <= 16 * 1024 * 1024 else { throw OrcError("Orca response exceeds 16 MiB.") }
+            guard buffer.count <= 16 * 1024 * 1024 else { throw OrcError("Runtime response exceeds 16 MiB.") }
             while let newline = buffer.firstIndex(of: 10) {
                 let line = Data(buffer[..<newline]); buffer.removeSubrange(...newline)
                 let response = try jsonObject(line)
                 if response["_keepalive"] as? Bool == true { continue }
-                guard response["id"] as? String == id else { throw OrcError("Mismatched Orca response.") }
+                guard response["id"] as? String == id else { throw OrcError("Mismatched runtime response.") }
                 if let runtimeId = (response["_meta"] as? [String: Any])?["runtimeId"] as? String, runtimeId != meta.runtimeId {
-                    throw OrcError("Orca restarted during the request.")
+                    throw OrcError("The runtime restarted during the request.")
                 }
                 return try rpcResult(response)
             }
         }
-        throw OrcError("Orca request timed out.")
+        throw OrcError("Runtime request timed out.")
     }
 }
 
 public func rpcResult(_ response: [String: Any]) throws -> [String: Any] {
     guard response["ok"] as? Bool == true else {
         let error = response["error"] as? [String: Any]
-        throw OrcError(error?["message"] as? String ?? "Orca rejected the request.")
+        throw OrcError(error?["message"] as? String ?? "The runtime rejected the request.")
     }
     return response["result"] as? [String: Any] ?? [:]
 }

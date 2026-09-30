@@ -68,7 +68,6 @@ final class SessionBoardWindowTests: XCTestCase {
     @MainActor func testBoardRendersResponsiveGridAndKeepsMainSelection() async throws {
         _ = NSApplication.shared
         let model = SessionModel(monitorSessions: false)
-        model.needsRuntimeSetup = false
         model.sessions = try ["Cayenne query performance", "Runtime compatibility", "SDK feature parity", "Review DataFusion changes",
                               "Lab signoff", "A long session name that should wrap without overlapping any other cards"].enumerated().map {
             try session("fixture-\($0.offset)", name: $0.element, connected: $0.offset != 4,
@@ -80,12 +79,12 @@ final class SessionBoardWindowTests: XCTestCase {
             board.reconcile(model.sessions)
             let working = board.addGroup("Actively working")!
             let review = board.addGroup("Waiting for review")!
-            for session in model.sessions.prefix(3) { board.move(session.notesKey, to: working) }
-            board.move(model.sessions[3].notesKey, to: review)
-            board.addLabel("Performance", to: model.sessions[0].notesKey)
-            board.addLabel("Cayenne", to: model.sessions[0].notesKey)
-            board.addLabel("Enterprise", to: model.sessions[1].notesKey)
-            board.addLabel("Rust", to: model.sessions[3].notesKey)
+            for session in model.sessions.prefix(3) { board.move(session.name, to: working) }
+            board.move(model.sessions[3].name, to: review)
+            board.addLabel("Performance", to: model.sessions[0].name)
+            board.addLabel("Cayenne", to: model.sessions[0].name)
+            board.addLabel("Enterprise", to: model.sessions[1].name)
+            board.addLabel("Rust", to: model.sessions[3].name)
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 900),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)

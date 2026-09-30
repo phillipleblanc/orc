@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify session creation against an isolated Orca profile with installed agents.
+"""Verify session creation against an isolated runtime profile with installed agents.
 
 Requires registered spiceai-project and Orc source projects. Starts Codex, Claude,
 and Pi without sending prompts. Closes only sessions created by this invocation.
@@ -16,9 +16,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = str(Path(os.environ.get('ORC_TEST_CLI', ROOT / '.build/debug/orc')).resolve())
-assert os.environ.get('ORCA_USER_DATA_PATH'), 'Use an isolated Orca profile'
-PROFILE = Path(os.environ['ORCA_USER_DATA_PATH']).resolve()
-assert PROFILE != Path.home() / 'Library/Application Support/orca', 'Refusing the daily Orca profile'
+assert os.environ.get('ORC_RUNTIME_DIR'), 'Use an isolated runtime profile'
+PROFILE = Path(os.environ['ORC_RUNTIME_DIR']).resolve()
+assert PROFILE != Path.home() / '.config/orc/runtime', 'Refusing the daily runtime profile'
 META = json.loads((PROFILE / 'orca-runtime.json').read_text())
 HANDLES = []
 
@@ -93,14 +93,16 @@ with tempfile.TemporaryDirectory(prefix='orc-new-') as directory:
     try:
         projects = {p.get('displayName') or Path(p['path']).name: p for p in cli('projects', '--json')}
         assert 'spiceai-project' in projects and ROOT.name in projects
+        # Creation needs a default project; the session type defaults to Codex.
+        config.write_text('{"defaultProject":"spiceai-project"}')
         create(expected_type='codex')
-        config.write_text('{"defaultSessionType":"terminal"}')
+        config.write_text('{"defaultSessionType":"terminal","defaultProject":"spiceai-project"}')
         terminal = create(expected_type='terminal')
         create('codex', expected_type='codex')
         pi_name = 'orc-new-pi-' + uuid.uuid4().hex[:8]
         create('pi', '--name', pi_name, expected_type='pi', name=pi_name)
         create('claude', expected_type='claude')
-        config.write_text('{"defaultSessionType":"pi"}')
+        config.write_text('{"defaultSessionType":"pi","defaultProject":"spiceai-project"}')
         create(expected_type='pi')
         for selector in [ROOT.name, 'path:' + str(ROOT), 'id:' + projects[ROOT.name]['id']]:
             create('terminal', '--project', selector, expected_type='terminal', project=ROOT.name)
@@ -117,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix='orc-new-') as directory:
         cli('new', error='not registered')
         assert {t['handle'] for t in terminals()} == missing_before
         create('--project', ROOT.name, expected_type='terminal', project=ROOT.name)
-        config.write_text('{"defaultSessionType":"terminal"}')
+        config.write_text('{"defaultSessionType":"terminal","defaultProject":"spiceai-project"}')
         before = {t['handle'] for t in terminals()}
         for args, error in [
             (('new', 'unknown'), 'Unknown session type'),

@@ -33,7 +33,7 @@ struct SessionBoardDrag {
         self.sectionHeights = sectionHeights
     }
 
-    var key: String { session.notesKey }
+    var key: String { session.name }
     var cardFrame: CGRect {
         landingFrame ?? CGRect(x: location.x - grabOffset.width, y: location.y - grabOffset.height,
                                width: size.width, height: size.height)

@@ -6,6 +6,7 @@ public struct OrcError: LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// A session's name is its identity: notes, board cards and sidebar placement are keyed by it.
 public struct Session: Codable, Identifiable, Hashable {
     public var id: String { handle }
     public let handle: String
@@ -16,14 +17,14 @@ public struct Session: Codable, Identifiable, Hashable {
     public let writable: Bool
     public let agentIdentity: String?
     public let incarnationId: String?
-    public var tabId: String? = nil
-    public var leafId: String? = nil
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
-    public var notesKey: String {
-        guard let tabId, let leafId, !tabId.isEmpty, !leafId.isEmpty,
-              (tabId + leafId).allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
-        else { return handle }
-        return "pane_\(tabId)_\(leafId)"
+
+    /// The runtime's rule for session names, which are also directory and file names.
+    public static func isValidName(_ name: String) -> Bool {
+        // Counted and compared like the runtime: UTF-16 length, and NFC scalars rather than canonical equivalence.
+        !name.isEmpty && name.utf16.count <= 64 && Array(name.unicodeScalars) == Array(name.precomposedStringWithCanonicalMapping.unicodeScalars)
+            && name == name.trimmingCharacters(in: .whitespacesAndNewlines) && !name.hasPrefix(".")
+            && !name.contains("/") && !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     }
 }
 
@@ -45,7 +46,7 @@ public func jsonData(_ value: Any) throws -> Data {
 
 public func jsonObject(_ data: Data) throws -> [String: Any] {
     guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        throw OrcError("Orca returned an invalid object.")
+        throw OrcError("The runtime returned an invalid object.")
     }
     return value
 }
@@ -65,106 +66,28 @@ public func resolveSession(_ selector: String, in sessions: [Session]) throws ->
     return match
 }
 
-/// session.tabs.listAll carries the persisted pane identity even when
-/// terminal.list temporarily labels a background PTY with a pty: placeholder.
-struct PaneIdentity: Equatable {
-    let tabId: String
-    let leafId: String
-
-    static func byHandle(in response: [String: Any]) -> [String: PaneIdentity] {
-        let snapshots = response["snapshots"] as? [[String: Any]] ?? [response]
-        var result: [String: PaneIdentity] = [:]
-        for snapshot in snapshots {
-            for tab in snapshot["tabs"] as? [[String: Any]] ?? [] {
-                guard tab["type"] as? String == "terminal",
-                      let handle = tab["terminal"] as? String,
-                      let tabId = tab["parentTabId"] as? String,
-                      let leafId = tab["leafId"] as? String else { continue }
-                result[handle] = PaneIdentity(tabId: tabId, leafId: leafId)
-            }
-        }
-        return result
-    }
-}
-
 public struct SessionListing: Decodable {
     public let terminals: [Session]
     public let totalCount: Int
     public let truncated: Bool
-
-    init(response: [String: Any], savedNames: [SessionTab: String] = [:],
-         paneIdentities: [String: PaneIdentity] = [:]) throws {
-        // terminal.rename changes the parent tab name. Per-pane terminal titles
-        // remain controlled by shell/agent OSC updates, so use the layout's tab
-        // title for every handle it contains, including headless layouts.
-        var titles: [String: String] = [:]
-        func visit(_ node: [String: Any], title: String? = nil) {
-            switch node["type"] as? String {
-            case "group":
-                for tab in node["tabs"] as? [[String: Any]] ?? [] {
-                    if let panes = tab["panes"] as? [String: Any] {
-                        visit(panes, title: tab["title"] as? String)
-                    }
-                }
-            case "split", "pane-split":
-                for child in ["first", "second"] {
-                    if let child = node[child] as? [String: Any] { visit(child, title: title) }
-                }
-            case "terminal":
-                if let handle = node["handle"] as? String, let title,
-                   !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    titles[handle] = title
-                }
-            default: break
-            }
-        }
-        for layout in response["visualLayouts"] as? [[String: Any]] ?? [] {
-            if let root = layout["root"] as? [String: Any] { visit(root) }
-        }
-        var listing = response
-        if let terminals = response["terminals"] as? [[String: Any]] {
-            listing["terminals"] = terminals.map { terminal in
-                var terminal = terminal
-                if let handle = terminal["handle"] as? String, let pane = paneIdentities[handle] {
-                    terminal["tabId"] = pane.tabId
-                    terminal["leafId"] = pane.leafId
-                }
-                if let handle = terminal["handle"] as? String, let title = titles[handle] {
-                    terminal["title"] = title
-                }
-                if let worktree = terminal["worktreeId"] as? String, let tab = terminal["tabId"] as? String,
-                   let title = savedNames[SessionTab(host: terminal["executionHostId"] as? String ?? "local", worktree: worktree, tab: tab)] {
-                    terminal["title"] = title
-                }
-                return terminal
-            }
-        }
-        self = try decode(listing)
-    }
 }
 
 public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
-        async let status = LocalRPC.call("status.get")
-        async let tabs = try? LocalRPC.call("session.tabs.listAll")
-        let response = try await LocalRPC.call("terminal.list", ["limit": 10000, "includeVisualLayouts": true])
-        let headless = try await status["desktopWindowStatus"] as? String != "available"
-        let names = headless ? await Task.detached { SavedSessionNames.load() }.value : [:]
-        return try SessionListing(response: response, savedNames: names,
-                                  paneIdentities: PaneIdentity.byHandle(in: await tabs ?? [:]))
+        try decode(await LocalRPC.call("terminal.list", ["limit": 10000]))
     }
     public func workspaces() async throws -> [Workspace] {
         let result = try await LocalRPC.call("worktree.list", ["limit": 10000])
         return try decode(result["worktrees"] ?? [])
     }
-    public func registerProject(at directory: URL, folder: Bool = false) async throws -> Workspace {
+    public func registerProject(at directory: URL) async throws -> Workspace {
         let path = directory.standardizedFileURL.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw OrcError("Choose an existing project directory.")
         }
-        _ = try await LocalRPC.call("repo.add", ["path": path.path, "kind": folder ? "folder" : "git"], timeout: 60)
+        _ = try await LocalRPC.call("repo.add", ["path": path.path], timeout: 60)
         let projects = try await workspaces()
         guard let project = projects.first(where: { $0.path == path.path && ($0.hostId == nil || $0.hostId == "local") }) else {
             throw OrcError("The runtime accepted project registration but has not listed it yet. Check `orc projects` before trying again.")
@@ -172,49 +95,27 @@ public struct SessionService {
         return project
     }
     public func create(name: String, worktree: String, command: String?) async throws -> String {
-        let name = try validatedName(name)
-        let existing = try await list()
-        guard !existing.terminals.contains(where: { $0.name == name }) else {
-            throw OrcError("A session named '\(name)' already exists.")
-        }
-        var params: [String: Any] = ["title": name, "worktree": worktree,
-            "clientMutationId": UUID().uuidString, "presentation": "background", "focus": false]
+        var params: [String: Any] = ["title": try validatedName(name), "worktree": worktree, "clientMutationId": UUID().uuidString]
         if let command, !command.isEmpty { params["command"] = command }
         let response = try await LocalRPC.call("terminal.create", params, timeout: 60)
-        let result = response["terminal"] as? [String: Any] ?? response
-        guard let handle = result["handle"] as? String else { throw OrcError("Orca did not return the created session handle. Check `orc list` before retrying.") }
-        // Creation sets the initial process title. Rename pins the user's tab title
-        // so shell OSC title updates cannot erase the name used by `orc attach`.
-        do { try await setName(handle: handle, name: name) }
-        catch { throw OrcError("Created \(handle), but could not set its permanent name: \(error.localizedDescription). Use that handle; do not create it again.") }
+        guard let handle = (response["terminal"] as? [String: Any])?["handle"] as? String else {
+            throw OrcError("The runtime did not return the created session. Check `orc list` before retrying.")
+        }
         return handle
     }
+    /// Renaming changes the session's identity; its notes move with it.
     public func rename(handle: String, name: String) async throws {
         let name = try validatedName(name)
-        let existing = try await list()
-        guard existing.terminals.contains(where: { $0.handle == handle }) else {
+        guard let session = try await list().terminals.first(where: { $0.handle == handle }) else {
             throw OrcError("This session is no longer available. Refresh the session list.")
         }
-        guard !existing.terminals.contains(where: { $0.handle != handle && $0.name == name }) else {
-            throw OrcError("A session named '\(name)' already exists.")
-        }
-        try await setName(handle: handle, name: name)
-    }
-    private func setName(handle: String, name: String) async throws {
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
-        // The desktop notification and headless disk flush are asynchronous.
-        // Wait for the readable name without replaying an accepted mutation.
-        let deadline = ProcessInfo.processInfo.systemUptime + 3
-        repeat {
-            if try await list().terminals.contains(where: { $0.handle == handle && $0.name == name }) { return }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        } while ProcessInfo.processInfo.systemUptime < deadline
-        throw OrcError("Orca accepted the rename but has not published the saved name yet. Refresh the session list.")
+        try SessionNotesStore.rename(session.name, to: name)
     }
     private func validatedName(_ name: String) throws -> String {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.utf8.count <= 200, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            throw OrcError("Choose a session name of 1–200 bytes without control characters.")
+        guard Session.isValidName(name) else {
+            throw OrcError("Choose a session name of 1–64 characters without \"/\" or control characters, not starting with \".\".")
         }
         return name
     }

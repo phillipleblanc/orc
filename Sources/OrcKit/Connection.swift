@@ -12,7 +12,7 @@ public struct Pairing: Codable {
         let input = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard input.count <= 32768, let url = URLComponents(string: input), url.scheme == "orca", url.host == "pair",
               let code = url.queryItems?.first(where: { $0.name == "code" })?.value ?? url.fragment else {
-            throw OrcError("Paste an Orca runtime access link (orca://pair?code=…).")
+            throw OrcError("Invalid runtime access link.")
         }
         var base64 = code.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
@@ -20,7 +20,7 @@ public struct Pairing: Codable {
               let endpoint = URL(string: pairing.endpoint), ["ws", "wss"].contains(endpoint.scheme), endpoint.host != nil,
               Data(base64Encoded: pairing.publicKeyB64)?.count == 32, !pairing.deviceToken.isEmpty,
               pairing.scope == nil || pairing.scope == "runtime" else {
-            throw OrcError("This is not a valid runtime access link. Use Remote Orca Servers, rather than mobile pairing.")
+            throw OrcError("Invalid runtime access link.")
         }
         return pairing
     }
@@ -28,22 +28,31 @@ public struct Pairing: Codable {
         if let path = ProcessInfo.processInfo.environment["ORC_CONFIG_DIR"] { return URL(fileURLWithPath: path) }
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/orc")
     }
-    public static var isConfigured: Bool { (try? load()) != nil }
     public static func load() throws -> Pairing {
         try load(from: directory, profile: RuntimeMetadata.directory)
     }
     static func load(from directory: URL, profile: URL) throws -> Pairing {
         let pairing: Pairing
         do { pairing = try JSONDecoder().decode(Self.self, from: Data(contentsOf: directory.appendingPathComponent("connection.json"))) }
-        catch { throw OrcError("Runtime access is not configured. Start the bundled runtime with `orc status`, or use `orc connect` with an access link for the selected external profile.") }
+        catch { throw OrcError("Runtime access is not set up yet. Run `orc status` to start the runtime.") }
         if let path = pairing.profilePath, URL(fileURLWithPath: path).resolvingSymlinksInPath().path != profile.resolvingSymlinksInPath().path {
-            throw OrcError("The saved connection belongs to another runtime profile. Use that profile's ORC_CONFIG_DIR or connect this profile explicitly.")
+            throw OrcError("The saved connection belongs to another runtime profile.")
         }
-        if try RuntimeProfile.ownership(at: profile) != nil,
-           pairing.publicKeyB64 != (try BootstrapAccess.publicKey(profile: profile)) {
-            throw OrcError("The saved connection does not match this profile's server key. Connect this profile explicitly; existing credentials were preserved.")
+        guard pairing.publicKeyB64 == (try serverKey(profile: profile)) else {
+            throw OrcError("The saved connection does not match this runtime's server key.")
         }
         return pairing
+    }
+    /// The runtime's public key, which every connection to it pins.
+    static func serverKey(profile: URL) throws -> String {
+        struct Key: Decodable { let publicKeyB64: String }
+        let file = try FileHandle(forReadingFrom: profile.appendingPathComponent("orca-e2ee-keypair.json"))
+        defer { try? file.close() }
+        guard let data = try file.read(upToCount: 8193), data.count <= 8192,
+              let key = try? JSONDecoder().decode(Key.self, from: data), Data(base64Encoded: key.publicKeyB64)?.count == 32 else {
+            throw OrcError("Cannot read the runtime server key.")
+        }
+        return key.publicKeyB64
     }
     public func save(to directory: URL = Self.directory, profile: URL = RuntimeMetadata.directory) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -62,7 +71,7 @@ public struct Pairing: Codable {
         // The key pins the host; the runtime metadata follows its current listening port.
         var components = URLComponents(string: try metadata.endpoint("websocket"))
         if components?.host == "0.0.0.0" || components?.host == "::" || components?.host == "[::]" { components?.host = "127.0.0.1" }
-        guard let url = components?.url else { throw OrcError("Invalid local Orca WebSocket endpoint.") }
+        guard let url = components?.url else { throw OrcError("Invalid local runtime WebSocket endpoint.") }
         return url
     }
 }
@@ -71,10 +80,10 @@ public struct NaClChannel {
     public let publicKey: Data
     private let shared: [UInt8]
     public init(peerKey: Data) throws {
-        guard peerKey.count == 32 else { throw OrcError("Invalid Orca public key.") }
+        guard peerKey.count == 32 else { throw OrcError("Invalid runtime public key.") }
         var pk = [UInt8](repeating: 0, count: 32), sk = pk, key = pk
         guard orc_crypto_keypair(&pk, &sk) == 0, orc_crypto_shared(&key, [UInt8](peerKey), sk) == 0 else {
-            throw OrcError("Cannot establish Orca encryption.")
+            throw OrcError("Cannot establish runtime encryption.")
         }
         publicKey = Data(pk); shared = key
     }
@@ -86,7 +95,7 @@ public struct NaClChannel {
     public func open(_ data: Data) throws -> Data {
         guard data.count >= 40, data.count <= 16 * 1024 * 1024 else { throw OrcError("Invalid encrypted frame size.") }
         var out = [UInt8](repeating: 0, count: max(1, data.count - 40))
-        guard orc_crypto_open(&out, [UInt8](data), data.count, shared) == 0 else { throw OrcError("Orca frame authentication failed.") }
+        guard orc_crypto_open(&out, [UInt8](data), data.count, shared) == 0 else { throw OrcError("Runtime frame authentication failed.") }
         return Data(out.prefix(data.count - 40))
     }
 }

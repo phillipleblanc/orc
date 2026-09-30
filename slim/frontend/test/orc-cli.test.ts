@@ -20,12 +20,11 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
   const project = join(profile, 'project')
   await mkdir(config, { mode: 0o700 })
   await mkdir(project)
-  // Orc starts this in place of the bundled Orca runtime whenever the profile has no running runtime.
+  // Orc runs this with --profile DIR whenever no frontend serves the profile, like the bundled orc-runtime.
   const launcher = join(profile, 'launch-frontend')
-  await writeFile(launcher, `#!/bin/sh\nfor argument; do case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac; done\n` +
-    `exec "${process.execPath}" "${FRONTEND}" --profile "$profile" --holder "${HOLDER}" --port 0\n`)
+  await writeFile(launcher, `#!/bin/sh\nexec "${process.execPath}" "${FRONTEND}" --holder "${HOLDER}" --port 0 "$@"\n`)
   await chmod(launcher, 0o755)
-  const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: config, ORCA_USER_DATA_PATH: profile, ORCA_APP_EXECUTABLE: launcher }
+  const env = { ...isolatedEnvironment(), ORC_CONFIG_DIR: config, ORC_RUNTIME_DIR: profile, ORC_RUNTIME_EXECUTABLE: launcher }
   const orc = async (...args: string[]) => (await run(ORC, args, { env, timeout: 60_000 })).stdout
 
   const frontend = await Frontend.start(profile)
@@ -34,16 +33,11 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
     const owner = Number(await readFile(join(profile, 'frontend.lock'), 'utf8').catch(() => '0'))
     if (owner > 0) try { process.kill(owner, 'SIGKILL') } catch {}
   })
-  const { link } = await frontend.rpc('slim.pairing.create', { scope: 'runtime', name: 'orc-cli-test' })
-  const connect = spawn(ORC, ['connect'], { env, stdio: ['pipe', 'pipe', 'pipe'] })
-  connect.stdin.end(link + '\n')
-  let connected = ''
-  connect.stdout.on('data', (chunk) => { connected += chunk })
-  connect.stderr.on('data', (chunk) => { connected += chunk })
-  assert.equal(await new Promise((resolve) => connect.on('exit', resolve)), 0, connected)
-  assert.match(connected, /Connected/)
+  // Orc requests its own access over the local socket the first time it reaches the runtime.
+  assert.match(await orc('status'), /The runtime is running/)
+  assert.ok(existsSync(join(config, 'connection.json')))
 
-  await orc('projects', 'add', project, '--folder', '--default', '--json')
+  await orc('projects', 'add', project, '--default', '--json')
   const created = JSON.parse(await orc('new', 'terminal', '--name', 'shell-a', '--project', `path:${project}`, '--json'))
   const listed = JSON.parse(await orc('list', '--json'))
   assert.deepEqual(listed.map((session: { title: string }) => session.title), ['shell-a'])

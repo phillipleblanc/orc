@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Local organization keyed by persistent pane identity, independent of session names and activity.
+/// Local organization keyed by session name, independent of activity.
 public struct SessionBoard: Codable, Equatable {
     public struct Group: Codable, Equatable, Identifiable {
         public let id: String
@@ -27,7 +27,7 @@ public struct SessionBoard: Codable, Equatable {
     /// Missing sessions retain their metadata through disconnects and partial inventories.
     public mutating func reconcile(_ sessions: [Session]) {
         for session in sessions {
-            let key = session.notesKey
+            let key = session.name
             if cards[key] == nil { cards[key] = Card() }
             cards[key]?.projectID = session.worktreeId
             if !order.contains(key) { order.append(key) }
@@ -37,8 +37,8 @@ public struct SessionBoard: Codable, Equatable {
 
     public func sessions(in groupID: String?, from sessions: [Session]) -> [Session] {
         let ranks = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
-        return sessions.filter { cards[$0.notesKey]?.groupID == groupID }.sorted {
-            let left = ranks[$0.notesKey] ?? Int.max, right = ranks[$1.notesKey] ?? Int.max
+        return sessions.filter { cards[$0.name]?.groupID == groupID }.sorted {
+            let left = ranks[$0.name] ?? Int.max, right = ranks[$1.name] ?? Int.max
             return left == right ? $0.handle < $1.handle : left < right
         }
     }
@@ -59,7 +59,7 @@ public struct SessionBoard: Codable, Equatable {
     public func filteredSessions(from sessions: [Session], project: SessionProjectFilter,
                                  labelID: String?, search: String) -> [Session] {
         project.sessions(in: sessions).filter { session in
-            let labels = labels(for: session.notesKey)
+            let labels = labels(for: session.name)
             return (labelID == nil || labels.contains { $0.id == labelID }) &&
                 (search.isEmpty || ([session.name, session.worktreePath, session.agentIdentity ?? ""] + labels.map(\.name))
                     .contains { $0.localizedCaseInsensitiveContains(search) })

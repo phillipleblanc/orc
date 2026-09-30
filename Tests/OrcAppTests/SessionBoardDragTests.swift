@@ -6,7 +6,7 @@ import OrcKit
 final class SessionBoardDragTests: XCTestCase {
     private func sessions(_ count: Int = 6) throws -> [Session] {
         try (0..<count).map {
-            try decode(["handle": "card-\($0)", "title": "Session \($0)", "worktreeId": "fixture",
+            try decode(["handle": "term_\($0)", "title": "card-\($0)", "worktreeId": "fixture",
                         "worktreePath": "/tmp/board-drag-fixture", "connected": true, "writable": true])
         }
     }
@@ -34,7 +34,7 @@ final class SessionBoardDragTests: XCTestCase {
         let moveToSecond = CGPoint(x: frame(1).midX - 150 + 23, y: frame(1).midY - 87 + 29)
         XCTAssertTrue(drag.reflow(at: moveToSecond, targets: targets(board.order)))
         XCTAssertEqual(drag.preview.order, ["card-1", "card-0", "card-2", "card-3", "card-4", "card-5"])
-        XCTAssertEqual(board.order, sessions.map(\.notesKey), "Hovering and cancellation must not persist a placement")
+        XCTAssertEqual(board.order, sessions.map(\.name), "Hovering and cancellation must not persist a placement")
     }
 
     func testForwardBackwardAndRowMovesStayStableWhileGeometryCatchesUp() throws {
@@ -73,7 +73,7 @@ final class SessionBoardDragTests: XCTestCase {
         XCTAssertEqual(drag.id, identity)
         XCTAssertTrue(drag.reflow(at: center(frame(1)), targets: targets(["card-1", "card-2"])))
         XCTAssertNil(drag.preview.cards["card-0"]?.groupID)
-        XCTAssertEqual(drag.preview.sessions(in: nil, from: sessions).map(\.handle), ["card-1", "card-0", "card-2"])
+        XCTAssertEqual(drag.preview.sessions(in: nil, from: sessions).map(\.name), ["card-1", "card-0", "card-2"])
         XCTAssertEqual(board.cards["card-0"]?.groupID, active)
         drag.phase = .ending
         XCTAssertFalse(drag.reflow(at: center(empty.frame), targets: [empty]))

@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Sidebar placement uses persistent pane identities and never changes name-based parentage.
+/// Sidebar placement is keyed by session name and never changes name-based parentage.
 public struct SessionSidebarOrder: Codable, Equatable {
     public struct Row: Identifiable {
         public let session: Session
@@ -18,8 +18,8 @@ public struct SessionSidebarOrder: Codable, Equatable {
         let ranks = Dictionary(keys.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
         func ordered<T>(_ values: [T], session: (T) -> Session) -> [T] {
             values.enumerated().sorted {
-                let left = ranks[session($0.element).notesKey] ?? Int.max
-                let right = ranks[session($1.element).notesKey] ?? Int.max
+                let left = ranks[session($0.element).name] ?? Int.max
+                let right = ranks[session($1.element).name] ?? Int.max
                 return left == right ? $0.offset < $1.offset : left < right
             }.map(\.element)
         }
@@ -44,9 +44,9 @@ public struct SessionSidebarOrder: Codable, Equatable {
             guard let first = indices.first, let last = indices.last,
                   (first...(last + 1)).contains(destination) else { return }
         }
-        let siblings = rows.filter { $0.parentID == row.parentID }.map { $0.session.notesKey }
-        let anchor = rows.dropFirst(destination).first { $0.parentID == row.parentID }?.session.notesKey
-        move(row.session.notesKey, before: anchor, siblings: siblings)
+        let siblings = rows.filter { $0.parentID == row.parentID }.map { $0.session.name }
+        let anchor = rows.dropFirst(destination).first { $0.parentID == row.parentID }?.session.name
+        move(row.session.name, before: anchor, siblings: siblings)
     }
 
     public func canMove(_ id: String, by offset: Int, rows: [Row]) -> Bool {
@@ -58,11 +58,11 @@ public struct SessionSidebarOrder: Codable, Equatable {
 
     public mutating func move(_ id: String, by offset: Int, rows: [Row]) {
         guard canMove(id, by: offset, rows: rows), let row = rows.first(where: { $0.id == id }) else { return }
-        let siblings = rows.filter { $0.parentID == row.parentID }.map { $0.session.notesKey }
-        guard let index = siblings.firstIndex(of: row.session.notesKey) else { return }
+        let siblings = rows.filter { $0.parentID == row.parentID }.map { $0.session.name }
+        guard let index = siblings.firstIndex(of: row.session.name) else { return }
         let destination = index + (offset > 0 ? 2 : -1)
         let anchor = siblings.indices.contains(destination) ? siblings[destination] : nil
-        move(row.session.notesKey, before: anchor, siblings: siblings)
+        move(row.session.name, before: anchor, siblings: siblings)
     }
 
     private mutating func move(_ key: String, before anchor: String?, siblings: [String]) {

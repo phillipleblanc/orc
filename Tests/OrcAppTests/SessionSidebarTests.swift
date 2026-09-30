@@ -75,7 +75,6 @@ final class SessionSidebarTests: XCTestCase {
     @MainActor func testSidebarListSupportsNativeReordering() async throws {
         _ = NSApplication.shared
         let model = SessionModel(monitorSessions: false)
-        model.needsRuntimeSetup = false
         model.sessions = try sessions()
         let sidebar = SessionSidebarModel(file: root.appendingPathComponent("order.json"))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 560),
