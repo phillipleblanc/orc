@@ -2,15 +2,6 @@ import AppKit
 import SwiftUI
 import OrcKit
 
-struct MarkdownLinkHandling: ViewModifier {
-    let directory: URL
-    func body(content: Content) -> some View {
-        content.environment(\.openURL, OpenURLAction { url in
-            MarkdownWindowController.open(url, relativeTo: directory) ? .handled : .systemAction
-        })
-    }
-}
-
 @MainActor final class MarkdownWindowController: NSWindowController, NSWindowDelegate {
     static private(set) var documents: [URL: MarkdownWindowController] = [:]
     let model: MarkdownViewModel

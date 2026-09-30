@@ -34,7 +34,7 @@ final class MarkdownWindowTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first
     }
     @MainActor private func renderedView(_ controller: MarkdownWindowController, heading: String) async throws -> WKWebView {
-        guard MarkdownWebView.pageURL != nil else { throw XCTSkip("Build the bundled views with npm --prefix WebDiff run build.") }
+        guard MarkdownWebView.pageURL != nil else { throw XCTSkip("Build the bundled views with npm --prefix WebMarkdown run build.") }
         try await waitFor { self.descendant(WKWebView.self, in: controller.window?.contentView) != nil }
         let web = try XCTUnwrap(descendant(WKWebView.self, in: controller.window?.contentView))
         let deadline = Date().addingTimeInterval(15)

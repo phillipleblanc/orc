@@ -16,8 +16,8 @@ python3 scripts/build-orca-runtime.py "${ORC_RUNTIME_FLAGS[@]}"
 bash scripts/bootstrap-sodium.sh
 bash scripts/bootstrap-ghostty.sh
 bash scripts/build-icon.sh
-npm --prefix WebDiff ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
-npm --prefix WebDiff run build
+npm --prefix WebMarkdown ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
+npm --prefix WebMarkdown run build
 swift build -c release
 ORC_BIN="$(swift build -c release --show-bin-path)"
 ORC_PACKAGE_DIR="$(mktemp -d "$(pwd)/.build/orc-package.XXXXXX")"
@@ -32,10 +32,8 @@ ditto pi "$ORC_APP/Contents/Resources/pi"
 ORC_ICON_NAME="Orc-$(shasum -a 256 dist/Orc.icns | awk '{print $1}')"
 cp dist/Orc.icns "$ORC_APP/Contents/Resources/$ORC_ICON_NAME.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile $ORC_ICON_NAME" "$ORC_APP/Contents/Info.plist"
-for viewer in DiffView MarkdownView; do
-  mkdir -p "$ORC_APP/Contents/Resources/$viewer"
-  rsync -a --delete "dist/$viewer/" "$ORC_APP/Contents/Resources/$viewer/"
-done
+mkdir -p "$ORC_APP/Contents/Resources/MarkdownView"
+rsync -a --delete "dist/MarkdownView/" "$ORC_APP/Contents/Resources/MarkdownView/"
 mkdir -p "$ORC_APP/Contents/Resources/licenses"
 cp .build/deps/ghostty-1.3.1/LICENSE "$ORC_APP/Contents/Resources/licenses/Ghostty.txt"
 cp .build/deps/libsodium-1.0.22/LICENSE "$ORC_APP/Contents/Resources/licenses/libsodium.txt"

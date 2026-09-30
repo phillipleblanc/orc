@@ -2,7 +2,7 @@
 
 ## Goal
 
-An installed `Orc.app` and its `orc` CLI can list, create, rename, attach to, and chat with sessions without a separately installed `Orca.app`. The official Orca mobile app can pair with and control those sessions. The runtime runs in `serve` mode, with no Orca window, Dock icon, or ⌘-Tab entry. Orc is the only Dock icon for these sessions when its bundled runtime is running. Any separately installed Orca app remains unmodified.
+An installed `Orc.app` and its `orc` CLI can list, create, rename, and attach to sessions without a separately installed `Orca.app`. The official Orca mobile app can pair with and control those sessions. The runtime runs in `serve` mode, with no Orca window, Dock icon, or ⌘-Tab entry. Orc is the only Dock icon for these sessions when its bundled runtime is running. Any separately installed Orca app remains unmodified.
 
 The deliverable is a self-contained Orc application bundle. The source repository contains a version lock, packaging code, and license notices, but not a large release archive or unpacked Electron app. Building Orc stages the pinned runtime into the distributable app, and running Orc never downloads a runtime.
 
@@ -27,7 +27,7 @@ Keep the selected runtime profile and its metadata as the authority for session 
 
 An upstream-signed runtime may use the existing `ORCA_USER_DATA_PATH` profile only after version and protocol compatibility checks, a private rollback copy of the quiescent profile before migration, and a downgrade guard. Exercise the official Orca GUI opening while the bundled process owns that profile: single-instance handoff must preserve sessions and not unexpectedly replace the running binary. A runtime signed under Orc's identity must use a separate Orc-managed profile unless migration of Keychain-backed state is proven safe. Existing sessions, names, and phone grants then need an explicit migration or re-pairing flow. Do not alternate two profiles automatically or silently split the session list.
 
-Pin runtime upgrades to Orc releases tested with Orc's required `terminal.binary-stream.v1`, `terminal.multiplex.v1`, session, and native-chat APIs. A packaged runtime must not update or rewrite itself independently of an Orc update. Confirm that `serve` does not do so; if it does, use an upstream-supported disablement or a source-built pinned runtime before shipping.
+Pin runtime upgrades to Orc releases tested with Orc's required `terminal.binary-stream.v1`, `terminal.multiplex.v1`, and session APIs, and with the native-chat APIs the mobile app uses. A packaged runtime must not update or rewrite itself independently of an Orc update. Confirm that `serve` does not do so; if it does, use an upstream-supported disablement or a source-built pinned runtime before shipping.
 
 ## First-run access and mobile pairing
 
@@ -49,8 +49,8 @@ Check completion push notifications separately from phone pairing and interactiv
 
 ## Acceptance tests
 
-- On a clean supported Apple Silicon Mac with no Orca installation and no network after installation, Orc can register a project, then `orc list`, `orc new`, `orc attach`, rename, notes, and the native app's terminal and chat views work. Sessions and names survive closing Orc, reopening it, and a controlled backend restart.
-- Codex and Pi sessions report activity; their chat histories and Pi `/notes` and `/name` integrations work through the bundled runtime.
+- On a clean supported Apple Silicon Mac with no Orca installation and no network after installation, Orc can register a project, then `orc list`, `orc new`, `orc attach`, rename, notes, and the native app's terminal views work. Sessions and names survive closing Orc, reopening it, and a controlled backend restart.
+- Codex and Pi sessions report activity; Pi `/notes` and `/name` integrations work through the bundled runtime.
 - The official mobile app pairs with the bundled host, lists the same named sessions, displays terminal/chat output, sends input, and reconnects after Orc's UI closes. New mobile pairing remains possible while other sessions are live.
 - In shared-profile mode with an upstream-signed runtime, Orc reuses a separately installed Orca that is already running without changing its app or session ownership; launching the official GUI while the bundled runtime runs does not lose sessions or corrupt the profile. In Orc-managed-profile mode, the separately installed Orca remains independent and Orc never switches profiles implicitly.
 - Starting the bundled runtime adds no Dock icon or ⌘-Tab entry, including during cold startup and while the Orc window is closed. Orc's own Dock badge remains on the Orc icon. An explicitly opened, separately installed Orca GUI may show its own icon.
