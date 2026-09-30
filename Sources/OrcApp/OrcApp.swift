@@ -322,7 +322,9 @@ struct SessionWindow: View {
             }.padding(.horizontal, 16).padding(.top, 12)
             SessionProjectPicker(projects: SessionProjectFilter.projects(in: model.sessions, workspaces: model.workspaces),
                                  selection: $projectFilter.projectID)
-                .accessibilityIdentifier("session-project-filter").padding(12)
+                .accessibilityIdentifier("session-project-filter")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 12)
             SessionSidebarList(organization: sidebarOrder, hierarchy: hierarchy, search: "",
                                collapsed: collapsedParents, selection: $model.selected) { row in
                 sessionRow(row.session, name: hierarchy.displayName(for: row.session),
