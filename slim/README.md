@@ -35,6 +35,7 @@ directory is the uniqueness check, and a rename moves the directory.
 | `meta.json` | frontend | Session id, incarnation id, name, cwd, argv, project, agent, parent |
 | `checkpoint.json` | frontend | Emulator checkpoint and the output offset it covers |
 | `queue.json` | frontend | An agent's undelivered messages |
+| `wakes.json` | frontend | An agent's pending wakes |
 
 An agent's lifecycle events are appended to `<profile>/agent-events/<uuid>.jsonl`, named in `meta.json`.
 The path stays valid when the session is renamed. Finished sessions move to `<profile>/ended/`. Holder binaries are installed under
@@ -133,6 +134,15 @@ message and nothing is queued.
 `orc agent spawn|send|list|status|wait|stop` uses these methods when the runtime advertises
 `orc.agents.v1`; commands run inside a session send its `ORC_SESSION_NAME` as the sender and parent.
 
+`wake.create` sends an agent a message from `wake` later: a `timer` after `delayMs`, a `pid` when that
+process exits, or a `script` started at once when it exits. A process is identified by its pid and
+start time, so a reused pid does not count as the watched process. A script runs through `/bin/sh` in
+its own process group with the session's environment, its output going to
+`<profile>/wake-logs/ID.log`; the wrapper writes the exit status to `ID.exit` there, which is how a
+later frontend learns the status. Pending wakes are checked every second and fire after a frontend
+restart if their condition was met meanwhile. `wake.cancel` and the end of the session stop the
+wake's script. `orc wake` sets, lists and cancels the wakes of the session it runs in.
+
 Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) and `ORC_RUNTIME_DIR`
 (its runtime profile, so `orc` run inside it reaches the same runtime); agents also get
 `ORC_AGENT_EVENTS`.
@@ -146,7 +156,7 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 - **Local socket:** `status.get`, `terminal.list`, `terminal.create`, `terminal.rename`, `terminal.send`,
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
   and `repo.add` use Orca's request and result shapes, including agent identity and status.
-  `agent.*` implements the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
+  `agent.*` and `wake.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
   access links; they are not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,

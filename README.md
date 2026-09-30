@@ -97,6 +97,18 @@ orc agent stop fix-ci [--kill]
 
 Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`) once the agent is idle; messages to a busy agent wait their turn. Wait returns once the agent has finished everything sent to it. Stop interrupts the current turn and drops queued messages; `--kill` ends the session. Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
 
+An agent can also have a message sent to itself later:
+
+```sh
+orc wake 30m "check the CI run"
+orc wake pid 4242 "the build finished"
+orc wake ./watch-ci.sh "CI finished"
+orc wake list
+orc wake cancel 1a2b3c4d
+```
+
+A wake's message is queued like any other and begins with `[from wake]`. A timer's message defaults to `continue`; a process or script wake adds the exit status, and a script wake adds the end of the script's output. The script runs in the background right away, in the current directory with the session's environment. Wakes survive runtime restarts; ending the session removes them and stops their scripts. See `orc wake --help`.
+
 Every session starts with `ORC_SESSION_NAME` (its name) and `ORC_RUNTIME_DIR` (its runtime profile), so `orc` run inside a session reaches the same runtime and identifies its caller.
 
 ### Runtime access

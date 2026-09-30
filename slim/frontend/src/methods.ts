@@ -12,6 +12,7 @@ import type { Projects } from './projects.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
+import type { WakeDirectory } from './wakes.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
 export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1']
@@ -22,6 +23,7 @@ export type Runtime = {
   store: SessionStore
   projects: Projects
   agents: AgentDirectory
+  wakes: WakeDirectory
   catalog: Catalog
   subscriptions: ConnectionSubscriptions
 }
@@ -45,7 +47,7 @@ function terminalStatus(state: AgentState | undefined): string | null {
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents, catalog, subscriptions } = runtime
+  const { store, projects, agents, wakes, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -246,6 +248,12 @@ export function createHandlers(runtime: Runtime): Handlers {
     'agent.wait': (params) => agents.wait(String(params.name), Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 30_000))),
 
     'agent.stop': (params) => agents.stop(String(params.name), params.kill === true),
+
+    'wake.create': (params) => wakes.create(String(params.name ?? ''), params),
+
+    'wake.list': async (params) => ({ wakes: await wakes.list(String(params.name ?? '')) }),
+
+    'wake.cancel': (params) => wakes.cancel(String(params.name ?? ''), String(params.id ?? '')),
 
     'terminal.read': async (params) => {
       const target = session(params.terminal)

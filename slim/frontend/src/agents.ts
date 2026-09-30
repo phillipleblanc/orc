@@ -143,6 +143,17 @@ export class AgentDirectory extends EventEmitter {
     return this.records.get(session)?.monitor
   }
 
+  isAgent(session: TerminalSession): boolean {
+    return isAgentKind(session.meta.agent) && Boolean(session.meta.events)
+  }
+
+  /** Queues a message for an agent session that is still running; other sessions are ignored. */
+  async deliver(session: TerminalSession, text: string, from: string): Promise<void> {
+    if (this.store.get(session.meta.name) !== session) return
+    const record = this.records.get(session) ?? (await this.attach(session))
+    if (record) this.enqueue(record, { id: randomUUID(), text, from, queuedAt: Date.now() })
+  }
+
   describe(record: AgentRecord): Record<string, unknown> {
     const { session, monitor } = record
     return {
@@ -178,9 +189,8 @@ export class AgentDirectory extends EventEmitter {
   private async attach(session: TerminalSession): Promise<AgentRecord | undefined> {
     const existing = this.records.get(session)
     if (existing) return existing
-    const { agent, events } = session.meta
-    if (!isAgentKind(agent) || !events) return undefined
-    const monitor = new AgentMonitor(agent, events, session)
+    if (!this.isAgent(session)) return undefined
+    const monitor = new AgentMonitor(session.meta.agent as AgentKind, session.meta.events!, session)
     const saved = await readFile(join(session.dir, 'queue.json'), 'utf8').then(JSON.parse, () => ({}))
     const record: AgentRecord = {
       session, monitor, queue: Array.isArray(saved.queue) ? saved.queue : [], delivering: null,

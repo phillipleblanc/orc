@@ -17,6 +17,7 @@ import { phonePairingHandlers } from './phone-pairing.ts'
 import { Projects } from './projects.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
+import { WakeDirectory } from './wakes.ts'
 import { ConnectionSubscriptions } from './subscriptions.ts'
 import { WebSocketRpcServer } from './websocket-server.ts'
 
@@ -59,10 +60,11 @@ const devices = new Devices(profile)
 await devices.load()
 const keypair = await loadOrCreateKeypair(profile)
 const agents = new AgentDirectory(store, projects, profile)
+const wakes = new WakeDirectory(store, agents, profile)
 const discovered = await store.discover()
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, catalog, subscriptions }
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, catalog, subscriptions }
 const nativeChat = nativeChatMethods(subscriptions)
 const mobileTerminal = mobileTerminalMethods(store, subscriptions)
 const clientEvents = clientEventMethods(catalog, subscriptions)

@@ -139,6 +139,27 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'idle', 15_000, 'reviewer to be idle after the interrupt')
   }
 
+  // An agent's own wake arrives as a message from wake; a script wake adds the exit status.
+  const timer = await orc(['wake', '1s', 'Reply with only the word WAKE.'], { caller: 'coder' })
+  assert.equal(timer.code, 0, timer.stderr)
+  assert.match(timer.stdout, /^Wake [0-9a-f]{8} {2}in 1s /)
+  const woken = await until(async () => {
+    const status = await frontend.rpc('agent.status', { name: 'coder' })
+    return status.lastAssistantMessage?.trim() === 'WAKE' && status.state === 'idle' && status
+  }, 90_000, 'coder to answer its wake')
+  assert.equal(woken.queued, 0)
+  await writeFile(join(project, 'probe.sh'), 'echo probe-output\nexit 4\n')
+  const scripted = await orc(['wake', 'probe.sh', 'Reply with only the exit status number.', '--json'], { caller: 'coder' })
+  assert.equal(scripted.json().kind, 'script')
+  assert.equal((await orc(['wake', 'list', '--json'], { caller: 'coder' })).code, 0)
+  await until(async () => (await frontend.rpc('agent.status', { name: 'coder' })).lastAssistantMessage?.trim() === '4', 90_000, 'coder to answer its script wake')
+  const wakePrompts = (await events('coder')).filter((event) => event.event === 'UserPromptSubmit').map((event) => event.payload.prompt).slice(-2)
+  assert.deepEqual(wakePrompts, ['[from wake]\nReply with only the word WAKE.', `[from wake]\nReply with only the exit status number.\n\n${project}/probe.sh exited 4\noutput:\nprobe-output`])
+  const pending = await orc(['wake', '1h', '--json'], { caller: 'coder' })
+  assert.equal((await orc(['wake', 'cancel', pending.json().id.slice(0, 8)], { caller: 'coder' })).code, 0)
+  assert.equal((await orc(['wake', 'list'], { caller: 'coder' })).stdout.trim(), 'No wakes.')
+  assert.match((await orc(['wake', '5m'], { caller: 'plain-shell' })).stderr, /no session named plain-shell/)
+
   // `orc new codex` starts the agent with status reporting too.
   await orc(['projects', 'add', project, '--json'])
   const created = await orc(['new', 'codex', '--name', 'plain', '--project', `path:${project}`, '--json'])

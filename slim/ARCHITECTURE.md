@@ -88,7 +88,7 @@ flowchart LR
     subgraph sessionFiles["sessions/NAME/ · written by the frontend"]
         meta["meta.json"]
         checkpoint["checkpoint.json"]
-        queue["queue.json"]
+        queue["queue.json · wakes.json"]
     end
 
     agentProcess(["agent status hooks"])
@@ -102,6 +102,7 @@ flowchart LR
         projects["projects.json"]
         binaries["holders/HASH/orc-holder"]
         hookFiles["agent-hooks/HASH/<br/>orc-agent-hook · claude-settings.json · orc-agent-status.ts"]
+        wakeLogs["wake-logs/ID.log · ID.exit"]
         ended["ended/NAME.TIME/"]
     end
 
@@ -259,6 +260,7 @@ flowchart TB
 | A client reads too slowly | The holder disconnects it; the client reattaches from its last offset. |
 | A session name is taken | Creation fails; names are unique per profile. |
 | An agent runs while no frontend runs | Its hooks keep appending events; the next frontend replays them. Queued messages wait in `queue.json`. |
+| A wake's condition is met while no frontend runs | The next frontend fires it. A wake script keeps running and records its exit status for that frontend. |
 | A message cannot be confirmed within 20 s | The next queued message may be delivered; the agent reports an unconfirmed delivery. |
 | An agent was started without Orc's hooks | It reports no agent state. |
 | The frontend restarts while a phone is connected | The phone reconnects to the same port and resubscribes; its tab snapshots start a new publication epoch. |

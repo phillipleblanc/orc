@@ -33,6 +33,18 @@ import COrcSupport
             if !result.succeeded { exit(2) }
             return
         }
+        if command == "wake" {
+            let arguments = Array(args.dropFirst())
+            if arguments.isEmpty || arguments == ["--help"] || arguments == ["help"] { print(SessionWakeCommand.help); return }
+            let command = try SessionWakeCommand(arguments)
+            let result = try await SessionWakeService.execute(command)
+            if command.json {
+                print(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+            } else {
+                print(SessionWakeService.describe(command, result))
+            }
+            return
+        }
         var options = Array(args.dropFirst())
         func flag(_ name: String) -> Bool {
             guard let index = options.firstIndex(of: name) else { return false }; options.remove(at: index); return true
@@ -241,6 +253,7 @@ import COrcSupport
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
     orc agent                               Spawn agents and message them by name (orc agent --help)
+    orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]
     orc phones [--json]                      List phone grants and network addresses
