@@ -23,6 +23,8 @@ ORC_PI_NAME_EXTENSION="$ORC_INSTALL_ROOT/.pi/agent/extensions/orc-session-name.t
 if [[ -e "$ORC_PI_NAME_EXTENSION" && ! -L "$ORC_PI_NAME_EXTENSION" ]]; then
   echo 'Refusing to overwrite an existing Pi session-name extension.' >&2; exit 1
 fi
+ORC_CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$ORC_INSTALL_ROOT/.claude}/settings.json"
+python3 scripts/install-claude-hooks.py --settings "$ORC_CLAUDE_SETTINGS" --cli "$ORC_APP/Contents/Resources/orc" --check
 python3 scripts/package-orc.py dist/Orc.app --output "$ORC_APP"
 touch "$ORC_APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$ORC_APP"
@@ -30,9 +32,10 @@ ln -sfn "$ORC_APP/Contents/Resources/orc" "$ORC_INSTALL_ROOT/.local/bin/orc"
 mkdir -p "$ORC_INSTALL_ROOT/.pi/agent/extensions"
 ln -sfn "$ORC_APP/Contents/Resources/pi/orc-notes.ts" "$ORC_PI_EXTENSION"
 ln -sfn "$ORC_APP/Contents/Resources/pi/orc-session-name.ts" "$ORC_PI_NAME_EXTENSION"
+python3 scripts/install-claude-hooks.py --settings "$ORC_CLAUDE_SETTINGS" --cli "$ORC_APP/Contents/Resources/orc"
 ORC_SETTINGS_DIR="${ORC_CONFIG_DIR:-$ORC_INSTALL_ROOT/.config/orc}"
 mkdir -p -m 700 "$ORC_SETTINGS_DIR"
 if [[ ! -e "$ORC_SETTINGS_DIR/config.json" && ! -L "$ORC_SETTINGS_DIR/config.json" ]]; then
   (umask 077; set -o noclobber; printf '{\n  "defaultSessionType": "codex"\n}\n' > "$ORC_SETTINGS_DIR/config.json")
 fi
-printf 'Installed %s; CLI and Pi extensions under %s\n' "$ORC_APP" "$ORC_INSTALL_ROOT"
+printf 'Installed %s; CLI and Pi extensions under %s; Claude naming hooks in %s\n' "$ORC_APP" "$ORC_INSTALL_ROOT" "$ORC_CLAUDE_SETTINGS"

@@ -6,6 +6,12 @@ import COrcSupport
 @main struct OrcCLI {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
+        if args == ["hook", "claude-session-name"] {
+            let response = ClaudeSessionNameHook.response(to: FileHandle.standardInput.readDataToEndOfFile())
+            let data = (try? JSONSerialization.data(withJSONObject: response)) ?? Data("{}".utf8)
+            print(String(decoding: data, as: UTF8.self))
+            return
+        }
         // Read on the initial thread so readpassphrase's signal handlers can
         // interrupt its blocking read and restore echo before the process exits.
         var pairingLink: String?

@@ -65,6 +65,8 @@ In an Orca-hosted Pi session, run **`/notes`** to edit the same note in nvim. Or
 
 The `orc-session-name.ts` Pi extension keeps Pi's `/name` aligned with the saved Orca tab name. An Orca rename sets the Pi session name; using `/name` in Pi renames the Orca tab. It reads Orca's selected profile and sends tab renames through the installed Orca CLI. Existing Pi processes can load it with `/reload`.
 
+The app installer registers Claude Code `SessionStart` and `UserPromptSubmit` hooks in `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR`), preserving other hooks and settings. Inside an Orc pane, they set Claude's title to the saved Orc session name using the documented [`hookSpecificOutput.sessionTitle`](https://code.claude.com/docs/en/hooks#sessionstart-decision-control) field. Names refresh on startup, resume, fork, and each submitted prompt; an Orc rename during an idle Claude session takes effect at the next such event. Claude sessions outside Orc are unaffected. This requires Claude Code 2.1.152 or later; restart existing Claude sessions after installing the hooks. The hook command is `orc hook claude-session-name` and reads Claude's hook JSON from stdin.
+
 The app and CLI display Orca's saved tab names. Agent title updates do not replace those names. Split panes in the same Orca tab share its name; use a terminal handle when a name matches multiple panes.
 
 In headless mode, Orc also reads saved custom names from the selected Orca profile to handle stale runtime layout titles. Creating and renaming sessions use the runtime API; Orc does not edit session persistence files.
