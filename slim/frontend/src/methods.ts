@@ -38,7 +38,7 @@ function agentCommand(command: string): { agent: AgentKind; args: string[] } | n
   const words = command.trim().split(/\s+/)
   const agent = words[0]?.split('/').pop()
   if (!isAgentKind(agent) || words.some((word) => /['"\\$`;&|<>()]/.test(word))) return null
-  return { agent, args: words.slice(1).filter((word) => !(agent === 'codex' && word === '--no-daemon')) }
+  return { agent, args: words.slice(1) }
 }
 
 /** Orc's `terminal.agentStatus` vocabulary. */

@@ -38,6 +38,8 @@ The app and CLI read session defaults from **`~/.config/orc/config.json`**:
 
 Codex sessions launch with `--no-daemon` so tool processes inherit their session's environment and identity. The installed Codex CLI must support that flag.
 
+Agents never stop to ask for approval: Codex launches with `--yolo`, which also turns off its sandbox, and Claude with `--dangerously-skip-permissions`.
+
 Installation creates this file if absent and preserves existing settings. The project must be registered before session creation. Defaults are read each time a session is created from the CLI or picker, and each time the app opens New Session. `ORC_CONFIG_DIR` changes the directory for configuration, connection credentials, and the default runtime profile.
 
 A session's name is its identity. Agents are messaged by name, and notes, board placement, and sidebar order follow the name. Names are 1–64 characters, without `/` or control characters, and cannot start with `.`.

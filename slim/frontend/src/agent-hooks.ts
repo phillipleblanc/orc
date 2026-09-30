@@ -133,15 +133,24 @@ function codexHookArguments(script: string): string[] {
 
 export type LaunchOptions = { model?: string; effort?: string; args?: string[] }
 
-/** The argv that starts `kind` with Orc's status reporting. */
+// Flags that Orc passes itself, so a caller's copy is dropped: Codex rejects a repeated flag.
+const CODEX_FLAGS = new Set(['--no-daemon', '--yolo', '--dangerously-bypass-approvals-and-sandbox'])
+const CLAUDE_FLAGS = new Set(['--dangerously-skip-permissions'])
+
+/**
+ * The argv that starts `kind` with Orc's status reporting. Agents act without asking for approval:
+ * Codex with `--yolo` (also outside its sandbox), Claude with `--dangerously-skip-permissions`.
+ */
 export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks, options: LaunchOptions = {}): string[] {
   const { model, effort, args = [] } = options
   switch (kind) {
     case 'codex':
-      return [executable, '--no-daemon', ...codexHookArguments(hooks.script),
-        ...(model ? ['-m', model] : []), ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []), ...args]
+      return [executable, '--no-daemon', '--yolo', ...codexHookArguments(hooks.script),
+        ...(model ? ['-m', model] : []), ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+        ...args.filter((arg) => !CODEX_FLAGS.has(arg))]
     case 'claude':
-      return [executable, '--settings', hooks.claudeSettings, ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args]
+      return [executable, '--dangerously-skip-permissions', '--settings', hooks.claudeSettings,
+        ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args.filter((arg) => !CLAUDE_FLAGS.has(arg))]
     case 'pi':
       return [executable, '-e', hooks.piExtension, ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
   }

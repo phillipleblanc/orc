@@ -99,6 +99,8 @@ After the child exits, the holder serves its final output and exit status until 
 An agent is a session started with Orc's status reporting. Its session name is its identity.
 `agent.spawn` and `terminal.create` with a `codex`, `claude` or `pi` command start one; programs run
 with the login shell's environment, without variables that mark the frontend's own host session.
+Codex starts with `--yolo` (no approval prompts and no sandbox) and Claude with
+`--dangerously-skip-permissions`; a copy of either flag in the caller's arguments is dropped.
 
 Status reporting is supplied per launch; nothing is written to `~/.codex`, `~/.claude` or `~/.pi`:
 

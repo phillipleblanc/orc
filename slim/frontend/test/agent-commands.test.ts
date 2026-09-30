@@ -86,15 +86,23 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   const turns = (await events('coder')).filter((event) => event.event === 'Stop').length
   assert.equal(turns, 4)
 
-  // An approval prompt shows as permission until the agent is interrupted.
+  // Codex acts without asking, even when its own configuration asks for approval.
   await frontend.rpc('agent.spawn', { agent: 'codex', name: 'asker', cwd: project, effort: 'low', args: [...trustProject, '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="on-request"'] })
   await orc(['agent', 'send', 'asker'], { input: 'Run the shell command `touch approval-probe` in the current directory. Do not do anything else.' })
-  await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state === 'permission', 60_000, 'asker to ask for approval')
-  assert.equal((await frontend.rpc('terminal.agentStatus', { terminal: 'asker' })).agentStatus.status, 'permission')
+  assert.equal((await orc(['agent', 'wait', 'asker'])).code, 0)
+  assert.equal(existsSync(join(project, 'approval-probe')), true)
+  assert.equal((await events('asker')).some((event) => event.event === 'PermissionRequest'), false)
+
+  // Stop interrupts the current turn.
+  await orc(['agent', 'send', 'asker'], { input: 'Run the shell command `sleep 60`, then reply with only the word LATE.' })
+  await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state === 'working', 60_000, 'asker to start working')
   const stopped = await orc(['agent', 'stop', 'asker', '--json'])
   assert.equal(stopped.json().interrupted, true)
-  await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state !== 'permission', 20_000, 'asker to leave the approval prompt')
-  assert.equal(existsSync(join(project, 'approval-probe')), false)
+  const interrupted = await until(async () => {
+    const status = await frontend.rpc('agent.status', { name: 'asker' })
+    return status.state === 'idle' && status
+  }, 20_000, 'asker to stop working')
+  assert.notEqual(interrupted.lastAssistantMessage, 'LATE')
 
   // Status comes back from the event files after a frontend restart.
   await frontend.kill('SIGKILL')
