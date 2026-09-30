@@ -131,7 +131,10 @@ function codexHookArguments(script: string): string[] {
   return ['-c', `hooks={${hooks}}`, '-c', `hooks.state={${state}}`]
 }
 
-export type LaunchOptions = { model?: string; effort?: string; args?: string[] }
+/** The agent's own record of a conversation, as its hooks report it. */
+export type ProviderSession = { id?: string; transcriptPath?: string }
+
+export type LaunchOptions = { model?: string; effort?: string; args?: string[]; resume?: ProviderSession }
 
 // Flags that Orc passes itself, so a caller's copy is dropped: Codex rejects a repeated flag.
 const CODEX_FLAGS = new Set(['--no-daemon', '--yolo', '--dangerously-bypass-approvals-and-sandbox'])
@@ -140,18 +143,48 @@ const CLAUDE_FLAGS = new Set(['--dangerously-skip-permissions'])
 /**
  * The argv that starts `kind` with Orc's status reporting. Agents act without asking for approval:
  * Codex with `--yolo` (also outside its sandbox), Claude with `--dangerously-skip-permissions`.
+ * `resume` continues that conversation instead of starting a new one.
  */
 export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks, options: LaunchOptions = {}): string[] {
-  const { model, effort, args = [] } = options
+  const { model, effort, args = [], resume = {} } = options
   switch (kind) {
     case 'codex':
-      return [executable, '--no-daemon', '--yolo', ...codexHookArguments(hooks.script),
+      return [executable, ...(resume.id ? ['resume', resume.id] : []), '--no-daemon', '--yolo', ...codexHookArguments(hooks.script),
         ...(model ? ['-m', model] : []), ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
         ...args.filter((arg) => !CODEX_FLAGS.has(arg))]
     case 'claude':
-      return [executable, '--dangerously-skip-permissions', '--settings', hooks.claudeSettings,
+      return [executable, '--dangerously-skip-permissions', '--settings', hooks.claudeSettings, ...(resume.id ? ['--resume', resume.id] : []),
         ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args.filter((arg) => !CLAUDE_FLAGS.has(arg))]
-    case 'pi':
-      return [executable, '-e', hooks.piExtension, ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
+    case 'pi': {
+      const session = resume.transcriptPath ?? resume.id
+      return [executable, '-e', hooks.piExtension, ...(session ? ['--session', session] : []),
+        ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
+    }
   }
+}
+
+/**
+ * The caller's part of an argv that `agentArgv` built, including the model and effort: everything
+ * except the executable, Orc's own flags and hooks, and the conversation it resumed.
+ */
+export function callerArguments(kind: AgentKind, argv: string[]): string[] {
+  const words = argv.slice(1)
+  const kept: string[] = []
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index]
+    const next = words[index + 1] ?? ''
+    const ours = kind === 'codex' ? CODEX_FLAGS.has(word) || word === '--last'
+      : kind === 'claude' ? CLAUDE_FLAGS.has(word) : false
+    if (ours) continue
+    const withValue = kind === 'codex' ? (word === '-c' && /^hooks(\.state)?=/.test(next)) || (word === 'resume' && !next.startsWith('-'))
+      : kind === 'claude' ? (word === '--settings' && next.includes('/agent-hooks/')) || word === '--resume'
+      : (word === '-e' && next.includes('/agent-hooks/')) || word === '--session'
+    if (withValue) {
+      index++
+      continue
+    }
+    if (kind === 'codex' && word === 'resume') continue
+    kept.push(word)
+  }
+  return kept
 }

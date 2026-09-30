@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { agentArgv, installAgentHooks, isAgentKind, type AgentHooks, type AgentKind } from './agent-hooks.ts'
+import { agentArgv, installAgentHooks, isAgentKind, type AgentHooks, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import { AgentMonitor } from './agent-monitor.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import type { Projects } from './projects.ts'
@@ -35,6 +35,10 @@ export type SpawnOptions = {
   model?: string
   effort?: string
   args?: string[]
+  /** A conversation to continue instead of starting a new one. */
+  resume?: ProviderSession
+  /** Files copied into the new session's directory, such as a queue to keep. */
+  files?: string[]
   cols?: number
   rows?: number
   timeoutMs?: number
@@ -90,7 +94,8 @@ export class AgentDirectory extends EventEmitter {
       project: project?.id,
       agent: options.agent,
       parent: options.parent,
-      events
+      events,
+      files: options.files
     })
   }
 

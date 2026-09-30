@@ -149,6 +149,25 @@ Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) a
 (its runtime profile, so `orc` run inside it reaches the same runtime); agents also get
 `ORC_AGENT_EVENTS`.
 
+## Restarting the computer
+
+A restart ends every session. The first frontend after it starts the sessions that were running
+again, under their names:
+
+- An agent continues its last conversation (`codex resume ID`, `claude --resume ID`,
+  `pi --session FILE`) with the model, effort and other arguments it was started with, and keeps its
+  undelivered messages and wakes. A process or script wake fires on its first check, since the
+  process is gone.
+- A shell starts again in the same directory. A session that ran any other command stays ended.
+
+The frontend records the boot it runs in (`kern.bootsessionuuid`) in `<profile>/boot.json` when it
+starts, every 30 s and when it stops. A different boot at startup means the computer restarted. The
+sessions that were running then are the ones whose holders are gone, plus the ones retired up to 30 s
+before the previous boot's last record, because programs can exit during shutdown before the
+frontend stops. A session its user ended in those last 30 s is started again too. Sessions come back
+only after a restart; logging out and in again leaves them ended. A name in use again is skipped, and
+the previous record stays until the restore has finished, so an interrupted restore is retried.
+
 ## Orca compatibility
 
 The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSocket transports) and

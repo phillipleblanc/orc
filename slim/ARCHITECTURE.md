@@ -97,7 +97,7 @@ flowchart LR
     end
 
     subgraph profileFiles["profile · written by the frontend"]
-        runtime["orca-runtime.json · rpc.sock · frontend.lock"]
+        runtime["orca-runtime.json · rpc.sock · frontend.lock · boot.json"]
         identity["orca-e2ee-keypair.json · orca-devices.json"]
         projects["projects.json"]
         binaries["holders/HASH/orc-holder"]
@@ -255,6 +255,7 @@ flowchart TB
 |---|---|
 | Frontend crashes or is killed | Programs keep running. The next frontend replays from each checkpoint plus the holder's retained output; clients reconnect and receive a fresh snapshot. |
 | A program queries the terminal while no frontend runs | The query goes unanswered. |
+| The computer restarts | Every session ends. The first frontend afterwards starts again the agents (resuming their conversations) and shells that were running; see [Restarting the computer](README.md#restarting-the-computer). |
 | A holder crashes | Its program loses its terminal and the session ends; the frontend retires it as lost. |
 | Untrimmed output exceeds the holder's ring | The oldest output is dropped; the next attach reports a gap. |
 | A client reads too slowly | The holder disconnects it; the client reattaches from its last offset. |

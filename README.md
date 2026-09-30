@@ -133,6 +133,10 @@ orc phones revoke DEVICE_ID           # Disconnect and revoke that phone
 
 The runtime listens on port 6768 on every interface. Pairing does not use Orca Relay; both devices need a reachable private network path and the Mac must remain awake. Push notifications to the phone are not supported.
 
+### Restarting your Mac
+
+A restart ends every session. The next time Orc or `orc` starts the runtime, the sessions that were running come back under the same names: agents continue their conversations with their queued messages and wakes, and shells start in the same directory. Sessions running any other command stay ended. Logging out without restarting does not restore sessions.
+
 ## Build and install
 
 Requires Apple Silicon, macOS 14+, Python 3.12+, npm, and Xcode with the macOS SDK. Install the Metal component if necessary:

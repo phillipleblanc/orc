@@ -15,6 +15,7 @@ import { terminalMultiplex } from './multiplex.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { Projects } from './projects.ts'
+import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
 import { WakeDirectory } from './wakes.ts'
@@ -50,6 +51,7 @@ const profile = resolve(values.profile)
 const started = performance.now()
 await mkdir(profile, { recursive: true, mode: 0o700 })
 await acquireLock(join(profile, 'frontend.lock'))
+const bootRecord = await BootRecord.load(profile)
 
 const runtimeId = randomUUID()
 const authToken = randomBytes(32).toString('hex')
@@ -127,10 +129,20 @@ if (values.json) {
   }) + '\n')
 }
 
+const restartedSince = bootRecord.restartedSince
+if (restartedSince !== null) {
+  void restoreSessions({ store, agents, projects }, restartedSince, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
+    .catch((error) => process.stderr.write(`orc-frontend: restoring sessions failed: ${(error as Error).message}\n`))
+    .then(() => bootRecord.keep())
+} else {
+  bootRecord.keep()
+}
+
 let stopping = false
 async function shutdown(): Promise<void> {
   if (stopping) return
   stopping = true
+  await bootRecord.save()
   await rpc.close()
   await websocket.close()
   await store.detachAll()

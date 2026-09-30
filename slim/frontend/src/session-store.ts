@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { HolderClient } from './holder-client.ts'
 import { TerminalSession, type CheckpointPolicy, type SessionMeta } from './terminal-session.ts'
 
@@ -29,6 +29,8 @@ export type CreateOptions = {
   parent?: string
   /** Where the agent's status hooks append lifecycle events. */
   events?: string
+  /** Files copied into the session directory before the session starts; missing ones are skipped. */
+  files?: string[]
 }
 
 export type StoreOptions = {
@@ -119,6 +121,7 @@ export class SessionStore extends EventEmitter {
     }
     try {
       await writeFile(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), { mode: 0o600 })
+      for (const file of options.files ?? []) await copyFile(file, join(dir, basename(file))).catch(() => {})
       await this.startHolder(dir, options)
       const session = await TerminalSession.open(dir, meta, this.sessionOptions())
       this.track(session)

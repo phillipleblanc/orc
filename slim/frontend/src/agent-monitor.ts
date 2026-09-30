@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { open, stat } from 'node:fs/promises'
-import type { AgentKind } from './agent-hooks.ts'
+import type { AgentKind, ProviderSession } from './agent-hooks.ts'
 import type { TerminalSession } from './terminal-session.ts'
 
 /**
@@ -41,7 +41,7 @@ export class AgentMonitor extends EventEmitter {
   /** The agent's program has exited; nothing changes the state after this. */
   exited = false
   ready = false
-  providerSession: { id?: string; transcriptPath?: string } = {}
+  providerSession: ProviderSession = {}
   lastAssistantMessage: string | undefined
   /** When the most recent turn finished, in milliseconds. */
   lastIdleAt = 0
