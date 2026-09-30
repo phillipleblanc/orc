@@ -200,8 +200,9 @@ sequenceDiagram
     Note over F,H: 300 ms after the last phone leaves, the earlier size returns
 ```
 
-A mobile device token reaches only the methods the Orca app uses. The chat view reads the agent's own
-transcript file, located from the session id and path its hooks reported, and follows it as it grows.
+A mobile device token reaches only the methods the Orca app uses. The app's chat view, served to phones
+only, reads the agent's own transcript file, located from the session id and path its hooks reported,
+and follows it as it grows.
 
 ## Frontend start
 

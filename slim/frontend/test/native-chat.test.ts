@@ -125,4 +125,13 @@ test('a phone follows a transcript: a window, earlier pages, appended and rewrit
 
   assert.equal((await phone.request('nativeChat.readSession', { agent: 'claude', sessionId: `slim-test-${randomUUID()}`, limit: 5 })).notFound, true)
   await assert.rejects(phone.request('nativeChat.readSession', { agent: 'grok', sessionId }), { code: 'invalid_argument' })
+
+  // Chat is served to phones only: not over the local socket, nor to runtime-scope devices such as Orc.
+  const read = { agent: 'claude', sessionId, transcriptPath: transcript, limit: 4 }
+  await assert.rejects(frontend.rpc('nativeChat.readSession', read), { code: 'method_not_found' })
+  const desktop = await connectWithGrant(frontend.rpc.bind(frontend), 'runtime')
+  t.after(() => desktop.close())
+  await assert.rejects(desktop.request('nativeChat.readSession', read), { code: 'method_not_found' })
+  const refused = desktop.stream('nativeChat.subscribe', { ...read, subscriptionId })
+  assert.equal((await refused.next((event) => event.ok === false)).error.code, 'method_not_found')
 })

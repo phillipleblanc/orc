@@ -146,8 +146,9 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   access links; they are not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
-  `session.tabs.subscribe`, `nativeChat.subscribe` and `runtime.clientEvents.subscribe`. Every
-  streamed reply carries `streaming: true` and a stream ends with `{type: "end"}`.
+  `session.tabs.subscribe` and `runtime.clientEvents.subscribe`, and `nativeChat.*` to mobile
+  devices only. Every streamed reply carries `streaming: true` and a stream ends with
+  `{type: "end"}`.
 - **Launching:** Orc starts `ORCA_APP_EXECUTABLE` with `--user-data-dir=PROFILE --serve …` when no
   runtime is running. `frontend/test/orc-cli.test.ts` shows a launcher that runs this frontend instead.
 
@@ -172,8 +173,8 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
   the first phone returns after 300 ms, unless something else resized the PTY. Output frames end on
   UTF-8 character boundaries because the app decodes each frame on its own.
 - **Chat view:** `nativeChat.*` decodes Claude, Codex and Pi transcripts into Orca's message shape
-  and follows the file as it grows. Text blocks sent to phones are clipped to 64,000 characters and
-  tool bodies to 4,000.
+  and follows the file as it grows. Text blocks are clipped to 64,000 characters and tool bodies to
+  4,000. Only mobile devices are served chat; Orc and the local socket get `method_not_found`.
 - **Input:** `terminal.send` with `enter` types the text, waits 500 ms, then sends Enter.
 
 Workspace creation, files, notifications, relay connections and floating workspaces are not served.

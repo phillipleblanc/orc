@@ -65,11 +65,10 @@ const runtime = { runtimeId, version: VERSION, store, projects, agents, catalog,
 const nativeChat = nativeChatMethods(subscriptions)
 const mobileTerminal = mobileTerminalMethods(store, subscriptions)
 const clientEvents = clientEventMethods(catalog, subscriptions)
-const handlers = { ...createHandlers(runtime), ...nativeChat.handlers, ...mobileTerminal.handlers, ...clientEvents.handlers }
+const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
 const streaming = {
   'terminal.multiplex': terminalMultiplex(store),
   ...createSessionStreams(runtime),
-  ...nativeChat.streaming,
   ...mobileTerminal.streaming,
   ...clientEvents.streaming
 }
@@ -136,7 +135,10 @@ async function listenWebSocket(port: number, extraHosts: string[]): Promise<WebS
   const create = (chosen: number) => new WebSocketRpcServer({
     hosts: ['127.0.0.1', ...extraHosts], port: chosen, keypair, devices, runtimeId, handlers,
     streaming,
-    mobileMethods: MOBILE_METHODS
+    mobileMethods: MOBILE_METHODS,
+    // Only the Orca mobile app has a chat view.
+    mobileHandlers: nativeChat.handlers,
+    mobileStreaming: nativeChat.streaming
   })
   const server = create(port)
   try {

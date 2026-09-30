@@ -28,6 +28,9 @@ export type WebSocketOptions = {
   streaming: Record<string, StreamingHandler>
   /** Methods a mobile-scope device may call. */
   mobileMethods: Set<string>
+  /** Methods served to mobile-scope devices only; each must also be in `mobileMethods`. */
+  mobileHandlers: Handlers
+  mobileStreaming: Record<string, StreamingHandler>
 }
 
 const HANDSHAKE_TIMEOUT_MS = 10_000
@@ -154,15 +157,16 @@ export class WebSocketRpcServer {
     try {
       if (!request || typeof request.method !== 'string') throw new RpcError('invalid_request', 'malformed request')
       if (request.deviceToken !== device.token) throw new RpcError('unauthorized', 'device token does not match this connection')
-      if (device.scope === 'mobile' && !this.options.mobileMethods.has(request.method)) throw new RpcError('forbidden', `${request.method} is not available to mobile devices`)
+      const mobile = device.scope === 'mobile'
+      if (mobile && !this.options.mobileMethods.has(request.method)) throw new RpcError('forbidden', `${request.method} is not available to mobile devices`)
       const params = (request.params ?? {}) as Record<string, any>
-      const streaming = this.options.streaming[request.method]
+      const streaming = this.options.streaming[request.method] ?? (mobile ? this.options.mobileStreaming[request.method] : undefined)
       if (streaming) {
         await streaming(params, context(), (event) => sendJSON({ id, ok: true, streaming: true, result: event, _meta: meta }))
         sendJSON({ id, ok: true, streaming: true, result: { type: 'end' }, _meta: meta })
         return
       }
-      const handler = this.options.handlers[request.method]
+      const handler = this.options.handlers[request.method] ?? (mobile ? this.options.mobileHandlers[request.method] : undefined)
       if (!handler) throw new RpcError('method_not_found', `Unknown method: ${request.method}`)
       const result = (await handler(params, context())) ?? {}
       // Orca stamps the caller's grant scope onto status replies.
