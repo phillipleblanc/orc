@@ -221,7 +221,7 @@ export class AgentDirectory extends EventEmitter {
 
   private finished(record: AgentRecord): boolean {
     const { monitor } = record
-    if (monitor.state === 'ended') return true
+    if (monitor.exited) return true
     return record.queue.length === 0 && !record.delivering && monitor.effectiveState === 'idle' && monitor.lastIdleAt >= record.lastDeliveredAt
   }
 
@@ -257,7 +257,7 @@ export class AgentDirectory extends EventEmitter {
     if (predicate()) return Promise.resolve(true)
     return new Promise((resolve) => {
       const check = () => {
-        if (!predicate() && record.monitor.state !== 'ended') return
+        if (!predicate() && !record.monitor.exited) return
         cleanup()
         resolve(predicate())
       }

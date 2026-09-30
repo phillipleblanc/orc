@@ -8,7 +8,9 @@ import type { TerminalSession } from './terminal-session.ts'
  * - `idle`: waiting for input
  * - `working`: processing a turn
  * - `permission`: waiting for the user to answer an approval, question or dialog
- * - `ended`: the agent's session ended
+ * - `ended`: the agent's conversation ended. Agents end a conversation and start another without
+ *   exiting (Pi switching sessions, Claude's /clear), so this lasts only until the next event or the
+ *   program's exit, which is final (`exited`).
  */
 export type AgentState = 'starting' | 'idle' | 'working' | 'permission' | 'ended'
 
@@ -36,6 +38,8 @@ export class AgentMonitor extends EventEmitter {
   readonly file: string
   private readonly session: TerminalSession
   state: AgentState = 'starting'
+  /** The agent's program has exited; nothing changes the state after this. */
+  exited = false
   ready = false
   providerSession: { id?: string; transcriptPath?: string } = {}
   lastAssistantMessage: string | undefined
@@ -52,7 +56,7 @@ export class AgentMonitor extends EventEmitter {
   private reading = false
   private readonly onTitle = (title: string) => this.observeTitle(title)
   private readonly onApplied = () => this.scheduleScreenCheck()
-  private readonly onExit = () => this.transition('ended')
+  private readonly onExit = () => this.markExited()
 
   constructor(kind: AgentKind, file: string, session: TerminalSession) {
     super()
@@ -66,7 +70,7 @@ export class AgentMonitor extends EventEmitter {
     this.session.on('title', this.onTitle)
     this.session.on('applied', this.onApplied)
     this.session.on('exit', this.onExit)
-    if (this.session.exit) this.transition('ended')
+    if (this.session.exit) this.markExited()
     if (this.kind === 'codex' && !this.ready) this.observeTitle(this.session.title)
     this.poll = setInterval(() => void this.read(true), POLL_MS)
     this.scheduleScreenCheck()
@@ -123,7 +127,7 @@ export class AgentMonitor extends EventEmitter {
     switch (record.event) {
       case 'SessionStart':
         this.ready = true
-        if (this.state === 'starting') this.transition('idle', at)
+        if (this.state === 'starting' || this.state === 'ended') this.transition('idle', at)
         break
       case 'UserPromptSubmit':
       case 'PreToolUse':
@@ -154,8 +158,13 @@ export class AgentMonitor extends EventEmitter {
     }
   }
 
+  private markExited(): void {
+    this.transition('ended')
+    this.exited = true
+  }
+
   private transition(state: AgentState, at = Date.now()): void {
-    if (this.state === 'ended') return
+    if (this.exited) return
     if (state === 'idle') this.interruptRequested = false
     if (state === 'idle' && this.state !== 'idle') this.lastIdleAt = at
     const changed = state !== this.state
