@@ -250,9 +250,10 @@ try:
             picker.send('nnn')
             picker.read_until('[orc] Attaching to ')
             output = picker.transcript[start:]
-            created = re.search(rb"Created ([a-z]{3,5}-[a-z]{3,5}) \((\w+), " + re.escape(project.encode()) + rb"\).*?orc attach '(term_[^']+)'", output, re.S)
-            assert created, output[-2000:]
-            name, agent, handle = [value.decode() for value in created.groups()]
+            created = re.search(rb"Created ([a-z]{3,5}-[a-z]{3,5}) \((\w+), " + re.escape(project.encode()) + rb"\).*?orc attach '([a-z]{3,5}-[a-z]{3,5})'", output, re.S)
+            assert created and created.group(1) == created.group(3), output[-2000:]
+            name, agent = created.group(1).decode(), created.group(2).decode()
+            handle = next(s['handle'] for s in json.loads(cli('list', '--json')) if s['title'] == name)
             handles.append(handle)
             assert agent == expected_type
             assert output.count(b'Created ') == 1, 'One key action must create one session'
@@ -323,13 +324,14 @@ try:
     picker.read_until('Orc — Attach to a session')
     picker.send('orc-e2e-' + suffix); picker.read_until('Filter: orc-e2e-' + suffix)
     picker.send('\x1b'); time.sleep(0.02); picker.send('[B')
-    picker.read_until('2/2 · ' + second)
+    picker.read_until('\x1b[1;7m> orc-e2e-' + suffix + '-second')
+    assert b'2/2' in picker.transcript.rsplit(b'Attach to a session', 1)[-1], 'the second of two matches is selected'
     picker.send('\r'); picker.read_until('__PICKER_SECOND__')
     picker.send("printf '__PICKER_%s__\\n' INPUT\r"); picker.read_until('__PICKER_INPUT__')
     picker.close(); terminals.remove(picker)
     readonly = Terminal(extra=('--read-only', '--no-reconnect')); terminals.append(readonly)
     readonly.read_until('Orc — Attach to a session')
-    readonly.send(second); readonly.read_until('1/1 · ' + second)
+    readonly.send('orc-e2e-' + suffix + '-second'); readonly.read_until('1/1')
     readonly.send('\r'); readonly.read_until('__PICKER_INPUT__')
     readonly.close(); terminals.remove(readonly)
     for cancellation in ('escape', 'signal'):
@@ -447,7 +449,7 @@ try:
         picker_screen += t.read_until('\x1b[?2026l')
     assert keyboard_flags(t.transcript) == 0, 'the picker must use ordinary keyboard encoding'
     assert late_name.encode() in picker_screen, 'Returning to the picker must refresh sessions'
-    assert re.search(rb'\d+/\d+ \xc2\xb7 ' + re.escape(handle.encode()), picker_screen), 'The previous session must stay selected'
+    assert b'\x1b[1;7m> orc-tui-' + suffix.encode() + b'\x1b[0m' in picker_screen, 'The previous session must stay selected'
     t.send(late_name + '\r'); t.attached(late_name)
     if b'__SWITCH_READY__' not in t.transcript: t.read_until('__SWITCH_READY__')
     assert keyboard_flags(t.transcript) == 0, 'switching to a shell must clear the TUI keyboard mode'

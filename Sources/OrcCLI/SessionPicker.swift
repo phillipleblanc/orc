@@ -31,7 +31,7 @@ import OrcKit
     }
     private var matches: [Session] {
         sessions.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
-            || $0.worktreePath.localizedCaseInsensitiveContains(query) || $0.handle.localizedCaseInsensitiveContains(query) }
+            || $0.worktreePath.localizedCaseInsensitiveContains(query) }
     }
     func run() async throws -> Selection? {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
@@ -179,7 +179,7 @@ import OrcKit
             }
         }
         lines.append("")
-        let status = list.indices.contains(selected) ? "\(selected + 1)/\(list.count) · \(list[selected].handle)" : "0/\(sessions.count) sessions"
+        let status = list.indices.contains(selected) ? "\(selected + 1)/\(list.count)" : "0/\(sessions.count) sessions"
         lines.append("\u{1b}[2m" + fit(status, width: cols) + "\u{1b}[0m")
         if rows < 8 { lines = [fit("Resize terminal to at least 8 rows. Esc cancels.", width: cols)] }
         do { try writeAll(STDOUT_FILENO, Data(("\u{1b}[?2026h\u{1b}[H\u{1b}[2J" + lines.joined(separator: "\r\n") + "\u{1b}[?2026l").utf8)) }

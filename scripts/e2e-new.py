@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='orc-new-') as directory:
             assert re.fullmatch(r'[a-z]{3,5}-[a-z]{3,5}', result['name']), result
         else:
             assert result['name'] == name
-        assert result['attachCommand'] == "orc attach '" + result['handle'] + "'"
+        assert result['attachCommand'] == "orc attach '" + result['name'] + "'"
         session = next(t for t in cli('list', '--json') if t['handle'] == result['handle'])
         assert session['connected'] and session['title'] == result['name']
         assert session['worktreePath'] == projects[project]['path']

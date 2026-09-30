@@ -51,8 +51,8 @@ import COrcSupport
             let result = try await service.list()
             if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(result.terminals))) }
             else {
-                print("SESSION\tSTATE\tHANDLE\tPROJECT")
-                for s in result.terminals { print("\(safe(s.name))\t\(s.connected ? "running" : "offline")\t\(s.handle)\t\(safe(s.worktreePath))") }
+                print("SESSION\tSTATE\tPROJECT")
+                for s in result.terminals { print("\(safe(s.name))\t\(s.connected ? "running" : "offline")\t\(safe(s.worktreePath))") }
                 if result.truncated { FileHandle.standardError.write(Data("Warning: the runtime returned a truncated session list.\n".utf8)) }
             }
         case "projects", "workspaces":
@@ -93,9 +93,9 @@ import COrcSupport
             let created = try await createSession(using: service, type: type, name: requestedName,
                 project: requestedProject, command: customCommand)
             if json { try emit(["handle": created.handle, "name": created.name, "type": created.type, "project": created.project,
-                               "attachCommand": "orc attach \(shellQuote(created.handle))"]) }
+                               "attachCommand": "orc attach \(shellQuote(created.name))"]) }
             else {
-                print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))")
+                print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.name))")
                 if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 {
                     try await run(["attach", created.handle])
                 }
@@ -103,7 +103,7 @@ import COrcSupport
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
-            guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME-OR-HANDLE] [--read-only] [--no-reconnect]") }
+            guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME] [--read-only] [--no-reconnect]") }
             let herdr = HerdrAttach.current
             let herdrChild = ProcessInfo.processInfo.environment["ORC_HERDR_ATTACH_CHILD"] == "1"
             if herdrChild, options.count != 1 { throw OrcError("An Orc Herdr attachment needs a session handle.") }
@@ -120,7 +120,7 @@ import COrcSupport
                     case .create:
                         print("[orc] Creating a session…")
                         let created = try await createSession(using: service)
-                        print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.handle))")
+                        print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.name))")
                         selector = created.handle
                         continue
                     }
