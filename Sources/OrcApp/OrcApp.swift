@@ -214,7 +214,6 @@ struct SessionWindow: View {
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
     @State private var requestedAttach: String?
-    @State private var terminalGeneration = UUID()
     @State private var renamingSession: Session?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
@@ -401,11 +400,9 @@ struct SessionWindow: View {
                     Button { attachedSession = nil } label: { Label("Detach", systemImage: "rectangle.compress.vertical") }
                     Text(hierarchy.displayName(for: session)).font(.headline).lineLimit(1)
                     Spacer()
-                    Button { terminalGeneration = UUID() } label: { Image(systemName: "arrow.clockwise") }
-                        .help("Reconnect Terminal").accessibilityLabel("Reconnect Terminal")
                 }.padding(14)
                 Divider()
-                GhosttyTerminal(session: session).id(session.id + terminalGeneration.uuidString)
+                GhosttyTerminal(session: session).id(session.id)
             }
         } else {
             ScrollView {
