@@ -33,6 +33,7 @@ export class UnixRpcServer {
   private readonly token: Buffer
   private readonly runtimeId: string
   private readonly handlers: Handlers
+  private readonly connections = new Set<Socket>()
 
   constructor(path: string, authToken: string, runtimeId: string, handlers: Handlers) {
     this.path = path
@@ -52,14 +53,21 @@ export class UnixRpcServer {
     })
   }
 
+  /** Stops listening and drops every connection; closing waits for connections that remain. */
   async close(): Promise<void> {
-    await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    const closed = new Promise<void>((resolve) => this.server.close(() => resolve()))
+    for (const socket of this.connections) socket.destroy()
+    await closed
     await unlink(this.path).catch(() => {})
   }
 
   private accept(socket: Socket): void {
     const closeHandlers: (() => void)[] = []
-    socket.on('close', () => { for (const handler of closeHandlers.splice(0)) handler() })
+    this.connections.add(socket)
+    socket.on('close', () => {
+      this.connections.delete(socket)
+      for (const handler of closeHandlers.splice(0)) handler()
+    })
     const context: CallContext = { connectionId: `local-${randomUUID()}`, scope: 'local', onClose: (handler) => closeHandlers.push(handler) }
     let buffered = ''
     socket.setEncoding('utf8')

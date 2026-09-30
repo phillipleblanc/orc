@@ -84,13 +84,13 @@ class RuntimeRestartTests(unittest.TestCase):
         self.profile = Path(temporary.name).resolve() / "runtime"
         self.profile.mkdir()
 
-    def serve(self, lock=True):
+    def serve(self, lock=True, on_term="exit(0)"):
         # A stand-in whose command line looks like a frontend; `lock` makes it hold the profile's lock.
-        script = "import signal, time; signal.signal(signal.SIGTERM, lambda *_: exit(0)); print('ready', flush=True); time.sleep(60)"
+        script = f"import signal, time; signal.signal(signal.SIGTERM, lambda *_: {on_term}); print('ready', flush=True); time.sleep(60)"
         process = subprocess.Popen([sys.executable, "-c", script, "frontend/src/main.ts", "--profile", str(self.profile)],
                                    stdout=subprocess.PIPE, text=True)
         self.assertEqual(process.stdout.readline().strip(), "ready")
-        self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait(timeout=5)))
+        self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait(timeout=5), process.stdout.close()))
         (self.profile / "orca-runtime.json").write_text(json.dumps({"pid": process.pid}))
         (self.profile / "frontend.lock").write_text(str(process.pid if lock else process.pid + 1))
         return process
@@ -99,6 +99,11 @@ class RuntimeRestartTests(unittest.TestCase):
         process = self.serve()
         self.assertTrue(package.restart_runtime(self.profile))
         self.assertEqual(process.wait(timeout=5), 0)
+
+    def test_kills_a_frontend_that_does_not_finish_stopping(self):
+        process = self.serve(on_term="None")
+        self.assertTrue(package.restart_runtime(self.profile, timeout=0.5))
+        self.assertEqual(process.wait(timeout=5), -9)
 
     def test_leaves_other_processes_and_missing_runtimes_alone(self):
         process = self.serve(lock=False)

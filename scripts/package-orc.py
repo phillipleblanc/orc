@@ -75,8 +75,22 @@ def publish(source, output):
                 os.rename(staged, output)
 
 
+def stopped(pid, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def restart_runtime(profile, timeout=15.0):
-    """Stops the frontend serving `profile`, if one is running. Returns whether one was stopped."""
+    """Stops the frontend serving `profile`, if one is running. Returns whether one was stopped.
+
+    A frontend that does not finish shutting down is killed: it has already stopped serving, and
+    sessions outlive it either way.
+    """
     try:
         pid = int(json.loads((profile / "orca-runtime.json").read_text())["pid"])
         # The frontend serving a profile holds its lock; a stale pid may belong to something else.
@@ -88,12 +102,11 @@ def restart_runtime(profile, timeout=15.0):
     if "frontend/src/main.ts" not in command:
         return False
     os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        state = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-        if not state or state.startswith("Z"):
-            return True
-        time.sleep(0.1)
+    if stopped(pid, timeout):
+        return True
+    os.kill(pid, signal.SIGKILL)
+    if stopped(pid, 5.0):
+        return True
     raise PackageError(f"The runtime frontend (pid {pid}) did not stop; stop it before using Orc.")
 
 

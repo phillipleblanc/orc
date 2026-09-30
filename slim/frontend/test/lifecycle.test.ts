@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { createConnection } from 'node:net'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { diffScreens, rowText } from '../src/emulator.ts'
 import { destroyProfile, Frontend, GroundTruth, makeProfile, settledScreens, sleep, until } from './harness.ts'
@@ -31,6 +34,22 @@ test('a session survives frontend SIGKILL and SIGTERM with an identical screen',
   assert.equal(screen.gapBytes, 0)
   assert.deepEqual(diffScreens(expected, actual), [])
   assert.equal(rowText(actual.normal.at(-2)), 'line 299')
+})
+
+test('SIGTERM stops the frontend while local and WebSocket clients stay connected', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const meta = JSON.parse(await readFile(join(profile, 'orca-runtime.json'), 'utf8'))
+  const endpoint = (kind: string) => meta.transports.find((transport: { kind: string }) => transport.kind === kind).endpoint
+  const local = createConnection(endpoint('unix'))
+  const port = Number(new URL(endpoint('websocket')).port)
+  const remote = createConnection({ host: '127.0.0.1', port })
+  t.after(() => { local.destroy(); remote.destroy() })
+  await Promise.all([local, remote].map((socket) => new Promise((resolve) => socket.once('connect', resolve))))
+  const stopped = frontend.kill('SIGTERM').then(() => true)
+  assert.equal(await Promise.race([stopped, sleep(5000).then(() => false)]), true, 'the frontend exited')
 })
 
 test('closing a session ends it and frees its name before the call returns', async (t) => {

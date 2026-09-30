@@ -75,7 +75,9 @@ export class WebSocketRpcServer {
 
   async close(): Promise<void> {
     for (const client of this.sockets.clients) client.terminate()
-    await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    const closed = new Promise<void>((resolve) => this.server.close(() => resolve()))
+    this.server.closeAllConnections()
+    await closed
   }
 
   private accept(socket: WebSocket): void {
