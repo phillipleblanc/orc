@@ -178,13 +178,15 @@ struct SessionBoardView: View {
             }
             HStack(spacing: 12) {
                 SessionProjectPicker(projects: projects, selection: $projectFilter.projectID)
-                    .frame(maxWidth: 200).accessibilityIdentifier("board-project-filter")
+                    .frame(maxWidth: 200, alignment: .leading).fixedSize(horizontal: true, vertical: false)
+                    .accessibilityIdentifier("board-project-filter")
                 Picker("Label", selection: $labelFilter) {
                     Text("All labels").tag(String?.none)
                     ForEach(availableLabels) { label in
                         Text(labelTitle(label)).tag(Optional(label.id))
                     }
-                }.labelsHidden().frame(maxWidth: 200).accessibilityLabel("Filter by label")
+                }.labelsHidden().frame(maxWidth: 200, alignment: .leading).fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel("Filter by label")
                 TextField("Find sessions or labels", text: $search).textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260).accessibilityLabel("Find sessions or labels")
                 Spacer(minLength: 0)
