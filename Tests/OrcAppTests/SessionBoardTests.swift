@@ -12,9 +12,9 @@ final class SessionBoardWindowTests: XCTestCase {
     }
     override func tearDownWithError() throws { try FileManager.default.removeItem(at: root) }
 
-    private func session(_ handle: String, name: String? = nil, connected: Bool = true) throws -> Session {
-        try decode(["handle": handle, "title": name ?? handle, "worktreeId": "board-fixture",
-                    "worktreePath": "/code/spiceai", "connected": connected, "writable": connected,
+    private func session(_ handle: String, name: String? = nil, connected: Bool = true, project: String = "spiceai") throws -> Session {
+        try decode(["handle": handle, "title": name ?? handle, "worktreeId": project,
+                    "worktreePath": "/code/\(project)", "connected": connected, "writable": connected,
                     "agentIdentity": "Codex", "incarnationId": "fixture-process"])
     }
 
@@ -71,7 +71,8 @@ final class SessionBoardWindowTests: XCTestCase {
         model.needsRuntimeSetup = false
         model.sessions = try ["Cayenne query performance", "Runtime compatibility", "SDK feature parity", "Review DataFusion changes",
                               "Lab signoff", "A long session name that should wrap without overlapping any other cards"].enumerated().map {
-            try session("fixture-\($0.offset)", name: $0.element, connected: $0.offset != 4)
+            try session("fixture-\($0.offset)", name: $0.element, connected: $0.offset != 4,
+                        project: $0.offset == 1 ? "orc" : "spiceai")
         }
         model.selected = model.sessions[0].id
         let organization = SessionBoardModel(file: root.appendingPathComponent("board.json"))

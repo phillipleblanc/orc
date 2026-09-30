@@ -2,8 +2,8 @@ import XCTest
 @testable import OrcKit
 
 final class SessionBoardTests: XCTestCase {
-    private func session(_ handle: String, pane: String? = nil, title: String? = nil) -> Session {
-        var session = Session(handle: handle, title: title ?? handle, worktreeId: "project", worktreePath: "/code/project",
+    private func session(_ handle: String, pane: String? = nil, title: String? = nil, project: String = "project") -> Session {
+        var session = Session(handle: handle, title: title ?? handle, worktreeId: project, worktreePath: "/code/\(project)",
                               connected: true, writable: true, agentIdentity: "pi", incarnationId: "process")
         session.tabId = pane
         session.leafId = pane.map { _ in "leaf" }
@@ -81,6 +81,81 @@ final class SessionBoardTests: XCTestCase {
         XCTAssertEqual(board, before)
         XCTAssertEqual(board.sessions(in: group, from: [fresh, other]).map(\.handle), ["fresh"])
         XCTAssertEqual(board.labels(for: fresh.notesKey).first?.id, label)
+    }
+
+    func testLabelsAreReusableOnlyWithinTheirProject() throws {
+        let sessions = [session("spice", project: "spiceai"), session("other-spice", project: "spiceai"),
+                        session("orc", project: "orc")]
+        var board = SessionBoard()
+        board.reconcile(sessions)
+        let spiceLabel = try XCTUnwrap(board.addLabel(" Sumac ", to: "spice"))
+        XCTAssertEqual(board.addLabel("súmac", to: "other-spice"), spiceLabel)
+        XCTAssertEqual(board.availableLabels(for: "other-spice").map(\.id), [spiceLabel])
+        XCTAssertTrue(board.availableLabels(for: "orc").isEmpty)
+        board.toggleLabel(spiceLabel, for: "orc")
+        XCTAssertTrue(board.labels(for: "orc").isEmpty)
+
+        let orcLabel = try XCTUnwrap(board.addLabel("Sumac", to: "orc"))
+        XCTAssertNotEqual(orcLabel, spiceLabel)
+        XCTAssertEqual(board.labels(in: "orc").map(\.id), [orcLabel])
+        XCTAssertEqual(board.labels(in: "spiceai").map(\.id), [spiceLabel])
+        board.toggleLabel(orcLabel, for: "orc")
+        XCTAssertTrue(board.labels(for: "orc").isEmpty)
+        XCTAssertEqual(board.availableLabels(for: "orc").map(\.id), [orcLabel])
+        XCTAssertNil(board.addLabel("Unknown", to: "missing"))
+        board.reconcile([])
+        XCTAssertEqual(board.labels().count, 2)
+    }
+
+    func testLegacyLabelsMigrateByProjectAcrossPartialInventoriesAndReloads() throws {
+        let legacy = """
+        {"groups":[{"id":"group","name":"Working"}],
+         "labels":[{"id":"shared","name":"Sumac"},{"id":"unused","name":"Unused"}],
+         "cards":{"spice":{"groupID":"group","labelIDs":["shared"]},
+                  "orc":{"labelIDs":["shared"]},"returning":{"labelIDs":["shared"]}},
+         "order":["spice","orc","returning"]}
+        """
+        var board = try JSONDecoder().decode(SessionBoard.self, from: Data(legacy.utf8))
+        XCTAssertTrue(board.labels().isEmpty, "Labels with unknown ownership must not appear in every project")
+        board.reconcile([session("spice", project: "spiceai")])
+        let spiceLabel = try XCTUnwrap(board.labels(for: "spice").first)
+        XCTAssertEqual(spiceLabel.projectID, "spiceai")
+        XCTAssertEqual(spiceLabel.name, "Sumac")
+        XCTAssertEqual(board.cards["spice"]?.groupID, "group")
+        XCTAssertEqual(board.cards["orc"]?.labelIDs, ["shared"])
+
+        board = try JSONDecoder().decode(SessionBoard.self, from: JSONEncoder().encode(board))
+        board.reconcile([session("orc", project: "orc"), session("returning", project: "spiceai")])
+        let orcLabel = try XCTUnwrap(board.labels(for: "orc").first)
+        XCTAssertEqual(orcLabel.projectID, "orc")
+        XCTAssertNotEqual(orcLabel.id, spiceLabel.id)
+        XCTAssertEqual(board.labels(for: "returning"), [spiceLabel])
+        XCTAssertEqual(board.labels().count, 2)
+        XCTAssertEqual(board.order, ["spice", "orc", "returning"])
+        let migrated = board
+        board.reconcile([session("spice", project: "spiceai"), session("orc", project: "orc")])
+        XCTAssertEqual(board, migrated, "Reconciliation must preserve scoped label identities")
+    }
+
+    func testProjectLabelAndSearchFiltersCompose() throws {
+        let sessions = [session("spice", title: "Review engine", project: "spiceai"),
+                        session("other-spice", title: "Review docs", project: "spiceai"),
+                        session("orc", title: "Review UI", project: "orc")]
+        var board = SessionBoard()
+        board.reconcile(sessions)
+        let spiceLabel = try XCTUnwrap(board.addLabel("Sumac", to: "spice"))
+        board.addLabel("Sumac", to: "orc")
+        func filtered(_ project: String? = nil, label: String? = nil, search: String = "") -> [String] {
+            board.filteredSessions(from: sessions, project: SessionProjectFilter(projectID: project),
+                                   labelID: label, search: search).map(\.id)
+        }
+        XCTAssertEqual(filtered(), ["spice", "other-spice", "orc"])
+        XCTAssertEqual(filtered("spiceai"), ["spice", "other-spice"])
+        XCTAssertEqual(filtered("spiceai", label: spiceLabel, search: "review"), ["spice"])
+        XCTAssertEqual(filtered("spiceai", search: "sumac"), ["spice"])
+        XCTAssertEqual(filtered(label: spiceLabel), ["spice"])
+        XCTAssertTrue(filtered("orc", label: spiceLabel).isEmpty)
+        XCTAssertTrue(filtered("spiceai", label: spiceLabel, search: "docs").isEmpty)
     }
 
     func testRoundTripPrivateProfileScopedStorageAndCorruptData() throws {

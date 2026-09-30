@@ -213,7 +213,7 @@ struct SessionWindow: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("autoAttachSessions") private var autoAttachSessions = false
-    @State private var search = ""
+    @State private var projectFilter = SessionProjectFilter()
     @State private var copied = false
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
@@ -229,9 +229,12 @@ struct SessionWindow: View {
     var attached: Bool { selected != nil && attachedSession == selected?.id }
     var chatting: Bool { selected != nil && chatSession == selected?.id }
     var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : chatSession != nil ? .chat : .details }
-    var hierarchy: SessionHierarchy { model.hierarchy }
+    var projectSessions: [Session] { projectFilter.sessions(in: model.sessions) }
+    var hierarchy: SessionHierarchy {
+        projectFilter.projectID == nil ? model.hierarchy : SessionHierarchy(sessions: projectSessions)
+    }
     var visibleRows: [SessionSidebarOrder.Row] {
-        sidebarOrder.order.rows(in: hierarchy, matching: search, collapsed: collapsedParents)
+        sidebarOrder.order.rows(in: hierarchy, collapsed: collapsedParents)
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -278,6 +281,9 @@ struct SessionWindow: View {
             pendingChat = nil
         }) { ConnectionView().frame(width: 500) }
         .onChange(of: model.selected) { previous, _ in
+            if let selected, let projectID = projectFilter.projectID, selected.worktreeId != projectID {
+                projectFilter.projectID = nil
+            }
             let explicitlyRequested = requestedAttach != nil && requestedAttach == model.selected
             requestedAttach = nil
             let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
@@ -292,7 +298,11 @@ struct SessionWindow: View {
             openRequestedAttachment()
         }
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
-        .onChange(of: model.notificationNavigation) { _, _ in search = "" }
+        .onChange(of: model.notificationNavigation) { _, _ in projectFilter.projectID = nil }
+        .onChange(of: model.sessions) { _, sessions in projectFilter.reconcile(with: sessions) }
+        .onChange(of: projectFilter) { _, _ in
+            if let selected, !projectSessions.contains(where: { $0.id == selected.id }) { model.selected = nil }
+        }
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: attachedSession) { _, _ in markVisibleOutputRead() }
@@ -310,9 +320,10 @@ struct SessionWindow: View {
                 Text("Sessions").font(.title2.bold())
                 Spacer()
             }.padding(.horizontal, 16).padding(.top, 12)
-            TextField("Find a session", text: $search).textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Find a session").padding(12)
-            SessionSidebarList(organization: sidebarOrder, hierarchy: hierarchy, search: search,
+            SessionProjectPicker(projects: SessionProjectFilter.projects(in: model.sessions, workspaces: model.workspaces),
+                                 selection: $projectFilter.projectID)
+                .accessibilityIdentifier("session-project-filter").padding(12)
+            SessionSidebarList(organization: sidebarOrder, hierarchy: hierarchy, search: "",
                                collapsed: collapsedParents, selection: $model.selected) { row in
                 sessionRow(row.session, name: hierarchy.displayName(for: row.session),
                            hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: rows)
@@ -325,7 +336,7 @@ struct SessionWindow: View {
                 }
             }
             HStack {
-                Text("\(model.sessions.count) sessions").font(.caption).foregroundStyle(.secondary)
+                Text("\(projectSessions.count) session\(projectSessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Toggle(isOn: $autoAttachSessions) {
                     Image(systemName: autoAttachSessions ? "bolt.fill" : "bolt.slash")
@@ -354,12 +365,11 @@ struct SessionWindow: View {
                 Button {
                     if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
                 } label: {
-                    Image(systemName: collapsedParents.contains(session.id) && search.isEmpty ? "chevron.right" : "chevron.down")
+                    Image(systemName: collapsedParents.contains(session.id) ? "chevron.right" : "chevron.down")
                         .font(.caption.weight(.semibold)).frame(width: 16, height: 16)
                 }
                 .buttonStyle(.plain)
-                .disabled(!search.isEmpty)
-                .accessibilityLabel("\(collapsedParents.contains(session.id) && search.isEmpty ? "Expand" : "Collapse") children of \(session.name)")
+                .accessibilityLabel("\(collapsedParents.contains(session.id) ? "Expand" : "Collapse") children of \(session.name)")
             } else {
                 Color.clear.frame(width: 16, height: 16).accessibilityHidden(true)
             }
@@ -374,7 +384,7 @@ struct SessionWindow: View {
         .padding(.vertical, 5)
         .accessibilityElement(children: hasChildren ? .contain : .combine)
         .accessibilityValue(model.activity(for: session).label)
-        .help(model.activity(for: session).label + (search.isEmpty ? " · Drag to reorder" : " · Clear search to reorder"))
+        .help(model.activity(for: session).label + " · Drag to reorder")
         .contextMenu {
             if !isChild, hierarchy.canCreateChild(of: session) {
                 Button("Create Child…", systemImage: "plus") { creatingChildOf = session }
@@ -382,13 +392,13 @@ struct SessionWindow: View {
             Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
             Divider()
             Button("Move Up", systemImage: "arrow.up") {
-                sidebarOrder.move(session.id, by: -1, rows: rows, search: search)
+                sidebarOrder.move(session.id, by: -1, rows: rows, search: "")
             }
-            .disabled(!search.isEmpty || !sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: -1, rows: rows))
+            .disabled(!sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: -1, rows: rows))
             Button("Move Down", systemImage: "arrow.down") {
-                sidebarOrder.move(session.id, by: 1, rows: rows, search: search)
+                sidebarOrder.move(session.id, by: 1, rows: rows, search: "")
             }
-            .disabled(!search.isEmpty || !sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: 1, rows: rows))
+            .disabled(!sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: 1, rows: rows))
             Divider()
             Button("Copy Attach Command") { copy(session) }
         }
@@ -478,7 +488,7 @@ struct SessionWindow: View {
     }
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
-        search = ""
+        if let projectID = projectFilter.projectID, projectID != session.worktreeId { projectFilter.projectID = nil }
         if model.selected == session.id { attach(session) }
         else { requestedAttach = session.id; model.selected = session.id }
     }

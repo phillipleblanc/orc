@@ -30,6 +30,7 @@ struct SessionBoardView: View {
     @ObservedObject var organization: SessionBoardModel
     @Environment(\.openWindow) private var openWindow
     @State private var search = ""
+    @State private var projectFilter = SessionProjectFilter()
     @State private var labelFilter: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var controlActiveState
@@ -55,13 +56,10 @@ struct SessionBoardView: View {
     }
     private var viewport: CGRect { dropTargets["viewport"]?.frame ?? .zero }
 
+    private var projects: [Workspace] { SessionProjectFilter.projects(in: model.sessions, workspaces: model.workspaces) }
+    private var availableLabels: [SessionBoard.Label] { organization.board.labels(in: projectFilter.projectID) }
     private var filteredSessions: [Session] {
-        model.sessions.filter { session in
-            let labels = organization.board.labels(for: session.notesKey)
-            return (labelFilter == nil || labels.contains { $0.id == labelFilter }) &&
-                (search.isEmpty || ([session.name, session.worktreePath, session.agentIdentity ?? ""] + labels.map(\.name))
-                    .contains { $0.localizedCaseInsensitiveContains(search) })
-        }
+        organization.board.filteredSessions(from: model.sessions, project: projectFilter, labelID: labelFilter, search: search)
     }
 
     var body: some View {
@@ -141,6 +139,7 @@ struct SessionBoardView: View {
         .onAppear { reconcile() }
         .onChange(of: model.sessions) { _, _ in
             reconcile()
+            projectFilter.reconcile(with: model.sessions)
             if let drag, !model.sessions.contains(where: { $0.id == drag.session.id }) { self.drag = nil }
         }
         .onChange(of: dragActive) { _, active in
@@ -152,6 +151,10 @@ struct SessionBoardView: View {
         }
         .onChange(of: search) { _, _ in drag = nil }
         .onChange(of: labelFilter) { _, _ in drag = nil }
+        .onChange(of: projectFilter) { _, _ in
+            drag = nil
+            if let labelFilter, !availableLabels.contains(where: { $0.id == labelFilter }) { self.labelFilter = nil }
+        }
         .onDisappear { drag = nil }
         .task(id: drag?.id) {
             while !Task.isCancelled, drag?.phase == .dragging {
@@ -167,25 +170,38 @@ struct SessionBoardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Your sessions, at a glance").font(.headline)
-                Text("\(model.sessions.count) sessions · Drag cards to organize your board")
+                Text("\(filteredSessions.count) session\(filteredSessions.count == 1 ? "" : "s") · Drag cards to organize your board")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Spacer(minLength: 12)
-            Picker("Label", selection: $labelFilter) {
-                Text("All labels").tag(String?.none)
-                ForEach(organization.board.labels) { Text($0.name).tag(Optional($0.id)) }
-            }.labelsHidden().frame(maxWidth: 160).accessibilityLabel("Filter by label")
-            TextField("Find sessions or labels", text: $search).textFieldStyle(.roundedBorder)
-                .frame(width: 210).accessibilityLabel("Find sessions or labels")
+            HStack(spacing: 12) {
+                SessionProjectPicker(projects: projects, selection: $projectFilter.projectID)
+                    .frame(maxWidth: 200).accessibilityIdentifier("board-project-filter")
+                Picker("Label", selection: $labelFilter) {
+                    Text("All labels").tag(String?.none)
+                    ForEach(availableLabels) { label in
+                        Text(labelTitle(label)).tag(Optional(label.id))
+                    }
+                }.labelsHidden().frame(maxWidth: 200).accessibilityLabel("Filter by label")
+                TextField("Find sessions or labels", text: $search).textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 260).accessibilityLabel("Find sessions or labels")
+                Spacer(minLength: 0)
+            }
         }.padding(16)
+    }
+
+    private func labelTitle(_ label: SessionBoard.Label) -> String {
+        guard projectFilter.projectID == nil, let projectID = label.projectID else { return label.name }
+        let name = model.workspaces.first { $0.id == projectID }?.name
+            ?? projects.first { $0.id == projectID }?.name ?? projectID
+        return "\(label.name) · \(name)"
     }
 
     private func section(id: String?, name: String) -> some View {
         let sessions = displayedBoard.sessions(in: id, from: filteredSessions)
-        let allSessions = displayedBoard.sessions(in: id, from: model.sessions)
+        let allSessions = displayedBoard.sessions(in: id, from: projectFilter.sessions(in: model.sessions))
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: id == nil ? "tray" : "rectangle.3.group").foregroundStyle(.secondary)
@@ -226,7 +242,7 @@ struct SessionBoardView: View {
                     .modifier(BoardDropTarget(id: "card:" + session.id, groupID: id, anchor: session.notesKey))
                 }
             }
-            BoardDropArea(empty: sessions.isEmpty, message: emptyMessage(allSessions: allSessions))
+            BoardDropArea(empty: sessions.isEmpty, message: emptyMessage(empty: sessions.isEmpty, allSessions: allSessions))
                 .modifier(BoardDropTarget(id: "group:" + (id ?? "ungrouped"), groupID: id, anchor: nil))
         }
         .frame(minHeight: drag?.phase == .dragging ? drag?.sectionHeights["section:" + (id ?? "ungrouped")] : nil,
@@ -279,8 +295,10 @@ struct SessionBoardView: View {
         }
     }
 
-    private func emptyMessage(allSessions: [Session]) -> String {
-        if !search.isEmpty || labelFilter != nil { return "No matching sessions · Drop a card here to move it into this group" }
+    private func emptyMessage(empty: Bool, allSessions: [Session]) -> String {
+        if empty && (!search.isEmpty || labelFilter != nil || projectFilter.projectID != nil) {
+            return "No matching sessions · Drop a card here to move it into this group"
+        }
         if model.loading && model.sessions.isEmpty { return "Loading sessions…" }
         return allSessions.isEmpty ? "Drop sessions here" : "Drop here to place a card at the end"
     }
@@ -366,11 +384,12 @@ private struct BoardLabelPicker: View {
     @State private var query = ""
     @FocusState private var focused: Bool
     private var name: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var availableLabels: [SessionBoard.Label] { organization.board.availableLabels(for: key) }
     private var matches: [SessionBoard.Label] {
-        organization.board.labels.filter { name.isEmpty || $0.name.localizedCaseInsensitiveContains(name) }
+        availableLabels.filter { name.isEmpty || $0.name.localizedCaseInsensitiveContains(name) }
     }
     private var exactMatch: Bool {
-        organization.board.labels.contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        availableLabels.contains { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -390,7 +409,7 @@ private struct BoardLabelPicker: View {
                         .accessibilityValue(organization.board.cards[key]?.labelIDs.contains(label.id) == true ? "Applied" : "Not applied")
                     }
                     if matches.isEmpty {
-                        Text(name.isEmpty ? "Create a label to reuse across your sessions." : "No matching labels")
+                        Text(name.isEmpty ? "Create a label to reuse in this project." : "No matching labels")
                             .font(.callout).foregroundStyle(.secondary).padding(.vertical, 8)
                     }
                 }
