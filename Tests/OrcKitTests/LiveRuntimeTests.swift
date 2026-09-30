@@ -28,7 +28,6 @@ final class LiveRuntimeTests: XCTestCase {
             let after = try await service.list().terminals.first { $0.name == name }
             XCTAssertEqual(after?.handle, first)
             XCTAssertEqual(after?.incarnationId, before?.incarnationId)
-            XCTAssertEqual(after?.attachCommand, before?.attachCommand)
             XCTAssertEqual(after?.connected, true)
             do {
                 try await service.rename(handle: first, name: "rename-second-" + suffix)

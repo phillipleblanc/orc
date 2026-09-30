@@ -211,7 +211,6 @@ struct SessionWindow: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("autoAttachSessions") private var autoAttachSessions = false
     @State private var projectFilter = SessionProjectFilter()
-    @State private var copied = false
     @State private var attachedSession: String?
     @State private var pendingAttach: String?
     @State private var requestedAttach: String?
@@ -279,7 +278,7 @@ struct SessionWindow: View {
             requestedAttach = nil
             let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
                 && model.sessions.contains { $0.id == previous && $0.connected }
-            copied = false; pendingAttach = nil
+            pendingAttach = nil
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
             if (explicitlyRequested || autoAttachSessions || wasAttached), let session = selected, session.connected { attach(session) }
             else { attachedSession = nil }
@@ -393,8 +392,6 @@ struct SessionWindow: View {
                 sidebarOrder.move(session.id, by: 1, rows: rows, search: "")
             }
             .disabled(!sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: 1, rows: rows))
-            Divider()
-            Button("Copy Attach Command") { copy(session) }
         }
     }
     @ViewBuilder private func detail(_ session: Session) -> some View {
@@ -404,7 +401,6 @@ struct SessionWindow: View {
                     Button { attachedSession = nil } label: { Label("Detach", systemImage: "rectangle.compress.vertical") }
                     Text(hierarchy.displayName(for: session)).font(.headline).lineLimit(1)
                     Spacer()
-                    copyButton(session)
                     Button { terminalGeneration = UUID() } label: { Image(systemName: "arrow.clockwise") }
                         .help("Reconnect Terminal").accessibilityLabel("Reconnect Terminal")
                 }.padding(14)
@@ -440,12 +436,8 @@ struct SessionWindow: View {
                         }
                     }
                     SessionNotesEditor(session: session).id(session.notesKey)
-                    Text("Attach here, or copy the command for Ghostty.").font(.callout).foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 10) {
-                        copyButton(session)
-                        Button("Attach", systemImage: "terminal") { attach(session) }
-                            .buttonStyle(.borderedProminent).disabled(!session.connected)
-                    }
+                    Button("Attach", systemImage: "terminal") { attach(session) }
+                        .buttonStyle(.borderedProminent).disabled(!session.connected)
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -467,15 +459,6 @@ struct SessionWindow: View {
               attached, model.connected, session.connected,
               model.unreadKeys.contains(session.notesKey) else { return }
         model.markRead(session)
-    }
-    private func copyButton(_ session: Session) -> some View {
-        Button { copy(session) } label: { Label(copied ? "Copied" : "Copy Attach Command", systemImage: copied ? "checkmark" : "doc.on.doc") }
-            .help("Copy a command to paste into Ghostty")
-    }
-    private func copy(_ session: Session) {
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session.attachCommand, forType: .string)
-        copied = true
-        Task { try? await Task.sleep(for: .seconds(2)); copied = false }
     }
 }
 

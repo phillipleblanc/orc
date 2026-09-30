@@ -24,7 +24,6 @@ final class SessionListingTests: XCTestCase {
             XCTAssertEqual(session.handle, "term_pi")
             XCTAssertEqual(session.incarnationId, "process-1")
             XCTAssertEqual(session.agentIdentity, "pi")
-            XCTAssertEqual(session.attachCommand, "orc attach 'term_pi'")
             let json = try jsonObject(JSONEncoder().encode(session))
             XCTAssertEqual(json["title"] as? String, "Index work 한글", "CLI JSON must use the same saved name")
         }

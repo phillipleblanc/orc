@@ -19,7 +19,6 @@ public struct Session: Codable, Identifiable, Hashable {
     public var tabId: String? = nil
     public var leafId: String? = nil
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
-    public var attachCommand: String { "orc attach " + shellQuote(handle) }
     public var notesKey: String {
         guard let tabId, let leafId, !tabId.isEmpty, !leafId.isEmpty,
               (tabId + leafId).allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })

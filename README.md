@@ -2,7 +2,7 @@
 
 <img src="Resources/AppIcon.png" alt="Orc: an orca with a terminal-chevron tail on an ocean-blue tile" width="128" height="128">
 
-Native macOS clients for sessions owned by Orca. The SwiftUI app lists and creates sessions, attaches to them in embedded libghostty views, and copies an attach command for an external terminal. The `orc` CLI lists, creates, and attaches to those same sessions.
+Native macOS clients for sessions owned by Orca. The SwiftUI app lists and creates sessions and attaches to them in embedded libghostty views. The `orc` CLI lists, creates, and attaches to those same sessions.
 
 Orca owns PTYs, agents, projects, persistence, remote hosts, and mobile access. Orc includes a pinned Orca runtime in `Orc.app/Contents/Helpers/Orca.app`. It runs headlessly as an accessory application and stays alive when Orc closes or the CLI exits. A separate Orca installation is not required. The bundled runtime uses its own profile and Keychain identity; runtime updates are delivered with Orc.
 
@@ -47,7 +47,7 @@ Built-in Codex sessions and bundled runtime workers launch with `--no-daemon` so
 
 Installation creates this file if absent and preserves existing settings. The project must be registered before session creation. Defaults are read each time a session is created from the CLI or picker, and each time the app opens New Session. `ORC_CONFIG_DIR` changes the directory for configuration, connection credentials, and the default bundled profile.
 
-**Orc.app** opens as a compact session list. Selecting a session reveals its details, a local notes field that saves as you type, and the **Copy Attach Command** button. Click **Attach** to expand the window and start its embedded terminal. While attached, selecting another running session switches the terminal to it automatically. **Detach** returns to details and restores selection without automatic attachment; sessions continue running in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. Copy uses the stable terminal handle, so duplicate or changing display names cannot attach the wrong session. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
+**Orc.app** opens as a compact session list. Selecting a session reveals its details and a local notes field that saves as you type. Click **Attach** to expand the window and start its embedded terminal. While attached, selecting another running session switches the terminal to it automatically. **Detach** returns to details and restores selection without automatic attachment; sessions continue running in Orca. Create a session with **⌘N**, or right-click a session and choose **Rename Session…** to change its name in Orca. The CLI accepts an exact handle, a unique handle prefix, or an unambiguous session name.
 
 The session list defaults to **All projects**. Use the project selector to show sessions from one project; it lists projects with sessions, including temporarily disconnected sessions. Drag sidebar rows to rearrange sessions, or right-click and choose **Move Up** or **Move Down**. Parents move with their children; children can move within their parent. Sidebar order saves locally per runtime profile under `ORC_CONFIG_DIR/sidebar-order` (default `~/.config/orc/sidebar-order`), survives app restarts, and is independent of the overview board.
 

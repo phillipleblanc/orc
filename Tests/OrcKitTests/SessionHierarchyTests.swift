@@ -20,7 +20,6 @@ final class SessionHierarchyTests: XCTestCase {
         XCTAssertEqual(hierarchy.displayName(for: child), "review")
         XCTAssertEqual(child.name, "orca-frontend-review")
         XCTAssertEqual(try SessionHierarchy.childName(parent: parent, suffix: " review "), child.name)
-        XCTAssertEqual(child.attachCommand, "orc attach 'child'")
     }
 
     func testOneLevelNestingDoesNotMakeAChildAnotherParent() {
