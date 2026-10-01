@@ -48,3 +48,21 @@ struct AgentActivityIndicator: View {
         }
     }
 }
+
+/// A session's status icon: its agent's activity, or a terminal for a session without an agent.
+struct SessionStatusIcon: View {
+    let session: Session
+    let activity: AgentActivity
+    var muted = false
+
+    var body: some View {
+        if session.agentIdentity != nil {
+            AgentActivityIndicator(activity: activity, muted: muted)
+        } else {
+            Image(systemName: "terminal").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(width: 12, height: 12)
+                .accessibilityElement(children: .ignore).accessibilityLabel("Terminal session")
+                .help("Terminal session")
+        }
+    }
+}

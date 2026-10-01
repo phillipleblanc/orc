@@ -413,12 +413,8 @@ struct SessionWindow: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
-                    if session.agentIdentity != nil {
-                        AgentActivityIndicator(activity: model.activity(for: session), muted: model.isMuted(session)).accessibilityHidden(true)
-                    } else {
-                        // Keeps names aligned with agent rows.
-                        Color.clear.frame(width: 12, height: 12).accessibilityHidden(true)
-                    }
+                    SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
+                        .accessibilityHidden(true)
                     Text(name).font(.headline).lineLimit(1)
                 }
                 Text([URL(fileURLWithPath: session.worktreePath).lastPathComponent, session.agentIdentity]
@@ -471,9 +467,8 @@ struct SessionWindow: View {
                     Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
                     Text(hierarchy.displayName(for: session)).font(.title2.bold()).textSelection(.enabled)
                     HStack(spacing: 7) {
-                        if session.agentIdentity != nil {
-                            AgentActivityIndicator(activity: model.activity(for: session), muted: model.isMuted(session)).accessibilityHidden(true)
-                        }
+                        SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
+                            .accessibilityHidden(true)
                         Text(model.statusLabel(for: session))
                     }.font(.callout)
                     Divider()

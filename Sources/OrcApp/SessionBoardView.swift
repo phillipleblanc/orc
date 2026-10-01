@@ -331,7 +331,7 @@ private struct BoardSessionCard: View {
                     .accessibilityIdentifier("board-attach-\(session.handle)")
             }
             HStack(spacing: 7) {
-                if session.agentIdentity != nil { AgentActivityIndicator(activity: activity, muted: muted).accessibilityHidden(true) }
+                SessionStatusIcon(session: session, activity: activity, muted: muted).accessibilityHidden(true)
                 Text(muted ? "Notifications muted · \(activity.label)" : activity.label).font(.caption).lineLimit(1)
                 Spacer(minLength: 0)
                 if let agent = session.agentIdentity { Text(agent).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
