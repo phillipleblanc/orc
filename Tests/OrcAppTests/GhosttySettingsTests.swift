@@ -6,17 +6,20 @@ import OrcKit
 
 final class GhosttySettingsTests: XCTestCase {
     private var root: URL!
-    private var previousConfigHome: String?
+    private var previous: [String: String?] = [:]
 
+    /// The developer's own Ghostty configuration would load after the fixture, so both the
+    /// configuration directory and the home directory point into the fixture.
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("orc-ghostty-settings-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("ghostty"), withIntermediateDirectories: true)
-        previousConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+        for key in ["XDG_CONFIG_HOME", "HOME"] { previous[key] = ProcessInfo.processInfo.environment[key] }
         setenv("XDG_CONFIG_HOME", root.path, 1)
+        setenv("HOME", root.path, 1)
     }
 
     override func tearDownWithError() throws {
-        if let previousConfigHome { setenv("XDG_CONFIG_HOME", previousConfigHome, 1) } else { unsetenv("XDG_CONFIG_HOME") }
+        for (key, value) in previous { if let value { setenv(key, value, 1) } else { unsetenv(key) } }
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -48,12 +51,14 @@ final class GhosttySettingsTests: XCTestCase {
     @MainActor func testLightDarkThemeKeepsTheTerminalsCommandAcrossAnAppearanceChange() async throws {
         _ = NSApplication.shared
         let engine = GhosttyEngine.shared
-        // Ghostty also finds themes in the user's configuration directory.
-        let themes = root.appendingPathComponent("ghostty/themes")
-        try FileManager.default.createDirectory(at: themes, withIntermediateDirectories: true)
-        try Data("background = ffffff\nforeground = 000000\n".utf8).write(to: themes.appendingPathComponent("orc-test-light"))
-        try Data("background = 000000\nforeground = ffffff\n".utf8).write(to: themes.appendingPathComponent("orc-test-dark"))
-        try writeGhosttyConfig("theme = light:orc-test-light,dark:orc-test-dark\n")
+        // Themes given by absolute path, so the test does not depend on where libghostty looks for themes.
+        let light = root.appendingPathComponent("light-theme"), dark = root.appendingPathComponent("dark-theme")
+        try Data("background = ffffff\nforeground = 000000\n".utf8).write(to: light)
+        try Data("background = 000000\nforeground = ffffff\n".utf8).write(to: dark)
+        try writeGhosttyConfig("theme = light:\(light.path),dark:\(dark.path)\n")
+        let probe = try XCTUnwrap(GhosttyEngine.makeConfig(usingGhosttySettings: true))
+        XCTAssertEqual(ghostty_config_diagnostics_count(probe), 0, "the light and dark themes must load for this test to mean anything")
+        ghostty_config_free(probe)
         // Start light, whatever the system appearance, then load the configuration.
         NSApp.appearance = NSAppearance(named: .aqua)
         engine.applyColorScheme()
@@ -74,5 +79,30 @@ final class GhosttySettingsTests: XCTestCase {
         let deadline = Date().addingTimeInterval(10)
         while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "The terminal ran a shell instead of its command")
+    }
+
+    @MainActor func testWindowIsTranslucentOnlyWhileShowingATranslucentTerminal() throws {
+        _ = NSApplication.shared
+        let engine = GhosttyEngine.shared
+        defer { engine.reload() }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+
+        try writeGhosttyConfig("background-opacity = 0.8\nbackground-blur = 20\n")
+        engine.reload(using: GhosttyEngine.makeConfig(usingGhosttySettings: true))
+        XCTAssertEqual(engine.backgroundOpacity, 0.8, accuracy: 0.0001)
+        engine.applyWindowBackground(window, showingTerminal: true)
+        XCTAssertFalse(window.isOpaque)
+        XCTAssertLessThan(window.backgroundColor.alphaComponent, 0.01)
+        engine.applyWindowBackground(window, showingTerminal: false)
+        XCTAssertTrue(window.isOpaque)
+        XCTAssertEqual(window.backgroundColor, .windowBackgroundColor)
+
+        try writeGhosttyConfig("background-opacity = 1\n")
+        engine.reload(using: GhosttyEngine.makeConfig(usingGhosttySettings: true))
+        XCTAssertEqual(engine.backgroundOpacity, 1)
+        engine.applyWindowBackground(window, showingTerminal: true)
+        XCTAssertTrue(window.isOpaque)
     }
 }

@@ -5,25 +5,36 @@ import OrcKit
 
 /// The embedded Ghostty app. Terminals use the user's Ghostty settings when Ghostty is installed, and
 /// Orc's own defaults otherwise; either way, the settings Orc's terminals depend on come last.
-@MainActor final class GhosttyEngine {
+@MainActor final class GhosttyEngine: ObservableObject {
     static let shared = GhosttyEngine()
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
     private var appearanceObservation: NSKeyValueObservation?
+    /// The configured `background-opacity`; below 1, a window showing a terminal must be translucent.
+    @Published private(set) var backgroundOpacity: Double = 1
 
     /// Settings Orc's terminals depend on, applied over any user configuration. Terminals are replaced
     /// as sessions are selected, so closing one must not ask for confirmation, and they run `orc attach`
     /// rather than a shell.
     static let requiredSettings = "confirm-close-surface = false\nshell-integration = none\n"
 
+    /// The user's Ghostty configuration files that exist, in the order Ghostty loads them; later
+    /// files override earlier ones. Orc loads them itself because libghostty's default-file loader
+    /// writes a template configuration into the user's Ghostty folder when there is none.
+    nonisolated static func userConfigFiles() -> [URL] {
+        let environment = ProcessInfo.processInfo.environment
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
+        let xdg = environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? home.appendingPathComponent(".config")
+        let appSupport = home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty")
+        return [xdg.appendingPathComponent("ghostty/config"), xdg.appendingPathComponent("ghostty/config.ghostty"),
+                appSupport.appendingPathComponent("config"), appSupport.appendingPathComponent("config.ghostty")]
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     /// Whether the user has Ghostty, as an installed app or a configuration file.
     nonisolated static var usesGhosttySettings: Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
-        let files = [xdg.appendingPathComponent("ghostty/config"),
-                     home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config")]
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil
-            || files.contains { FileManager.default.fileExists(atPath: $0.path) }
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil || !userConfigFiles().isEmpty
     }
 
     /// A finalized configuration: Ghostty's defaults and the user's Ghostty files, or Orc's bundled
@@ -31,7 +42,7 @@ import OrcKit
     static func makeConfig(usingGhosttySettings: Bool = usesGhosttySettings) -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
         if usingGhosttySettings {
-            ghostty_config_load_default_files(config)
+            for file in userConfigFiles() { file.path.withCString { ghostty_config_load_file(config, $0) } }
         } else if let url = Bundle.main.url(forResource: "terminal", withExtension: "conf") {
             url.path.withCString { ghostty_config_load_file(config, $0) }
         }
@@ -51,6 +62,7 @@ import OrcKit
         }
         guard ghostty_init(0, nil) == 0, let config = Self.makeConfig() else { return }
         self.config = config
+        readBackgroundOpacity()
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = Unmanaged.passUnretained(self).toOpaque()
         runtime.wakeup_cb = { pointer in
@@ -136,11 +148,31 @@ import OrcKit
         ghostty_app_update_config(app, config)
     }
 
+    private func readBackgroundOpacity() {
+        guard let config else { return }
+        var opacity: Double = 1
+        let key = "background-opacity"
+        if ghostty_config_get(config, &opacity, key, UInt(key.utf8.count)) { backgroundOpacity = opacity }
+    }
+
+    /// Makes `window` translucent, with the configured background blur, while it shows a terminal and
+    /// the background opacity is below 1; otherwise opaque. libghostty draws the terminal's translucent
+    /// background itself, so the rest of the window must draw its own.
+    func applyWindowBackground(_ window: NSWindow, showingTerminal: Bool) {
+        let translucent = showingTerminal && backgroundOpacity < 1
+        guard window.isOpaque == translucent || (translucent && window.backgroundColor.alphaComponent > 0.01) else { return }
+        window.isOpaque = !translucent
+        // A fully clear window stops receiving clicks in its clear areas.
+        window.backgroundColor = translucent ? NSColor.white.withAlphaComponent(0.001) : .windowBackgroundColor
+        if translucent, let app { ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque()) }
+    }
+
     /// Reads the configuration again, from the user's Ghostty files or Orc's defaults.
     func reload(using replacement: ghostty_config_t? = nil) {
         guard let next = replacement ?? Self.makeConfig() else { return }
         let previous = config
         config = next
+        readBackgroundOpacity()
         applyConfig()
         applyColorScheme()
         if let previous { ghostty_config_free(previous) }

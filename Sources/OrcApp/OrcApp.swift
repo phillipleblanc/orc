@@ -265,6 +265,7 @@ struct SessionWindow: View {
     @ObservedObject var sidebarOrder: SessionSidebarModel
     @ObservedObject var board: SessionBoardModel
     @ObservedObject private var notifications = IdleNotifications.shared
+    @ObservedObject private var ghostty = GhosttyEngine.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("sessionInspectorShown") private var inspectorShown = false
@@ -298,10 +299,12 @@ struct SessionWindow: View {
                 Divider()
                 HStack { Image(systemName: "exclamationmark.triangle"); Text(error).textSelection(.enabled); Spacer() }
                     .font(.callout).foregroundStyle(.orange).padding(12)
+                    .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .frame(minWidth: mode.minimumWidth, minHeight: 440)
         .background(SessionWindowSizer(mode: mode).allowsHitTesting(false).accessibilityHidden(true))
+        .background(TerminalWindowBackground(engine: ghostty, showingTerminal: showsTerminal).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar {
             ToolbarItem {
                 Button { openWindow(id: "overview") } label: { Label("Session Overview", systemImage: "square.grid.2x2") }
@@ -366,7 +369,10 @@ struct SessionWindow: View {
                 Button { sidebarOrder.reload(); Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("Refresh Sessions").accessibilityLabel("Refresh Sessions")
             }.padding(12)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // A translucent terminal makes the window clear; the sidebar keeps its own background.
+        .background(Color(nsColor: .windowBackgroundColor))
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
@@ -398,6 +404,7 @@ struct SessionWindow: View {
                 ContentUnavailableView(model.connected ? "Session Offline" : "Runtime Not Connected", systemImage: "bolt.horizontal.circle",
                     description: Text(model.connected ? "\(session.name) is not connected. Orc reconnects when it is available."
                                                       : "Orc is reconnecting to the session runtime."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .inspector(isPresented: $inspectorShown) {
@@ -433,6 +440,7 @@ struct SessionWindow: View {
                 SessionNotesEditor(session: session).id(session.name)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
@@ -493,6 +501,25 @@ private struct SessionNotesEditor: View {
 
 /// Resize only when moving between list, details and attachment, preserving
 /// manual resizing within each mode. The top-left corner stays in place.
+/// Makes the window translucent while it shows a terminal whose Ghostty settings ask for it.
+struct TerminalWindowBackground: NSViewRepresentable {
+    @ObservedObject var engine: GhosttyEngine
+    let showingTerminal: Bool
+    func makeNSView(context: Context) -> ApplyingView { ApplyingView() }
+    func updateNSView(_ view: ApplyingView, context: Context) {
+        view.showingTerminal = showingTerminal
+        view.apply()
+    }
+    final class ApplyingView: NSView {
+        var showingTerminal = false
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); apply() }
+        func apply() {
+            guard let window else { return }
+            GhosttyEngine.shared.applyWindowBackground(window, showingTerminal: showingTerminal)
+        }
+    }
+}
+
 struct SessionWindowSizer: NSViewRepresentable {
     let mode: SessionWindowMode
     func makeNSView(context: Context) -> SizingView { SizingView(mode: mode) }
