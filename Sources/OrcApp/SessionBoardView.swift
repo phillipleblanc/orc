@@ -117,10 +117,6 @@ struct SessionBoardView: View {
                     Label("New Group", systemImage: "folder.badge.plus")
                 }.help("Create a group").disabled(!organization.loaded || drag != nil)
             }
-            ToolbarItem {
-                Button { Task { await model.refresh() } } label: { Label("Refresh Sessions", systemImage: "arrow.clockwise") }
-                    .disabled(model.loading).help("Refresh Sessions")
-            }
         }
         .sheet(item: $groupEditor) { editor in
             BoardGroupEditor(name: editor.name, isNew: editor.isNew) { name in
