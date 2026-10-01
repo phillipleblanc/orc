@@ -239,8 +239,9 @@ function isAgentMeta(meta: SessionMeta): meta is AgentMeta {
 }
 
 /**
- * The conversation an agent session last reported and its last reply. A session whose agent never
- * reported one, such as a resume that failed at startup, is resuming the conversation named in its argv.
+ * The conversation an agent session last reported and its last reply in that conversation; an agent
+ * can switch conversations without exiting (Claude's /clear). A session whose agent never reported
+ * one, such as a resume that failed at startup, is resuming the conversation named in its argv.
  */
 async function agentRecord(meta: AgentMeta): Promise<{ conversation: ProviderSession; lastMessage?: string }> {
   const conversation: ProviderSession = {}
@@ -248,6 +249,10 @@ async function agentRecord(meta: AgentMeta): Promise<{ conversation: ProviderSes
   for (const line of (await readFile(meta.events, 'utf8').catch(() => '')).split('\n')) {
     try {
       const payload = JSON.parse(line)?.payload
+      if (typeof payload?.session_id === 'string' && conversation.id && payload.session_id !== conversation.id) {
+        lastMessage = undefined
+        delete conversation.transcriptPath
+      }
       if (typeof payload?.session_id === 'string') conversation.id = payload.session_id
       if (typeof payload?.transcript_path === 'string') conversation.transcriptPath = payload.transcript_path
       if (typeof payload?.last_assistant_message === 'string') lastMessage = payload.last_assistant_message.slice(0, MESSAGE_CHARS)

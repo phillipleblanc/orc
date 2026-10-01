@@ -65,6 +65,9 @@ test('recently closed lists resumable agent sessions from the last week, newest 
   await ended(profile, { name: 'stale', agent: 'pi', endedAgo: 8 * DAY, events: [reply('s-1', 'old')] })
   await ended(profile, { name: 'again', agent: 'pi', endedAgo: 60_000, events: [reply('a-1', 'x')], reopened: true })
   await ended(profile, { name: 'busy', agent: 'pi', endedAgo: 60_000, events: [reply('b-1', 'x')] })
+  // Cleared before closing: the session is on a new, empty conversation.
+  await ended(profile, { name: 'cleared', agent: 'claude', endedAgo: 1200_000,
+    events: [reply('c-1', 'before clear'), { event: 'SessionStart', payload: { session_id: 'c-2', transcript_path: '/t/c-2.jsonl', source: 'clear' } }] })
   const expired = await ended(profile, { name: 'expired', agent: 'pi', endedAgo: 31 * DAY, events: [reply('e-1', 'x')] })
 
   // Agent histories elsewhere on this computer stay out of the listing.
@@ -74,8 +77,10 @@ test('recently closed lists resumable agent sessions from the last week, newest 
   await frontend.rpc('terminal.create', { name: 'busy', cwd: profile, argv: ['/bin/sleep', '600'] })
 
   const { sessions } = await frontend.rpc('history.list')
-  assert.deepEqual(sessions.map((session: { name: string }) => session.name), ['coder', 'helper'])
-  const [coder, helper] = sessions
+  assert.deepEqual(sessions.map((session: { name: string }) => session.name), ['coder', 'cleared', 'helper'])
+  const [coder, cleared, helper] = sessions
+  assert.deepEqual(cleared.conversation, { id: 'c-2', transcriptPath: '/t/c-2.jsonl' })
+  assert.equal(cleared.lastMessage, undefined)
   // A resume that failed before the agent reported anything still names its conversation.
   assert.deepEqual(coder.conversation, { id: 'c-9' })
   assert.deepEqual(helper.conversation, { id: 'p-2', transcriptPath: '/t/p-2.jsonl' })
@@ -94,7 +99,7 @@ test('recently closed lists resumable agent sessions from the last week, newest 
     const orc = await cli(profile)
     const listed = await orc(['history'])
     assert.equal(listed.code, 0, listed.stderr)
-    assert.match(listed.stdout, /^Recently closed\nSESSION\tAGENT\tCLOSED\tPROJECT\ncoder\tcodex\t10m ago\t.+\nhelper\tpi\t1h ago\t.+\n\nConversations in registered projects\n  No conversations\.\n$/)
+    assert.match(listed.stdout, /^Recently closed\nSESSION\tAGENT\tCLOSED\tPROJECT\ncoder\tcodex\t10m ago\t.+\ncleared\tclaude\t20m ago\t.+\nhelper\tpi\t1h ago\t.+\n\nConversations in registered projects\n  No conversations\.\n$/)
     const json = JSON.parse((await orc(['history', 'help', '--json'])).stdout)
     assert.deepEqual(json.sessions.map((session: { name: string }) => session.name), ['helper'])
     assert.deepEqual(json.conversations, [])
