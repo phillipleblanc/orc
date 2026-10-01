@@ -368,8 +368,6 @@ struct SessionWindow: View {
                 Spacer()
                 Button { model.showPhonePairing = true } label: { Image(systemName: "iphone") }
                     .buttonStyle(.borderless).help("Pair Phone").accessibilityLabel("Pair Phone")
-                Button { sidebarOrder.reload(); Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless).help("Refresh Sessions").accessibilityLabel("Refresh Sessions")
             }.padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
