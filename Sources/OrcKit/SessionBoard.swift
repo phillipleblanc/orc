@@ -43,6 +43,12 @@ public struct SessionBoard: Codable, Equatable {
         }
     }
 
+    /// The overview group a session is in, or nil when it is ungrouped.
+    public func group(of key: String) -> Group? {
+        guard let id = cards[key]?.groupID else { return nil }
+        return groups.first { $0.id == id }
+    }
+
     public func labels(for key: String) -> [Label] {
         availableLabels(for: key).filter { cards[key]?.labelIDs.contains($0.id) == true }
     }

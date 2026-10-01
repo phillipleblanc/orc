@@ -9,7 +9,7 @@ import OrcKit
     @StateObject private var sidebarOrder = SessionSidebarModel()
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
-        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board) }
             .defaultSize(width: 380, height: 560)
             .windowResizability(.contentMinSize)
             .commands {
@@ -268,6 +268,7 @@ enum SessionWindowMode: Equatable {
 struct SessionWindow: View {
     @ObservedObject var model: SessionModel
     @ObservedObject var sidebarOrder: SessionSidebarModel
+    @ObservedObject var board: SessionBoardModel
     @ObservedObject private var notifications = IdleNotifications.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
@@ -385,7 +386,7 @@ struct SessionWindow: View {
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool,
                             rows: [SessionSidebarOrder.Row]) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
-                          isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
+                          group: board.board.group(of: session.name)?.name, isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }
         .accessibilityElement(children: hasChildren ? .contain : .combine)

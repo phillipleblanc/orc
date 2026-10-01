@@ -175,4 +175,19 @@ final class SessionBoardTests: XCTestCase {
         try Data("invalid JSON".utf8).write(to: file)
         XCTAssertThrowsError(try SessionBoardStore.load(from: file))
     }
+
+    func testGroupOfASessionIsItsOverviewGroupUnlessUngrouped() throws {
+        let session: Session = try decode(["handle": "h", "title": "coord", "worktreeId": "p", "worktreePath": "/code/p", "connected": true, "writable": true])
+        var board = SessionBoard()
+        board.reconcile([session])
+        XCTAssertNil(board.group(of: "coord"))
+        let priority = try XCTUnwrap(board.addGroup("Priority"))
+        board.move("coord", to: priority)
+        XCTAssertEqual(board.group(of: "coord")?.name, "Priority")
+        board.renameGroup(priority, to: "Urgent")
+        XCTAssertEqual(board.group(of: "coord")?.name, "Urgent")
+        board.move("coord", to: nil)
+        XCTAssertNil(board.group(of: "coord"))
+        XCTAssertNil(board.group(of: "unknown"))
+    }
 }

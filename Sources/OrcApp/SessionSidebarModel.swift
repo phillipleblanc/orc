@@ -3,7 +3,7 @@ import SwiftUI
 import OrcKit
 
 /// Sessions in a section per project; clicking a project's header collapses it. Sessions can be dragged
-/// within their project. The list has no background of its own, so it matches the window around it.
+/// within their project.
 struct SessionSidebarList<RowContent: View>: View {
     @ObservedObject var organization: SessionSidebarModel
     let sections: [SessionSidebarSection]
@@ -36,7 +36,6 @@ struct SessionSidebarList<RowContent: View>: View {
             }
         }
         .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
     }
 }
 
@@ -100,13 +99,15 @@ struct SessionSidebarHeader: View {
     }
 }
 
-/// A session in the sidebar: its status icon and name, with its agent beneath the name. A child is
-/// indented under its parent; a parent with children can collapse them.
+/// A session in the sidebar: its status icon and name, with its agent and overview group beneath the
+/// name. A child is indented under its parent; a parent with children can collapse them.
 struct SessionSidebarRow: View {
     let session: Session
     let name: String
     let activity: AgentActivity
     let muted: Bool
+    /// The session's overview group, unless it is ungrouped.
+    var group: String? = nil
     let isChild: Bool
     /// Whether the session's children are collapsed, for a session that has children.
     let childrenCollapsed: Bool?
@@ -120,7 +121,8 @@ struct SessionSidebarRow: View {
                     Text(name).font(.headline).lineLimit(1)
                 }
                 // Aligned with the name: the icon is 12 points wide, followed by 8 points of spacing.
-                Text(session.agentIdentity ?? "terminal").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text([session.agentIdentity ?? "terminal", group].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .padding(.leading, 20)
             }
             Spacer(minLength: 0)
