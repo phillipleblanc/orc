@@ -3,19 +3,54 @@ import SwiftUI
 import CGhostty
 import OrcKit
 
+/// The embedded Ghostty app. Terminals use the user's Ghostty settings when Ghostty is installed, and
+/// Orc's own defaults otherwise; either way, the settings Orc's terminals depend on come last.
 @MainActor final class GhosttyEngine {
     static let shared = GhosttyEngine()
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
+    private var appearanceObservation: NSKeyValueObservation?
+
+    /// Settings Orc's terminals depend on, applied over any user configuration. Terminals are replaced
+    /// as sessions are selected, so closing one must not ask for confirmation, and they run `orc attach`
+    /// rather than a shell.
+    static let requiredSettings = "confirm-close-surface = false\nshell-integration = none\n"
+
+    /// Whether the user has Ghostty, as an installed app or a configuration file.
+    nonisolated static var usesGhosttySettings: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
+        let files = [xdg.appendingPathComponent("ghostty/config"),
+                     home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config")]
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil
+            || files.contains { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// A finalized configuration: Ghostty's defaults and the user's Ghostty files, or Orc's bundled
+    /// defaults, followed by `requiredSettings`.
+    static func makeConfig(usingGhosttySettings: Bool = usesGhosttySettings) -> ghostty_config_t? {
+        guard let config = ghostty_config_new() else { return nil }
+        if usingGhosttySettings {
+            ghostty_config_load_default_files(config)
+        } else if let url = Bundle.main.url(forResource: "terminal", withExtension: "conf") {
+            url.path.withCString { ghostty_config_load_file(config, $0) }
+        }
+        ghostty_config_load_recursive_files(config)
+        let required = FileManager.default.temporaryDirectory.appendingPathComponent("orc-ghostty-required-\(getpid()).conf")
+        if (try? requiredSettings.write(to: required, atomically: true, encoding: .utf8)) != nil {
+            required.path.withCString { ghostty_config_load_file(config, $0) }
+            try? FileManager.default.removeItem(at: required)
+        }
+        ghostty_config_finalize(config)
+        return config
+    }
+
     private init() {
         if let resources = Bundle.main.resourceURL?.appendingPathComponent("ghostty"), FileManager.default.fileExists(atPath: resources.path) {
             setenv("GHOSTTY_RESOURCES_DIR", resources.path, 1)
         }
-        guard ghostty_init(0, nil) == 0, let config = ghostty_config_new() else { return }
+        guard ghostty_init(0, nil) == 0, let config = Self.makeConfig() else { return }
         self.config = config
-        if let url = Bundle.main.url(forResource: "terminal", withExtension: "conf") { url.path.withCString { ghostty_config_load_file(config, $0) } }
-        ghostty_config_load_recursive_files(config)
-        ghostty_config_finalize(config)
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = Unmanaged.passUnretained(self).toOpaque()
         runtime.wakeup_cb = { pointer in
@@ -40,6 +75,12 @@ import OrcKit
                let value = String(data: Data(bytes: bytes, count: Int(action.action.open_url.len)), encoding: .utf8) {
                 let view = Unmanaged<GhosttyView>.fromOpaque(pointer).takeUnretainedValue()
                 return view.openMarkdownLink(value)
+            }
+            if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
+                // A soft reload follows a color scheme change; a full one rereads the configuration files.
+                let soft = action.action.reload_config.soft
+                DispatchQueue.main.async { if soft { GhosttyEngine.shared.applyConfig() } else { GhosttyEngine.shared.reload() } }
+                return true
             }
             // Window-management actions belong to the session manager; the surface handles terminal actions.
             return action.tag == GHOSTTY_ACTION_SET_TITLE || action.tag == GHOSTTY_ACTION_PWD || action.tag == GHOSTTY_ACTION_CELL_SIZE
@@ -73,7 +114,36 @@ import OrcKit
             DispatchQueue.main.async { [weak view] in view?.detach() }
         }
         app = ghostty_app_new(&runtime, config)
-        if let app { ghostty_app_set_color_scheme(app, NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT) }
+        applyColorScheme()
+        appearanceObservation = NSApplication.shared.observe(\.effectiveAppearance) { _, _ in
+            DispatchQueue.main.async { GhosttyEngine.shared.applyColorScheme() }
+        }
+    }
+
+    /// Follows the system appearance, for a theme with light and dark variants.
+    func applyColorScheme() {
+        guard let app else { return }
+        let dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ghostty_app_set_color_scheme(app, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        applyConfig()
+    }
+
+    /// Gives the app its configuration resolved for the current appearance. A terminal created from an
+    /// unresolved light/dark configuration rebuilds it from the files and loses the command it was
+    /// given (Ghostty 1.3.1), so new terminals must start from the resolved one.
+    func applyConfig() {
+        guard let app, let config else { return }
+        ghostty_app_update_config(app, config)
+    }
+
+    /// Reads the configuration again, from the user's Ghostty files or Orc's defaults.
+    func reload(using replacement: ghostty_config_t? = nil) {
+        guard let next = replacement ?? Self.makeConfig() else { return }
+        let previous = config
+        config = next
+        applyConfig()
+        applyColorScheme()
+        if let previous { ghostty_config_free(previous) }
     }
 }
 
@@ -120,7 +190,6 @@ struct GhosttyTerminal: NSViewRepresentable {
         config.platform.macos.nsview = Unmanaged.passUnretained(self).toOpaque()
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
         config.scale_factor = window.backingScaleFactor
-        config.font_size = 13
         config.wait_after_command = true
         let cli = Bundle.main.resourceURL?.appendingPathComponent("orc").path ?? "orc"
         // The native app owns navigation; its terminal stays bound to this session.

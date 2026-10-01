@@ -69,6 +69,8 @@ Orc's Dock badge counts sessions showing the unread bell state. Viewing a sessio
 
 To silence an agent session, right-click it in the session list and choose **Mute Notifications**. A muted session posts no idle notifications, is left out of the Dock badge, and shows a muted bell instead of its activity light. Muting follows the session when it is renamed in Orc, reopened or restored; it is forgotten once no running or recently closed session has the name.
 
+When Ghostty is installed, or you have a Ghostty configuration file, Orc's terminals use your Ghostty settings: theme, font, colors, padding and keybinds, from the same configuration files Ghostty reads. A theme with light and dark variants follows the system appearance. Without Ghostty, terminals use Orc's defaults (Menlo 13, GitHub Dark). Either way, Orc keeps `confirm-close-surface = false` and `shell-integration = none`, which its terminals depend on. Ghostty's reload-configuration keybind reloads the settings in Orc too; otherwise they are read when Orc starts.
+
 Click a local Markdown link in an attached terminal to open a separate Orc window. **Rendered** is selected by default; **Raw** shows the read-only source. **Reload file** reads changes saved on disk. Links to other Markdown files open their own windows, while web links use your browser. Relative links in a terminal resolve from the session's project folder; links inside a document resolve from that file's folder. The offline renderer does not execute embedded scripts or fetch remote images. Local images must be inside the document's folder. Markdown files must be UTF-8 and at most 4 MiB.
 
 Dropping local files or images into an attached terminal pastes their quoted paths without pressing Enter. Dropped image data without a file path is saved as private PNG files under `ORC_CONFIG_DIR/attachments` (default `~/.config/orc/attachments`), up to 20 MiB per image. Keep these files while agents or resumed conversations may need them.
@@ -187,7 +189,7 @@ The Ghostty build creates a private SDK overlay to normalize arm64e TBD entries 
 
 ## Architecture and compatibility
 
-`OrcKit` contains session models, local RPC, NaCl-authenticated WebSocket streaming, and terminal attachment. Both frontends use the same session service. Each libghostty surface launches the app's bundled `orc attach` in a local PTY; libghostty handles rendering, input, selection, scrolling, and clipboard operations. The PTY belongs to the session's holder in the runtime.
+`OrcKit` contains session models, local RPC, NaCl-authenticated WebSocket streaming, and terminal attachment. Both frontends use the same session service. Each libghostty surface launches the app's bundled `orc attach` in a local PTY. Ghostty 1.3.1 rebuilds a new surface's configuration from its files when the configuration's light/dark state differs from the app's, which drops the surface's command, so Orc applies the configuration again whenever the appearance changes; libghostty handles rendering, input, selection, scrolling, and clipboard operations. The PTY belongs to the session's holder in the runtime.
 
 The runtime speaks Orca's protocols so the Orca mobile app works unmodified; Orc requires its `terminal.binary-stream.v1`, `terminal.multiplex.v1`, and `orc.agents.v1` capabilities. These are internal protocols, not a stable third-party SDK. Ghostty's full embedding API is also pinned rather than assumed stable.
 
