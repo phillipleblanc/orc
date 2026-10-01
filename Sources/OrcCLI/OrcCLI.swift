@@ -316,7 +316,7 @@ import COrcSupport
     orc new --json creates without attaching for scripts and automation.
     Type to filter; / starts a search (including names beginning with n).
     Project selectors accept a name, absolute path, path:/absolute/path, or id:ID.
-    Set defaultSessionType and defaultProject in ~/.config/orc/config.json.
+    Set defaultSessionType and defaultProject in ~/.config/orc/config.json, or in Orc's Settings.
     Use terminal for a session without an agent.
     ORC_CONFIG_DIR selects Orc's settings; ORC_RUNTIME_DIR selects the runtime profile.
     """

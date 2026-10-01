@@ -36,6 +36,31 @@ final class OrcConfigurationTests: XCTestCase {
         }
     }
 
+    func testSettingDefaultsKeepsOtherSettings() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("config.json")
+        try OrcConfiguration.setDefaultSessionType(.pi, file: file)
+        try OrcConfiguration.setDefaultProject("id:p-1", file: file)
+        var config = try OrcConfiguration.load(from: file)
+        XCTAssertEqual(config.defaultSessionType, .pi)
+        XCTAssertEqual(config.defaultProject, "id:p-1")
+        var settings = try jsonObject(Data(contentsOf: file))
+        settings["futureSetting"] = true
+        try JSONSerialization.data(withJSONObject: settings).write(to: file)
+        try OrcConfiguration.setDefaultProject(nil, file: file)
+        try OrcConfiguration.setDefaultSessionType(.claude, file: file)
+        config = try OrcConfiguration.load(from: file)
+        XCTAssertEqual(config.defaultSessionType, .claude)
+        XCTAssertEqual(config.defaultProject, "")
+        XCTAssertEqual(try jsonObject(Data(contentsOf: file))["futureSetting"] as? Bool, true)
+        let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+        XCTAssertEqual(permissions, 0o600)
+        try Data("{".utf8).write(to: file)
+        XCTAssertThrowsError(try OrcConfiguration.setDefaultSessionType(.pi, file: file))
+        XCTAssertEqual(try Data(contentsOf: file), Data("{".utf8))
+    }
+
     func testInvalidConfigurationReportsItsPathAndSupportedTypes() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

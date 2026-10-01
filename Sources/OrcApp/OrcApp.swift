@@ -30,6 +30,7 @@ import OrcKit
         Window("Session Overview", id: "overview") { SessionBoardView(model: model, organization: board) }
             .defaultSize(width: 1120, height: 780)
             .windowResizability(.contentMinSize)
+        Settings { SettingsView(model: model) }
     }
 }
 

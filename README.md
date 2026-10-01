@@ -36,6 +36,8 @@ The app and CLI read session defaults from **`~/.config/orc/config.json`**:
 
 `defaultSessionType` supports `codex`, `claude`, `pi`, and `terminal`. `defaultProject` accepts the same selectors as `--project`: a registered project name, absolute path, `path:/absolute/path`, or `id:ID`. An explicit CLI type or `--project` overrides the corresponding setting. The app initializes its New Session controls from both defaults and lets you choose another project or agent. A missing or ambiguous project produces an error instead of choosing another project.
 
+In Orc, **Settings…** (⌘,) sets the default agent and project; changes are saved to this file at once, and other settings in it are kept. A configured project that is not registered is shown as such rather than changed.
+
 Codex sessions launch with `--no-daemon` so tool processes inherit their session's environment and identity. The installed Codex CLI must support that flag.
 
 Agents never stop to ask for approval: Codex launches with `--yolo`, which also turns off its sandbox, and Claude with `--dangerously-skip-permissions`.
