@@ -112,6 +112,24 @@ import COrcSupport
                     try await run(["attach", created.handle])
                 }
             }
+        case "history":
+            guard options.isEmpty else { throw OrcError("Usage: orc history [--json]") }
+            let closed = try await service.closedSessions()
+            if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(closed))) }
+            else if closed.isEmpty { print("No recently closed agent sessions.") }
+            else {
+                print("SESSION\tAGENT\tCLOSED\tPROJECT")
+                for session in closed { print("\(safe(session.name))\t\(session.agent)\t\(session.age())\t\(safe(session.cwd))") }
+            }
+        case "reopen":
+            let newName = try value("--name")
+            guard options.count == 1 else { throw OrcError("Usage: orc reopen NAME [--name NEW] [--json]") }
+            let reopened = try await service.reopen(name: options[0], as: newName)
+            if json { try emit(["handle": reopened.handle, "name": reopened.name, "attachCommand": "orc attach \(shellQuote(reopened.name))"]) }
+            else {
+                print("Reopened \(safe(reopened.name))\norc attach \(shellQuote(reopened.name))")
+                if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 { try await run(["attach", reopened.handle]) }
+            }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
@@ -126,9 +144,14 @@ import COrcSupport
                 let terminal: Session
                 if let selector { terminal = try resolveSession(selector, in: listing.terminals) }
                 else {
-                    guard let picked = try await SessionPicker(sessions: listing.terminals, selectedHandle: selectedHandle).run() else { return }
+                    let closed = (try? await service.closedSessions()) ?? []
+                    guard let picked = try await SessionPicker(sessions: listing.terminals, closed: closed, selectedHandle: selectedHandle).run() else { return }
                     switch picked {
                     case .session(let session): terminal = session
+                    case .reopen(let closed):
+                        print("[orc] Reopening \(safe(closed.name))…")
+                        selector = try await service.reopen(entry: closed.entry).handle
+                        continue
                     case .create:
                         print("[orc] Creating a session…")
                         let created = try await createSession(using: service)
@@ -253,6 +276,8 @@ import COrcSupport
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
     orc agent                               Spawn agents and message them by name (orc agent --help)
+    orc history [--json]                     List agent sessions closed in the last week
+    orc reopen NAME [--name NEW] [--json]    Reopen one, resuming its conversation, and attach
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]
@@ -263,6 +288,7 @@ import COrcSupport
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.
     Inside Herdr, the attached agent appears in Herdr's Agents view.
     When a session ends, attach returns to the picker. Esc closes the picker.
+    The picker also lists recently closed agent sessions; Enter reopens one.
     In the picker, n creates and attaches using the same defaults as orc new.
     orc new --json creates without attaching for scripts and automation.
     Type to filter; / starts a search (including names beginning with n).

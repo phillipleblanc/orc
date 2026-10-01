@@ -112,7 +112,7 @@ public struct SessionService {
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
         try SessionNotesStore.rename(session.name, to: name)
     }
-    private func validatedName(_ name: String) throws -> String {
+    func validatedName(_ name: String) throws -> String {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Session.isValidName(name) else {
             throw OrcError("Choose a session name of 1–64 characters without \"/\" or control characters, not starting with \".\".")

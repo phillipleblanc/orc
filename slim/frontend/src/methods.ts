@@ -3,6 +3,7 @@ import type { AgentMonitor, AgentState } from './agent-monitor.ts'
 import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
+import type { SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
 import type { StreamingHandler } from './websocket-server.ts'
 import { rowText } from './emulator.ts'
@@ -24,6 +25,7 @@ export type Runtime = {
   projects: Projects
   agents: AgentDirectory
   wakes: WakeDirectory
+  history: SessionHistory
   catalog: Catalog
   subscriptions: ConnectionSubscriptions
 }
@@ -47,7 +49,7 @@ function terminalStatus(state: AgentState | undefined): string | null {
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents, wakes, catalog, subscriptions } = runtime
+  const { store, projects, agents, wakes, history, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -254,6 +256,12 @@ export function createHandlers(runtime: Runtime): Handlers {
     'wake.list': async (params) => ({ wakes: await wakes.list(String(params.name ?? '')) }),
 
     'wake.cancel': (params) => wakes.cancel(String(params.name ?? ''), String(params.id ?? '')),
+
+    'history.list': async () => ({ sessions: await history.list() }),
+
+    'history.reopen': (params) => history.reopen(
+      { entry: typeof params.entry === 'string' ? params.entry : undefined, name: typeof params.name === 'string' ? params.name : undefined },
+      typeof params.as === 'string' && params.as ? params.as : undefined),
 
     'terminal.read': async (params) => {
       const target = session(params.terminal)

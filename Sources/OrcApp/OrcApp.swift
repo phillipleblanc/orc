@@ -22,6 +22,8 @@ import OrcKit
                     Button("Add Project…") { model.revealWindow?(); model.showProject = true }
                     Button("Pair Phone…") { model.revealWindow?(); model.showPhonePairing = true }
                     Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r")
+                    Button("Reopen Closed Session") { model.revealWindow?(); Task { try? await model.reopenLatest() } }
+                        .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(model.closed.isEmpty)
                 }
             }
         Window("Session Overview", id: "overview") { SessionBoardView(model: model, organization: board) }
@@ -68,7 +70,12 @@ import OrcKit
         let incarnation: String?
     }
     @Published var attachmentRequest: AttachmentRequest?
+    /// Agent sessions closed in the last week, newest first.
+    @Published private(set) var closed: [ClosedSession] = []
+    @Published var reopeningAs: ClosedSession?
     let service = SessionService()
+    private var closedListedFor: [String]?
+    private var closedListedAt = Date.distantPast
     var revealWindow: (() -> Void)?
     private var reviewState = AgentReviewState()
     private var monitor: Task<Void, Never>?
@@ -167,6 +174,7 @@ import OrcKit
             for session in completed {
                 Task { await IdleNotifications.shared.postIdle(session) }
             }
+            await refreshClosed()
             error = result.truncated ? "The runtime returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
         } catch {
@@ -178,6 +186,27 @@ import OrcKit
             if reviewState != previous { updateReviewState() }
             updateDockBadge()
         }
+    }
+}
+
+extension SessionModel {
+    /// Lists closed sessions again when the running sessions change, and every 30 seconds for their ages.
+    fileprivate func refreshClosed() async {
+        let names = sessions.map(\.name).sorted()
+        guard names != closedListedFor || Date().timeIntervalSince(closedListedAt) > 30 else { return }
+        closedListedFor = names; closedListedAt = Date()
+        if let listed = try? await service.closedSessions() { closed = listed }
+    }
+    /// Reopens a closed agent session, resuming its conversation, and attaches to it.
+    func reopen(_ session: ClosedSession, as name: String? = nil) async throws {
+        let reopened = try await service.reopen(entry: session.entry, as: name)
+        closedListedFor = nil
+        await refresh()
+        if let session = sessions.first(where: { $0.handle == reopened.handle }) { requestAttachment(to: session) }
+    }
+    func reopenLatest() async throws {
+        guard let latest = closed.first else { return }
+        do { try await reopen(latest) } catch { reopeningAs = latest; throw error }
     }
 }
 
@@ -245,6 +274,7 @@ struct SessionWindow: View {
         .sheet(isPresented: $model.showPhonePairing) { PhonePairingView() }
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
+        .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
         .onChange(of: model.selected) { previous, _ in
             if let selected, let projectID = projectFilter.projectID, selected.worktreeId != projectID {
                 projectFilter.projectID = nil
@@ -293,6 +323,7 @@ struct SessionWindow: View {
                 sessionRow(row.session, name: hierarchy.displayName(for: row.session),
                            hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: rows)
             }
+            if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
             if model.sessions.isEmpty, !model.loading {
                 if model.workspaces.isEmpty {
                     Button("Add a Project…") { model.showProject = true }.padding()

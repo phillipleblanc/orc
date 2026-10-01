@@ -2,11 +2,16 @@ import Foundation
 import Darwin
 import OrcKit
 
-/// A terminal chooser that returns an existing session or a creation request.
-/// No input is sent to a session while choosing.
+/// A terminal chooser that returns a running session, a recently closed agent session to reopen,
+/// or a creation request. No input is sent to a session while choosing.
 @MainActor final class SessionPicker {
-    enum Selection { case session(Session), create }
-    private let sessions: [Session]
+    enum Selection { case session(Session), reopen(ClosedSession), create }
+    private enum Item {
+        case running(Session), closed(ClosedSession)
+        var name: String { switch self { case .running(let session): session.name; case .closed(let closed): closed.name } }
+        var path: String { switch self { case .running(let session): session.worktreePath; case .closed(let closed): closed.cwd } }
+    }
+    private let items: [Item]
     private var query = ""
     private var filtering = false
     private var selected = 0
@@ -22,16 +27,17 @@ import OrcKit
     private var continuation: CheckedContinuation<Selection?, Error>?
     private var finished = false
 
-    init(sessions: [Session], selectedHandle: String? = nil) {
-        self.sessions = sessions.filter(\.connected).sorted {
+    /// Running sessions by name, then recently closed agent sessions, newest first.
+    init(sessions: [Session], closed: [ClosedSession] = [], selectedHandle: String? = nil) {
+        let running = sessions.filter(\.connected).sorted {
             let order = $0.name.localizedStandardCompare($1.name)
             return order == .orderedSame ? $0.handle < $1.handle : order == .orderedAscending
         }
-        selected = self.sessions.firstIndex(where: { $0.handle == selectedHandle }) ?? 0
+        items = running.map(Item.running) + closed.map(Item.closed)
+        selected = running.firstIndex(where: { $0.handle == selectedHandle }) ?? 0
     }
-    private var matches: [Session] {
-        sessions.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
-            || $0.worktreePath.localizedCaseInsensitiveContains(query) }
+    private var matches: [Item] {
+        items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query) }
     }
     func run() async throws -> Selection? {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
@@ -117,7 +123,11 @@ import OrcKit
             case 0x2f where !filtering: filtering = true
             case 10, 13:
                 let list = matches
-                if list.indices.contains(selected) { finish(.session(list[selected])) }
+                guard list.indices.contains(selected) else { break }
+                switch list[selected] {
+                case .running(let session): finish(.session(session))
+                case .closed(let closed): finish(.reopen(closed))
+                }
             case 8, 0x7f:
                 decoder = InputDecoder()
                 if !query.isEmpty { query.removeLast(); selected = 0; offset = 0 }
@@ -164,22 +174,29 @@ import OrcKit
         if selected >= offset + pageSize { offset = selected - pageSize + 1 }
         var lines = ["\u{1b}[1;36m" + fit("Orc — Attach to a session", width: cols) + "\u{1b}[0m", "",
                      fit("Filter: " + (query.isEmpty ? "type to search…" : query), width: cols),
-                     "\u{1b}[2m" + fit(filtering ? "↑/↓ Move · Enter Attach · Esc Cancel · Ctrl-U Clear"
-                         : "n New · / Search · ↑/↓ Move · Enter Attach · Esc Cancel", width: cols) + "\u{1b}[0m", ""]
+                     "\u{1b}[2m" + fit(filtering ? "↑/↓ Move · Enter Attach or Reopen · Esc Cancel · Ctrl-U Clear"
+                         : "n New · / Search · ↑/↓ Move · Enter Attach or Reopen · Esc Cancel", width: cols) + "\u{1b}[0m", ""]
         if list.isEmpty {
-            lines.append(fit(sessions.isEmpty ? "No running sessions." : "No matching sessions.", width: cols))
+            lines.append(fit(items.isEmpty ? "No running or recently closed sessions." : "No matching sessions.", width: cols))
         }
         else {
             for index in offset..<min(list.count, offset + pageSize) {
-                let session = list[index]
+                let item = list[index]
                 let marker = index == selected ? "> " : "  "
-                let title = fit(marker + session.name, width: cols)
-                lines.append(index == selected ? "\u{1b}[1;7m" + title + "\u{1b}[0m" : title)
-                lines.append("\u{1b}[2m" + fit("  " + session.worktreePath, width: cols) + "\u{1b}[0m")
+                let title = fit(marker + item.name, width: cols)
+                if index == selected { lines.append("\u{1b}[1;7m" + title + "\u{1b}[0m") }
+                else if case .closed = item { lines.append("\u{1b}[2m" + title + "\u{1b}[0m") }
+                else { lines.append(title) }
+                let detail: String
+                switch item {
+                case .running(let session): detail = session.worktreePath
+                case .closed(let closed): detail = "closed \(closed.age()) · \(closed.agent) · Enter reopens · \(closed.cwd)"
+                }
+                lines.append("\u{1b}[2m" + fit("  " + detail, width: cols) + "\u{1b}[0m")
             }
         }
         lines.append("")
-        let status = list.indices.contains(selected) ? "\(selected + 1)/\(list.count)" : "0/\(sessions.count) sessions"
+        let status = list.indices.contains(selected) ? "\(selected + 1)/\(list.count)" : "0/\(items.count) sessions"
         lines.append("\u{1b}[2m" + fit(status, width: cols) + "\u{1b}[0m")
         if rows < 8 { lines = [fit("Resize terminal to at least 8 rows. Esc cancels.", width: cols)] }
         do { try writeAll(STDOUT_FILENO, Data(("\u{1b}[?2026h\u{1b}[H\u{1b}[2J" + lines.joined(separator: "\r\n") + "\u{1b}[?2026l").utf8)) }

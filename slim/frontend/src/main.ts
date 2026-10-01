@@ -14,6 +14,7 @@ import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
+import { SessionHistory } from './history.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
@@ -63,10 +64,11 @@ await devices.load()
 const keypair = await loadOrCreateKeypair(profile)
 const agents = new AgentDirectory(store, projects, profile)
 const wakes = new WakeDirectory(store, agents, profile)
+const history = new SessionHistory({ store, agents, projects })
 const discovered = await store.discover()
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, catalog, subscriptions }
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, history, catalog, subscriptions }
 const nativeChat = nativeChatMethods(subscriptions)
 const mobileTerminal = mobileTerminalMethods(store, subscriptions)
 const clientEvents = clientEventMethods(catalog, subscriptions)

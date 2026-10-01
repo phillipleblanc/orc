@@ -38,7 +38,7 @@ directory is the uniqueness check, and a rename moves the directory.
 | `wakes.json` | frontend | An agent's pending wakes |
 
 An agent's lifecycle events are appended to `<profile>/agent-events/<uuid>.jsonl`, named in `meta.json`.
-The path stays valid when the session is renamed. Finished sessions move to `<profile>/ended/`. Holder binaries are installed under
+The path stays valid when the session is renamed. Finished sessions move to `<profile>/ended/`, which keeps their records for 30 days; a session started again from there gets a `reopened.json`. Holder binaries are installed under
 `<profile>/holders/<sha256 prefix>/orc-holder` and never replaced in place, so a session keeps the
 holder it started with while newer sessions use a newer build.
 
@@ -149,6 +149,15 @@ Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) a
 (its runtime profile, so `orc` run inside it reaches the same runtime); agents also get
 `ORC_AGENT_EVENTS`.
 
+## Recently closed sessions
+
+`history.list` returns agent sessions that ended in the last 7 days, newest first: for each name, the
+most recent ended session, if it was not started again, its name is not running, and its agent
+reported a conversation (or its argv resumes one, so a resume that failed at startup is still
+listed). Each has its last reply from the agent's events and the non-blank lines of its last screen.
+`history.reopen` starts one again, by `entry` or `name`, under its name or `as`, the same way a restore
+does. Ended sessions are deleted 30 days after they end, with their agent events.
+
 ## Restarting the computer
 
 A restart ends every session. The first frontend after it starts the sessions that were running
@@ -177,7 +186,7 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 - **Local socket:** `status.get`, `terminal.list`, `terminal.create`, `terminal.rename`, `terminal.send`,
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
   and `repo.add` use Orca's request and result shapes, including agent identity and status.
-  `agent.*` and `wake.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
+  `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
   access links; they are not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
