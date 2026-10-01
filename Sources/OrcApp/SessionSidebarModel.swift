@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 import OrcKit
 
-/// Sessions in a collapsible section per project. Sessions can be dragged within their project.
+/// Sessions in a section per project; clicking a project's header collapses it. Sessions can be dragged
+/// within their project. The list has no background of its own, so it matches the window around it.
 struct SessionSidebarList<RowContent: View>: View {
     @ObservedObject var organization: SessionSidebarModel
     let sections: [SessionSidebarSection]
@@ -14,29 +15,56 @@ struct SessionSidebarList<RowContent: View>: View {
         let names = Dictionary(grouping: sections, by: \.project.name)
         List(selection: $selection) {
             ForEach(sections) { section in
-                Section(isExpanded: Binding(
-                    get: { !collapsedProjects.contains(section.id) },
-                    set: { expanded in if expanded { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) } }
-                )) {
-                    ForEach(section.rows) { row in
-                        rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
-                    }
-                    .onMove { source, destination in
-                        organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
+                let collapsed = collapsedProjects.contains(section.id)
+                Section {
+                    if !collapsed {
+                        ForEach(section.rows) { row in
+                            rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
+                        }
+                        .onMove { source, destination in
+                            organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
+                        }
                     }
                 } header: {
-                    HStack {
-                        Text((names[section.project.name]?.count ?? 0) > 1 ? "\(section.project.name) · \(section.project.path)" : section.project.name)
-                            .lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text("\(section.count)").monospacedDigit().foregroundStyle(.secondary)
+                    SessionSidebarHeader(title: (names[section.project.name]?.count ?? 0) > 1
+                                             ? "\(section.project.name) · \(section.project.path)" : section.project.name,
+                                         path: section.project.path, count: section.count, collapsed: collapsed) {
+                        if collapsed { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) }
                     }
-                    .help(section.project.path)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(section.project.name), \(section.count) session\(section.count == 1 ? "" : "s")")
                 }
+                .collapsible(false)
             }
-        }.listStyle(.sidebar)
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+    }
+}
+
+/// A project's header: a disclosure chevron, the project and its number of sessions.
+struct SessionSidebarHeader: View {
+    let title: String
+    let path: String
+    let count: Int
+    let collapsed: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right").rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.tertiary).frame(width: 12)
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            }
+            .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(path)
+        .accessibilityLabel("\(title), \(count) session\(count == 1 ? "" : "s")")
+        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+        .accessibilityHint(collapsed ? "Shows this project's sessions" : "Hides this project's sessions")
     }
 }
 
@@ -69,5 +97,43 @@ struct SessionSidebarList<RowContent: View>: View {
         guard next != order else { return }
         do { try SessionSidebarOrderStore.save(next, to: file); order = next; error = nil }
         catch { self.error = "Could not save sidebar order: \(error.localizedDescription)" }
+    }
+}
+
+/// A session in the sidebar: its status icon and name, with its agent beneath the name. A child is
+/// indented under its parent; a parent with children can collapse them.
+struct SessionSidebarRow: View {
+    let session: Session
+    let name: String
+    let activity: AgentActivity
+    let muted: Bool
+    let isChild: Bool
+    /// Whether the session's children are collapsed, for a session that has children.
+    let childrenCollapsed: Bool?
+    var toggleChildren: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    SessionStatusIcon(session: session, activity: activity, muted: muted).accessibilityHidden(true)
+                    Text(name).font(.headline).lineLimit(1)
+                }
+                // Aligned with the name: the icon is 12 points wide, followed by 8 points of spacing.
+                Text(session.agentIdentity ?? "terminal").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.leading, 20)
+            }
+            Spacer(minLength: 0)
+            if let collapsed = childrenCollapsed {
+                Button(action: toggleChildren) {
+                    Image(systemName: "chevron.right").rotationEffect(.degrees(collapsed ? 0 : 90))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(collapsed ? "Expand" : "Collapse") children of \(session.name)")
+            }
+        }
+        .padding(.leading, isChild ? 20 : 0)
+        .padding(.vertical, 3)
     }
 }

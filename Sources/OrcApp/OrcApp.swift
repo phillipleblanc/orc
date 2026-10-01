@@ -349,10 +349,6 @@ struct SessionWindow: View {
     }
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Sessions").font(.title2.bold())
-                Spacer()
-            }.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
             SessionSidebarList(organization: sidebarOrder, sections: sections, collapsedProjects: collapsedProjects,
                                selection: $model.selected) { section, row in
                 sessionRow(row.session, name: section.hierarchy.displayName(for: row.session),
@@ -388,31 +384,10 @@ struct SessionWindow: View {
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool,
                             rows: [SessionSidebarOrder.Row]) -> some View {
-        HStack(spacing: 6) {
-            if isChild { Color.clear.frame(width: 16, height: 16).accessibilityHidden(true) }
-            if hasChildren {
-                Button {
-                    if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
-                } label: {
-                    Image(systemName: collapsedParents.contains(session.id) ? "chevron.right" : "chevron.down")
-                        .font(.caption.weight(.semibold)).frame(width: 16, height: 16)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(collapsedParents.contains(session.id) ? "Expand" : "Collapse") children of \(session.name)")
-            } else {
-                Color.clear.frame(width: 16, height: 16).accessibilityHidden(true)
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 7) {
-                    SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
-                        .accessibilityHidden(true)
-                    Text(name).font(.headline).lineLimit(1)
-                }
-                Text(session.agentIdentity ?? "terminal")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
+        SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
+                          isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
+            if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }
-        .padding(.vertical, 5)
         .accessibilityElement(children: hasChildren ? .contain : .combine)
         .accessibilityValue(model.statusLabel(for: session))
         .help(model.statusLabel(for: session) + " · Drag to reorder")
