@@ -253,16 +253,11 @@ extension SessionModel {
     }
 }
 
+/// The session list alone, or the list with the selected session's terminal.
 enum SessionWindowMode: Equatable {
-    case compact, details, attached
-    var size: NSSize {
-        switch self {
-        case .compact: return NSSize(width: 380, height: 560)
-        case .details: return NSSize(width: 760, height: 700)
-        case .attached: return NSSize(width: 1440, height: 936)
-        }
-    }
-    var minimumWidth: CGFloat { self == .compact ? 340 : self == .details ? 680 : 900 }
+    case compact, attached
+    var size: NSSize { self == .compact ? NSSize(width: 380, height: 560) : NSSize(width: 1440, height: 936) }
+    var minimumWidth: CGFloat { self == .compact ? 340 : 900 }
 }
 
 struct SessionWindow: View {
@@ -272,17 +267,16 @@ struct SessionWindow: View {
     @ObservedObject private var notifications = IdleNotifications.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
-    @AppStorage("autoAttachSessions") private var autoAttachSessions = false
+    @AppStorage("sessionInspectorShown") private var inspectorShown = false
     /// Projects whose sidebar sections are collapsed, by project id, one per line.
     @AppStorage("collapsedSidebarProjects") private var collapsedProjectsStorage = ""
-    @State private var attachedSession: String?
-    @State private var requestedAttach: String?
     @State private var renamingSession: Session?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
-    var attached: Bool { selected != nil && attachedSession == selected?.id }
-    var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : .details }
+    /// Whether the selected session's terminal is showing.
+    var showsTerminal: Bool { selected.map { model.connected && $0.connected } ?? false }
+    var mode: SessionWindowMode { selected == nil ? .compact : .attached }
     var hierarchy: SessionHierarchy { model.hierarchy }
     var sections: [SessionSidebarSection] {
         sidebarOrder.order.sections(of: model.sessions, workspaces: model.workspaces, collapsed: collapsedParents)
@@ -314,6 +308,12 @@ struct SessionWindow: View {
                     .help("Session Overview (⇧⌘O)").accessibilityIdentifier("session-overview")
             }
             ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") }
+            ToolbarItem {
+                Button { inspectorShown.toggle() } label: { Label("Info", systemImage: "info.circle") }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                    .help(inspectorShown ? "Hide Session Info (⌥⌘I)" : "Show Session Info (⌥⌘I)")
+                    .disabled(selected == nil)
+            }
         }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
         .sheet(isPresented: $model.showProject) { AddProjectView(model: model) }
@@ -322,17 +322,12 @@ struct SessionWindow: View {
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
         .sheet(isPresented: $model.showOpen) { OpenConversationView(model: model) }
-        .onChange(of: model.selected) { previous, _ in
+        .onChange(of: model.selected) { _, _ in
             if let selected, collapsedProjects.wrappedValue.contains(selected.worktreeId) {
                 collapsedProjects.wrappedValue.remove(selected.worktreeId)
             }
-            let explicitlyRequested = requestedAttach != nil && requestedAttach == model.selected
-            requestedAttach = nil
-            let wasAttached = attachedSession != nil && attachedSession == previous && model.connected
-                && model.sessions.contains { $0.id == previous && $0.connected }
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
-            if (explicitlyRequested || autoAttachSessions || wasAttached), let session = selected, session.connected { attach(session) }
-            else { attachedSession = nil }
+            markVisibleOutputRead()
         }
         .onAppear {
             model.revealWindow = { openWindow(id: "sessions") }
@@ -341,7 +336,7 @@ struct SessionWindow: View {
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
-        .onChange(of: attachedSession) { _, _ in markVisibleOutputRead() }
+        .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             markVisibleOutputRead()
             Task { await notifications.refreshSettings(); model.refreshDockBadge() }
@@ -366,16 +361,6 @@ struct SessionWindow: View {
             HStack {
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Toggle(isOn: $autoAttachSessions) {
-                    Image(systemName: autoAttachSessions ? "bolt.fill" : "bolt.slash")
-                }
-                    .toggleStyle(.button).controlSize(.small)
-                    .tint(autoAttachSessions ? .accentColor : .gray)
-                    .help(autoAttachSessions ? "Auto-attach on: selecting a session opens its terminal" :
-                            "Auto-attach off: selecting a session shows its details")
-                    .accessibilityLabel("Auto-attach sessions")
-                    .accessibilityValue(autoAttachSessions ? "On" : "Off")
-                    .accessibilityIdentifier("auto-attach-toggle")
                 Button { model.showPhonePairing = true } label: { Image(systemName: "iphone") }
                     .buttonStyle(.borderless).help("Pair Phone").accessibilityLabel("Pair Phone")
                 Button { sidebarOrder.reload(); Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
@@ -404,66 +389,59 @@ struct SessionWindow: View {
             }
         }
     }
-    @ViewBuilder private func detail(_ session: Session) -> some View {
-        if attached, model.connected, session.connected {
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Button { attachedSession = nil } label: { Label("Detach", systemImage: "rectangle.compress.vertical") }
-                    Text(hierarchy.displayName(for: session)).font(.headline).lineLimit(1)
-                    Spacer()
-                }.padding(14)
-                Divider()
+    /// The selected session's terminal, with its details in an inspector beside it.
+    private func detail(_ session: Session) -> some View {
+        Group {
+            if model.connected, session.connected {
                 GhosttyTerminal(session: session).id(session.id)
-            }
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Button { model.selected = nil } label: { Label("Sessions", systemImage: "chevron.left") }
-                        .buttonStyle(.borderless).accessibilityLabel("Back to Session List")
-                    Image(systemName: "terminal").font(.system(size: 36)).foregroundStyle(.secondary).padding(.top, 12)
-                    Text(hierarchy.displayName(for: session)).font(.title2.bold()).textSelection(.enabled)
-                    HStack(spacing: 7) {
-                        SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
-                            .accessibilityHidden(true)
-                        Text(model.statusLabel(for: session))
-                    }.font(.callout)
-                    Divider()
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Project").font(.caption).foregroundStyle(.secondary)
-                        Text(session.worktreePath).font(.callout).textSelection(.enabled)
-                    }
-                    if hierarchy.parent(of: session) != nil {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Full name").font(.caption).foregroundStyle(.secondary)
-                            Text(session.name).font(.callout).textSelection(.enabled)
-                        }
-                    }
-                    if let agent = session.agentIdentity {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Agent").font(.caption).foregroundStyle(.secondary)
-                            Text(agent).font(.callout)
-                        }
-                    }
-                    SessionNotesEditor(session: session).id(session.name)
-                    Button("Attach", systemImage: "terminal") { attach(session) }
-                        .buttonStyle(.borderedProminent).disabled(!session.connected)
-                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ContentUnavailableView(model.connected ? "Session Offline" : "Runtime Not Connected", systemImage: "bolt.horizontal.circle",
+                    description: Text(model.connected ? "\(session.name) is not connected. Orc reconnects when it is available."
+                                                      : "Orc is reconnecting to the session runtime."))
             }
         }
+        .inspector(isPresented: $inspectorShown) {
+            inspector(session).inspectorColumnWidth(min: 240, ideal: 300, max: 440)
+        }
     }
-    private func attach(_ session: Session) {
-        attachedSession = session.id
+    private func inspector(_ session: Session) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(hierarchy.displayName(for: session)).font(.title3.bold()).textSelection(.enabled)
+                HStack(spacing: 7) {
+                    SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
+                        .accessibilityHidden(true)
+                    Text(model.statusLabel(for: session))
+                }.font(.callout)
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Project").font(.caption).foregroundStyle(.secondary)
+                    Text(session.worktreePath).font(.callout).textSelection(.enabled)
+                }
+                if hierarchy.parent(of: session) != nil {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Full name").font(.caption).foregroundStyle(.secondary)
+                        Text(session.name).font(.callout).textSelection(.enabled)
+                    }
+                }
+                if let agent = session.agentIdentity {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Agent").font(.caption).foregroundStyle(.secondary)
+                        Text(agent).font(.callout)
+                    }
+                }
+                SessionNotesEditor(session: session).id(session.name)
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
-        if model.selected == session.id { attach(session) }
-        else { requestedAttach = session.id; model.selected = session.id }
+        model.selected = session.id
     }
     private func markVisibleOutputRead() {
         guard NSApplication.shared.isActive,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
-              controlActiveState == .key, let session = selected,
-              attached, model.connected, session.connected,
+              controlActiveState == .key, let session = selected, showsTerminal,
               model.unreadKeys.contains(session.handle) else { return }
         model.markRead(session)
     }

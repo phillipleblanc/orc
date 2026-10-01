@@ -95,6 +95,8 @@ final class SessionSidebarTests: XCTestCase {
         let table = try XCTUnwrap(descendant(NSOutlineView.self, in: host))
         // A header per project, then its sessions.
         XCTAssertEqual(table.numberOfRows, 7)
+        // Clicking empty space clears the selection, which returns the window to the session list.
+        XCTAssertTrue(table.allowsEmptySelection)
         let item = try XCTUnwrap(table.item(atRow: 4))
         XCTAssertNotNil(table.dataSource?.outlineView?(table, pasteboardWriterForItem: item),
                         "Sidebar rows must support native dragging")
