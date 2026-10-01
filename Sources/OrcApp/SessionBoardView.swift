@@ -330,7 +330,7 @@ private struct BoardSessionCard: View {
                     .accessibilityIdentifier("board-attach-\(session.handle)")
             }
             HStack(spacing: 7) {
-                AgentActivityIndicator(activity: activity).accessibilityHidden(true)
+                if session.agentIdentity != nil { AgentActivityIndicator(activity: activity).accessibilityHidden(true) }
                 Text(activity.label).font(.caption).lineLimit(1)
                 Spacer(minLength: 0)
                 if let agent = session.agentIdentity { Text(agent).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
