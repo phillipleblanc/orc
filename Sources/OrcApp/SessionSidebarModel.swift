@@ -85,10 +85,6 @@ struct SessionSidebarHeader: View {
         update(search: search) { $0.move(fromOffsets: source, toOffset: destination, rows: rows) }
     }
 
-    func move(_ id: String, by offset: Int, rows: [SessionSidebarOrder.Row], search: String) {
-        update(search: search) { $0.move(id, by: offset, rows: rows) }
-    }
-
     private func update(search: String, _ change: (inout SessionSidebarOrder) -> Void) {
         guard loaded, search.isEmpty else { return }
         var next = order

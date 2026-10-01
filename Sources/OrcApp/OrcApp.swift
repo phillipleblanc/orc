@@ -353,7 +353,7 @@ struct SessionWindow: View {
             SessionSidebarList(organization: sidebarOrder, sections: sections, collapsedProjects: collapsedProjects,
                                selection: $model.selected) { section, row in
                 sessionRow(row.session, name: section.hierarchy.displayName(for: row.session),
-                           hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: section.rows)
+                           hasChildren: row.hasChildren, isChild: row.parentID != nil)
             }
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
             if model.sessions.isEmpty, !model.loading {
@@ -383,8 +383,7 @@ struct SessionWindow: View {
             }.padding(12)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool,
-                            rows: [SessionSidebarOrder.Row]) -> some View {
+    private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
                           group: board.board.group(of: session.name)?.name, isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
@@ -403,15 +402,6 @@ struct SessionWindow: View {
                     model.setMuted(!muted, for: session)
                 }
             }
-            Divider()
-            Button("Move Up", systemImage: "arrow.up") {
-                sidebarOrder.move(session.id, by: -1, rows: rows, search: "")
-            }
-            .disabled(!sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: -1, rows: rows))
-            Button("Move Down", systemImage: "arrow.down") {
-                sidebarOrder.move(session.id, by: 1, rows: rows, search: "")
-            }
-            .disabled(!sidebarOrder.loaded || !sidebarOrder.order.canMove(session.id, by: 1, rows: rows))
         }
     }
     @ViewBuilder private func detail(_ session: Session) -> some View {

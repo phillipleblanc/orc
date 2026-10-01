@@ -49,22 +49,6 @@ public struct SessionSidebarOrder: Codable, Equatable {
         move(row.session.name, before: anchor, siblings: siblings)
     }
 
-    public func canMove(_ id: String, by offset: Int, rows: [Row]) -> Bool {
-        guard let row = rows.first(where: { $0.id == id }) else { return false }
-        let siblings = rows.filter { $0.parentID == row.parentID }
-        guard let index = siblings.firstIndex(where: { $0.id == id }) else { return false }
-        return (offset == -1 || offset == 1) && siblings.indices.contains(index + offset)
-    }
-
-    public mutating func move(_ id: String, by offset: Int, rows: [Row]) {
-        guard canMove(id, by: offset, rows: rows), let row = rows.first(where: { $0.id == id }) else { return }
-        let siblings = rows.filter { $0.parentID == row.parentID }.map { $0.session.name }
-        guard let index = siblings.firstIndex(of: row.session.name) else { return }
-        let destination = index + (offset > 0 ? 2 : -1)
-        let anchor = siblings.indices.contains(destination) ? siblings[destination] : nil
-        move(row.session.name, before: anchor, siblings: siblings)
-    }
-
     private mutating func move(_ key: String, before anchor: String?, siblings: [String]) {
         guard anchor != key, let index = siblings.firstIndex(of: key),
               siblings.dropFirst(index + 1).first != anchor else { return }

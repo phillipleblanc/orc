@@ -40,31 +40,13 @@ final class SessionSidebarOrderTests: XCTestCase {
 
     func testCollapsedParentMovesWithHiddenChildrenAndPreservesTheirOrder() {
         var order = SessionSidebarOrder()
-        order.move("a-two", by: -1, rows: order.rows(in: hierarchy))
+        order.move(fromOffsets: [2], toOffset: 1, rows: order.rows(in: hierarchy))
         let collapsed = order.rows(in: hierarchy, collapsed: ["a", "b"])
         XCTAssertEqual(collapsed.map(\.id), ["a", "b", "c"])
         XCTAssertTrue(collapsed[0].hasChildren)
         order.move(fromOffsets: [0], toOffset: 3, rows: collapsed)
         XCTAssertEqual(order.rows(in: hierarchy).map(\.id), ["b", "b-one", "c", "a", "a-two", "a-one"])
         XCTAssertEqual(order.rows(in: hierarchy, collapsed: ["a"]).map(\.id), ["b", "b-one", "c", "a"])
-    }
-
-    func testMenuMovesAndBounds() {
-        var order = SessionSidebarOrder()
-        XCTAssertFalse(order.canMove("a", by: -1, rows: order.rows(in: hierarchy)))
-        XCTAssertFalse(order.canMove("c", by: 1, rows: order.rows(in: hierarchy)))
-        XCTAssertFalse(order.canMove("missing", by: 1, rows: order.rows(in: hierarchy)))
-        order.move("a", by: 1, rows: order.rows(in: hierarchy))
-        XCTAssertEqual(order.rows(in: hierarchy).map(\.id), ["b", "b-one", "a", "a-one", "a-two", "c"])
-        order.move("a", by: -1, rows: order.rows(in: hierarchy))
-        order.move("a-one", by: 1, rows: order.rows(in: hierarchy))
-        XCTAssertEqual(order.rows(in: hierarchy).map(\.id), ["a", "a-two", "a-one", "b", "b-one", "c"])
-        let before = order
-        order.move("a", by: -1, rows: order.rows(in: hierarchy))
-        order.move("a-one", by: 1, rows: order.rows(in: hierarchy))
-        order.move("missing", by: 1, rows: order.rows(in: hierarchy))
-        order.move("a", by: 2, rows: order.rows(in: hierarchy))
-        XCTAssertEqual(order, before)
     }
 
     func testInvalidAndNoOpDropsDoNotCreateSavedOrder() {
@@ -98,7 +80,7 @@ final class SessionSidebarOrderTests: XCTestCase {
 
     func testSearchKeepsSavedOrderAndRevealsMatchingChildren() {
         var order = SessionSidebarOrder()
-        order.move("b", by: -1, rows: order.rows(in: hierarchy))
+        order.move(fromOffsets: [3], toOffset: 0, rows: order.rows(in: hierarchy))
         XCTAssertEqual(order.rows(in: hierarchy, matching: "one", collapsed: ["a", "b"]).map(\.id), ["b", "b-one", "a", "a-one"])
         XCTAssertEqual(order.rows(in: hierarchy, matching: "a", collapsed: ["a"]).map(\.id), ["a", "a-one", "a-two"])
         XCTAssertTrue(order.rows(in: hierarchy, matching: "absent").isEmpty)
@@ -112,7 +94,7 @@ final class SessionSidebarOrderTests: XCTestCase {
         XCTAssertNotEqual(file, other)
         XCTAssertEqual(try SessionSidebarOrderStore.load(from: file), SessionSidebarOrder())
         var order = SessionSidebarOrder()
-        order.move("c", by: -1, rows: order.rows(in: hierarchy))
+        order.move(fromOffsets: [5], toOffset: 3, rows: order.rows(in: hierarchy))
         try SessionSidebarOrderStore.save(order, to: file)
         XCTAssertEqual(try SessionSidebarOrderStore.load(from: file), order)
         XCTAssertEqual(try SessionSidebarOrderStore.load(from: other), SessionSidebarOrder())

@@ -35,17 +35,16 @@ final class SessionSidebarTests: XCTestCase {
         XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["gamma", "alpha", "alpha-review", "beta"])
         let reloaded = SessionSidebarModel(file: file)
         XCTAssertEqual(reloaded.order, sidebar.order)
-        reloaded.move("gamma", by: 1, rows: reloaded.order.rows(in: model.hierarchy), search: "")
+        reloaded.move(fromOffsets: [0], toOffset: 3, rows: reloaded.order.rows(in: model.hierarchy), search: "")
         XCTAssertEqual(reloaded.order.rows(in: model.hierarchy).map(\.id), ["alpha", "alpha-review", "gamma", "beta"])
     }
 
-    @MainActor func testSearchDisablesBothDragAndMenuReordering() throws {
+    @MainActor func testSearchDisablesReordering() throws {
         let hierarchy = SessionHierarchy(sessions: try sessions())
         let file = root.appendingPathComponent("order.json")
         let sidebar = SessionSidebarModel(file: file)
         let rows = sidebar.order.rows(in: hierarchy, matching: "a")
         sidebar.move(fromOffsets: [3], toOffset: 0, rows: rows, search: "a")
-        sidebar.move("gamma", by: -1, rows: rows, search: "a")
         XCTAssertEqual(sidebar.order, SessionSidebarOrder())
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
@@ -58,16 +57,16 @@ final class SessionSidebarTests: XCTestCase {
         let sidebar = SessionSidebarModel(file: file)
         XCTAssertFalse(sidebar.loaded)
         XCTAssertNotNil(sidebar.error)
-        sidebar.move("gamma", by: -1, rows: sidebar.order.rows(in: hierarchy), search: "")
+        sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
         XCTAssertEqual(try Data(contentsOf: file), invalid)
         try SessionSidebarOrderStore.save(SessionSidebarOrder(), to: file)
         sidebar.reload()
-        sidebar.move("gamma", by: -1, rows: sidebar.order.rows(in: hierarchy), search: "")
+        sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
         XCTAssertEqual(sidebar.order.rows(in: hierarchy).map(\.id), ["alpha", "alpha-review", "gamma", "beta"])
         let saved = sidebar.order
         try FileManager.default.removeItem(at: file)
         try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-        sidebar.move("gamma", by: -1, rows: sidebar.order.rows(in: hierarchy), search: "")
+        sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
         XCTAssertEqual(sidebar.order, saved)
         XCTAssertNotNil(sidebar.error)
     }
