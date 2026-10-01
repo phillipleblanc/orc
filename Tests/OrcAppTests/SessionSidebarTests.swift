@@ -72,41 +72,41 @@ final class SessionSidebarTests: XCTestCase {
         XCTAssertNotNil(sidebar.error)
     }
 
-    @MainActor func testSidebarListSupportsNativeReordering() async throws {
+    @MainActor func testSidebarListShowsCollapsibleProjectSectionsWithNativeReordering() async throws {
         _ = NSApplication.shared
         let model = SessionModel(monitorSessions: false)
-        model.sessions = try sessions()
+        model.sessions = try sessions() + [try decode(["handle": "delta", "title": "delta", "worktreeId": "other-fixture",
+            "worktreePath": "/code/other", "connected": false, "writable": false, "tabId": "delta", "leafId": "leaf"])]
         let sidebar = SessionSidebarModel(file: root.appendingPathComponent("order.json"))
+        var collapsed: Set<String> = []
+        func list() -> SessionSidebarList<Text> {
+            SessionSidebarList(organization: sidebar, sections: sidebar.order.sections(of: model.sessions, workspaces: []),
+                collapsedProjects: Binding(get: { collapsed }, set: { collapsed = $0 }),
+                selection: Binding(get: { model.selected }, set: { model.selected = $0 })) { _, row in Text(row.session.name) }
+        }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 560),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: SessionSidebarList(organization: sidebar, hierarchy: model.hierarchy,
-            search: "", collapsed: [], selection: Binding(get: { model.selected }, set: { model.selected = $0 })) { row in
-                Text(row.session.name)
-            })
+        let host = NSHostingView(rootView: list())
         window.contentView = host
         window.orderFront(nil)
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(250))
         host.layoutSubtreeIfNeeded()
         let table = try XCTUnwrap(descendant(NSOutlineView.self, in: host))
-        XCTAssertEqual(table.numberOfRows, 4)
-        let item = try XCTUnwrap(table.item(atRow: 3))
+        // A header per project, then its sessions.
+        XCTAssertEqual(table.numberOfRows, 7)
+        let item = try XCTUnwrap(table.item(atRow: 4))
         XCTAssertNotNil(table.dataSource?.outlineView?(table, pasteboardWriterForItem: item),
                         "Sidebar rows must support native dragging")
-        sidebar.move(fromOffsets: [3], toOffset: 0, rows: sidebar.order.rows(in: model.hierarchy), search: "")
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["gamma", "alpha", "alpha-review", "beta"])
+        sidebar.move(fromOffsets: [3], toOffset: 0, rows: sidebar.order.sections(of: model.sessions, workspaces: [])[0].rows, search: "")
+        XCTAssertEqual(sidebar.order.sections(of: model.sessions, workspaces: [])[0].rows.map(\.id), ["gamma", "alpha", "alpha-review", "beta"])
         XCTAssertNil(model.selected)
-        XCTAssertEqual(table.numberOfRows, 4)
-        host.rootView = SessionSidebarList(organization: sidebar, hierarchy: model.hierarchy,
-            search: "a", collapsed: [], selection: Binding(get: { model.selected }, set: { model.selected = $0 })) { row in
-                Text(row.session.name)
-            }
-        try await Task.sleep(for: .milliseconds(100))
-        let filteredItem = try XCTUnwrap(table.item(atRow: 0))
-        XCTAssertNil(table.dataSource?.outlineView?(table, pasteboardWriterForItem: filteredItem),
-                     "Searching must disable native dragging")
+        // Collapsing a project hides its sessions.
+        collapsed = ["sidebar-fixture"]
+        host.rootView = list()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(table.numberOfRows, 3)
     }
 
     @MainActor private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {

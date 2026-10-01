@@ -97,3 +97,28 @@ public enum SessionSidebarOrderStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 }
+
+/// One project's part of the sidebar.
+public struct SessionSidebarSection: Identifiable {
+    public let project: Workspace
+    /// Parentage among this project's sessions.
+    public let hierarchy: SessionHierarchy
+    public let rows: [SessionSidebarOrder.Row]
+    /// Sessions in the project, including children of collapsed parents.
+    public let count: Int
+    public var id: String { project.id }
+}
+
+extension SessionSidebarOrder {
+    /// Sessions grouped by project. Each project's rows keep this order and their parentage, and a
+    /// project is placed where its first session is in this order.
+    public func sections(of sessions: [Session], workspaces: [Workspace], collapsed: Set<String> = []) -> [SessionSidebarSection] {
+        let firstRow = Dictionary(rows(in: SessionHierarchy(sessions: sessions)).enumerated().map { ($0.element.session.worktreeId, $0.offset) },
+                                  uniquingKeysWith: min)
+        return SessionProjectFilter.projects(in: sessions, workspaces: workspaces).map { project in
+            let members = sessions.filter { $0.worktreeId == project.id }
+            let hierarchy = SessionHierarchy(sessions: members)
+            return SessionSidebarSection(project: project, hierarchy: hierarchy, rows: rows(in: hierarchy, collapsed: collapsed), count: members.count)
+        }.sorted { (firstRow[$0.id] ?? .max, $0.project.name) < (firstRow[$1.id] ?? .max, $1.project.name) }
+    }
+}

@@ -121,4 +121,30 @@ final class SessionSidebarOrderTests: XCTestCase {
         try Data("invalid JSON".utf8).write(to: file)
         XCTAssertThrowsError(try SessionSidebarOrderStore.load(from: file))
     }
+
+    func testSectionsGroupByProjectInTheOrderOfTheirFirstSession() {
+        func session(_ name: String, project: String) -> Session {
+            Session(handle: name, title: name, worktreeId: project, worktreePath: "/code/" + project,
+                    connected: true, writable: true, agentIdentity: "pi", incarnationId: name)
+        }
+        let sessions = [session("a", project: "spice"), session("a-one", project: "spice"), session("b", project: "orc"),
+                        session("c", project: "spice"), session("d", project: "folder")]
+        let workspaces = [Workspace(id: "spice", path: "/code/spice", displayName: "spiceai-project", hostId: nil),
+                          Workspace(id: "orc", path: "/code/orc", displayName: nil, hostId: nil)]
+        var order = SessionSidebarOrder()
+        var sections = order.sections(of: sessions, workspaces: workspaces)
+        XCTAssertEqual(sections.map(\.project.name), ["spiceai-project", "orc", "folder"])
+        XCTAssertEqual(sections.map(\.count), [3, 1, 1])
+        XCTAssertEqual(sections[0].rows.map(\.id), ["a", "a-one", "c"])
+        XCTAssertEqual(sections[0].rows[1].parentID, "a")
+        // Moving a session within its section reorders that section only.
+        order.move(fromOffsets: [2], toOffset: 0, rows: sections[0].rows)
+        sections = order.sections(of: sessions, workspaces: workspaces)
+        XCTAssertEqual(sections[0].rows.map(\.id), ["c", "a", "a-one"])
+        XCTAssertEqual(sections.map(\.project.name), ["spiceai-project", "orc", "folder"])
+        // A collapsed parent hides its children but the count includes them.
+        let collapsed = order.sections(of: sessions, workspaces: workspaces, collapsed: ["a"])[0]
+        XCTAssertEqual(collapsed.rows.map(\.id), ["c", "a"])
+        XCTAssertEqual(collapsed.count, 3)
+    }
 }

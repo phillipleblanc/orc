@@ -2,23 +2,39 @@ import Foundation
 import SwiftUI
 import OrcKit
 
+/// Sessions in a collapsible section per project. Sessions can be dragged within their project.
 struct SessionSidebarList<RowContent: View>: View {
     @ObservedObject var organization: SessionSidebarModel
-    let hierarchy: SessionHierarchy
-    let search: String
-    let collapsed: Set<String>
+    let sections: [SessionSidebarSection]
+    @Binding var collapsedProjects: Set<String>
     @Binding var selection: String?
-    @ViewBuilder var rowContent: (SessionSidebarOrder.Row) -> RowContent
+    @ViewBuilder var rowContent: (SessionSidebarSection, SessionSidebarOrder.Row) -> RowContent
 
     var body: some View {
-        let rows = organization.order.rows(in: hierarchy, matching: search, collapsed: collapsed)
+        let names = Dictionary(grouping: sections, by: \.project.name)
         List(selection: $selection) {
-            ForEach(rows) { row in
-                rowContent(row).tag(row.id)
-                    .moveDisabled(!search.isEmpty || !organization.loaded)
-            }
-            .onMove { source, destination in
-                organization.move(fromOffsets: source, toOffset: destination, rows: rows, search: search)
+            ForEach(sections) { section in
+                Section(isExpanded: Binding(
+                    get: { !collapsedProjects.contains(section.id) },
+                    set: { expanded in if expanded { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) } }
+                )) {
+                    ForEach(section.rows) { row in
+                        rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
+                    }
+                    .onMove { source, destination in
+                        organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
+                    }
+                } header: {
+                    HStack {
+                        Text((names[section.project.name]?.count ?? 0) > 1 ? "\(section.project.name) · \(section.project.path)" : section.project.name)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text("\(section.count)").monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .help(section.project.path)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(section.project.name), \(section.count) session\(section.count == 1 ? "" : "s")")
+                }
             }
         }.listStyle(.sidebar)
     }

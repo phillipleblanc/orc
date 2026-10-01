@@ -272,7 +272,8 @@ struct SessionWindow: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("autoAttachSessions") private var autoAttachSessions = false
-    @State private var projectFilter = SessionProjectFilter()
+    /// Projects whose sidebar sections are collapsed, by project id, one per line.
+    @AppStorage("collapsedSidebarProjects") private var collapsedProjectsStorage = ""
     @State private var attachedSession: String?
     @State private var requestedAttach: String?
     @State private var renamingSession: Session?
@@ -281,12 +282,13 @@ struct SessionWindow: View {
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     var attached: Bool { selected != nil && attachedSession == selected?.id }
     var mode: SessionWindowMode { selected == nil ? .compact : attachedSession != nil ? .attached : .details }
-    var projectSessions: [Session] { projectFilter.sessions(in: model.sessions) }
-    var hierarchy: SessionHierarchy {
-        projectFilter.projectID == nil ? model.hierarchy : SessionHierarchy(sessions: projectSessions)
+    var hierarchy: SessionHierarchy { model.hierarchy }
+    var sections: [SessionSidebarSection] {
+        sidebarOrder.order.sections(of: model.sessions, workspaces: model.workspaces, collapsed: collapsedParents)
     }
-    var visibleRows: [SessionSidebarOrder.Row] {
-        sidebarOrder.order.rows(in: hierarchy, collapsed: collapsedParents)
+    private var collapsedProjects: Binding<Set<String>> {
+        Binding(get: { Set(collapsedProjectsStorage.split(separator: "\n").map(String.init)) },
+                set: { collapsedProjectsStorage = $0.sorted().joined(separator: "\n") })
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -320,8 +322,8 @@ struct SessionWindow: View {
         .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
         .sheet(isPresented: $model.showOpen) { OpenConversationView(model: model) }
         .onChange(of: model.selected) { previous, _ in
-            if let selected, let projectID = projectFilter.projectID, selected.worktreeId != projectID {
-                projectFilter.projectID = nil
+            if let selected, collapsedProjects.wrappedValue.contains(selected.worktreeId) {
+                collapsedProjects.wrappedValue.remove(selected.worktreeId)
             }
             let explicitlyRequested = requestedAttach != nil && requestedAttach == model.selected
             requestedAttach = nil
@@ -336,11 +338,6 @@ struct SessionWindow: View {
             openRequestedAttachment()
         }
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
-        .onChange(of: model.notificationNavigation) { _, _ in projectFilter.projectID = nil }
-        .onChange(of: model.sessions) { _, sessions in projectFilter.reconcile(with: sessions) }
-        .onChange(of: projectFilter) { _, _ in
-            if let selected, !projectSessions.contains(where: { $0.id == selected.id }) { model.selected = nil }
-        }
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: attachedSession) { _, _ in markVisibleOutputRead() }
@@ -351,21 +348,15 @@ struct SessionWindow: View {
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
     }
     private var sidebar: some View {
-        let rows = visibleRows
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             HStack {
                 Text("Sessions").font(.title2.bold())
                 Spacer()
-            }.padding(.horizontal, 16).padding(.top, 12)
-            SessionProjectPicker(projects: SessionProjectFilter.projects(in: model.sessions, workspaces: model.workspaces),
-                                 selection: $projectFilter.projectID)
-                .accessibilityIdentifier("session-project-filter")
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.vertical, 12)
-            SessionSidebarList(organization: sidebarOrder, hierarchy: hierarchy, search: "",
-                               collapsed: collapsedParents, selection: $model.selected) { row in
-                sessionRow(row.session, name: hierarchy.displayName(for: row.session),
-                           hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: rows)
+            }.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+            SessionSidebarList(organization: sidebarOrder, sections: sections, collapsedProjects: collapsedProjects,
+                               selection: $model.selected) { section, row in
+                sessionRow(row.session, name: section.hierarchy.displayName(for: row.session),
+                           hasChildren: row.hasChildren, isChild: row.parentID != nil, rows: section.rows)
             }
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
             if model.sessions.isEmpty, !model.loading {
@@ -376,7 +367,7 @@ struct SessionWindow: View {
                 }
             }
             HStack {
-                Text("\(projectSessions.count) session\(projectSessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Toggle(isOn: $autoAttachSessions) {
                     Image(systemName: autoAttachSessions ? "bolt.fill" : "bolt.slash")
@@ -417,8 +408,7 @@ struct SessionWindow: View {
                         .accessibilityHidden(true)
                     Text(name).font(.headline).lineLimit(1)
                 }
-                Text([URL(fileURLWithPath: session.worktreePath).lastPathComponent, session.agentIdentity]
-                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                Text(session.agentIdentity ?? "terminal")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
@@ -500,7 +490,6 @@ struct SessionWindow: View {
     }
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
-        if let projectID = projectFilter.projectID, projectID != session.worktreeId { projectFilter.projectID = nil }
         if model.selected == session.id { attach(session) }
         else { requestedAttach = session.id; model.selected = session.id }
     }
