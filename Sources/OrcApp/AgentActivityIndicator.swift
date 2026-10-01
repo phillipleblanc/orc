@@ -1,11 +1,28 @@
 import SwiftUI
 import OrcKit
 
+/// An agent's activity, or a muted bell for a session whose notifications are muted.
 struct AgentActivityIndicator: View {
     let activity: AgentActivity
+    var muted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var label: String { muted ? "Notifications muted · \(activity.label)" : activity.label }
+
     var body: some View {
+        Group {
+            if muted {
+                Image(systemName: "bell.slash.fill").foregroundStyle(.secondary)
+            } else {
+                indicator
+            }
+        }
+        .font(.system(size: 12)).frame(width: 12, height: 12)
+        .accessibilityElement(children: .ignore).accessibilityLabel(label)
+        .help(label)
+    }
+
+    @ViewBuilder private var indicator: some View {
         Group {
             switch activity {
             case .active:
@@ -29,8 +46,5 @@ struct AgentActivityIndicator: View {
                 Image(systemName: "xmark.circle").foregroundStyle(.secondary)
             }
         }
-        .font(.system(size: 12)).frame(width: 12, height: 12)
-        .accessibilityElement(children: .ignore).accessibilityLabel(activity.label)
-        .help(activity.label)
     }
 }

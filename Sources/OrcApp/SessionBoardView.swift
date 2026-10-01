@@ -220,7 +220,7 @@ struct SessionBoardView: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 270, maximum: 400), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                 ForEach(sessions) { session in
-                    BoardSessionCard(session: session, activity: model.activity(for: session), organization: organization,
+                    BoardSessionCard(session: session, activity: model.activity(for: session), muted: model.isMuted(session), organization: organization,
                                      earlier: neighbor(of: session, in: allSessions, offset: -1),
                                      later: neighbor(of: session, in: allSessions, offset: 1)) {
                         model.requestAttachment(to: session)
@@ -248,7 +248,7 @@ struct SessionBoardView: View {
 
     @ViewBuilder private var floatingCard: some View {
         if let drag {
-            BoardSessionCard(session: drag.session, activity: model.activity(for: drag.session), organization: organization,
+            BoardSessionCard(session: drag.session, activity: model.activity(for: drag.session), muted: model.isMuted(drag.session), organization: organization,
                              earlier: nil, later: nil, attach: {})
                 .frame(width: drag.cardFrame.width, height: drag.cardFrame.height)
                 .scaleEffect(drag.phase == .settling || reduceMotion ? 1 : 1.025)
@@ -309,6 +309,7 @@ struct SessionBoardView: View {
 private struct BoardSessionCard: View {
     let session: Session
     let activity: AgentActivity
+    let muted: Bool
     @ObservedObject var organization: SessionBoardModel
     let earlier: String?
     let later: String?
@@ -330,8 +331,8 @@ private struct BoardSessionCard: View {
                     .accessibilityIdentifier("board-attach-\(session.handle)")
             }
             HStack(spacing: 7) {
-                if session.agentIdentity != nil { AgentActivityIndicator(activity: activity).accessibilityHidden(true) }
-                Text(activity.label).font(.caption).lineLimit(1)
+                if session.agentIdentity != nil { AgentActivityIndicator(activity: activity, muted: muted).accessibilityHidden(true) }
+                Text(muted ? "Notifications muted · \(activity.label)" : activity.label).font(.caption).lineLimit(1)
                 Spacer(minLength: 0)
                 if let agent = session.agentIdentity { Text(agent).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }

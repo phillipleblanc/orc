@@ -59,6 +59,7 @@ import OrcKit
     @Published var selected: String?
     @Published var error: String?
     @Published var reviewError: String?
+    @Published private(set) var mutes = SessionMutes()
     @Published var showCreate = false
     @Published var showProject = false
     @Published var showPhonePairing = false
@@ -77,6 +78,8 @@ import OrcKit
     @Published var reopeningAs: ClosedSession?
     let service = SessionService()
     private var closedListedFor: [String]?
+    /// Whether the closed sessions have been listed, so names that are neither running nor recently closed are known.
+    private var closedLoaded = false
     private var closedListedAt = Date.distantPast
     var revealWindow: (() -> Void)?
     private var reviewState = AgentReviewState()
@@ -88,6 +91,8 @@ import OrcKit
         guard monitorSessions else { return }
         do { reviewState = try AgentReviewStore.load(); unreadKeys = reviewState.unreadKeys }
         catch { reviewError = "Could not load agent review state: \(error.localizedDescription)" }
+        do { mutes = try SessionMuteStore.load() }
+        catch { reviewError = "Could not load muted sessions: \(error.localizedDescription)" }
         IdleNotifications.shared.onSelect = { [weak self] target in
             Task { await self?.openNotification(target) }
         }
@@ -144,8 +149,31 @@ import OrcKit
         do { try AgentReviewStore.save(reviewState); reviewError = nil }
         catch { reviewError = "Could not save agent review state: \(error.localizedDescription)" }
     }
+    func isMuted(_ session: Session) -> Bool { mutes.isMuted(session.name) }
+    func statusLabel(for session: Session) -> String {
+        isMuted(session) ? "Notifications muted · \(activity(for: session).label)" : activity(for: session).label
+    }
+    func setMuted(_ muted: Bool, for session: Session) {
+        var updated = mutes
+        updated.set(muted, for: session.name)
+        saveMutes(updated)
+    }
+    /// Renames a session; its notes and its mute follow it.
+    func rename(_ session: Session, to name: String) async throws {
+        try await service.rename(handle: session.handle, name: name)
+        var updated = mutes
+        updated.rename(session.name, to: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        saveMutes(updated)
+    }
+    private func saveMutes(_ updated: SessionMutes) {
+        guard updated != mutes else { return }
+        mutes = updated
+        updateDockBadge()
+        do { try SessionMuteStore.save(mutes); reviewError = nil }
+        catch { reviewError = "Could not save muted sessions: \(error.localizedDescription)" }
+    }
     private func updateDockBadge() {
-        let count = sessions.filter { activity(for: $0) == .unread }.count
+        let count = mutes.unmuted(sessions).filter { activity(for: $0) == .unread }.count
         guard badgeCount != count else { return }
         badgeCount = count
         let previous = badgeTask
@@ -173,10 +201,15 @@ import OrcKit
             let completed = reviewState.update(sessions: sessions, activities: activities, pruneMissing: !result.truncated)
             if reviewState != previous { updateReviewState() }
             updateDockBadge()
-            for session in completed {
+            for session in mutes.unmuted(completed) {
                 Task { await IdleNotifications.shared.postIdle(session) }
             }
             await refreshClosed()
+            if !result.truncated, closedLoaded {
+                var pruned = mutes
+                pruned.prune(keeping: Set(sessions.map(\.name) + closed.map(\.name)))
+                saveMutes(pruned)
+            }
             error = result.truncated ? "The runtime returned \(sessions.count) of \(result.totalCount) sessions." : nil
             if let selected, !sessions.contains(where: { $0.id == selected }) { self.selected = nil }
         } catch {
@@ -197,7 +230,7 @@ extension SessionModel {
         let names = sessions.map(\.name).sorted()
         guard names != closedListedFor || Date().timeIntervalSince(closedListedAt) > 30 else { return }
         closedListedFor = names; closedListedAt = Date()
-        if let listed = try? await service.closedSessions() { closed = listed }
+        if let listed = try? await service.closedSessions() { closed = listed; closedLoaded = true }
     }
     /// Reopens a closed agent session, resuming its conversation, and attaches to it.
     func reopen(_ session: ClosedSession, as name: String? = nil) async throws {
@@ -380,7 +413,7 @@ struct SessionWindow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     if session.agentIdentity != nil {
-                        AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
+                        AgentActivityIndicator(activity: model.activity(for: session), muted: model.isMuted(session)).accessibilityHidden(true)
                     } else {
                         // Keeps names aligned with agent rows.
                         Color.clear.frame(width: 12, height: 12).accessibilityHidden(true)
@@ -394,13 +427,19 @@ struct SessionWindow: View {
         }
         .padding(.vertical, 5)
         .accessibilityElement(children: hasChildren ? .contain : .combine)
-        .accessibilityValue(model.activity(for: session).label)
-        .help(model.activity(for: session).label + " · Drag to reorder")
+        .accessibilityValue(model.statusLabel(for: session))
+        .help(model.statusLabel(for: session) + " · Drag to reorder")
         .contextMenu {
             if !isChild, hierarchy.canCreateChild(of: session) {
                 Button("Create Child…", systemImage: "plus") { creatingChildOf = session }
             }
             Button("Rename Session…", systemImage: "pencil") { renamingSession = session }
+            if session.agentIdentity != nil {
+                let muted = model.isMuted(session)
+                Button(muted ? "Unmute Notifications" : "Mute Notifications", systemImage: muted ? "bell" : "bell.slash") {
+                    model.setMuted(!muted, for: session)
+                }
+            }
             Divider()
             Button("Move Up", systemImage: "arrow.up") {
                 sidebarOrder.move(session.id, by: -1, rows: rows, search: "")
@@ -432,9 +471,9 @@ struct SessionWindow: View {
                     Text(hierarchy.displayName(for: session)).font(.title2.bold()).textSelection(.enabled)
                     HStack(spacing: 7) {
                         if session.agentIdentity != nil {
-                            AgentActivityIndicator(activity: model.activity(for: session)).accessibilityHidden(true)
+                            AgentActivityIndicator(activity: model.activity(for: session), muted: model.isMuted(session)).accessibilityHidden(true)
                         }
-                        Text(model.activity(for: session).label)
+                        Text(model.statusLabel(for: session))
                     }.font(.callout)
                     Divider()
                     VStack(alignment: .leading, spacing: 6) {
@@ -676,7 +715,7 @@ struct RenameSessionView: View {
     private func rename() async {
         saving = true; defer { saving = false }
         do {
-            try await model.service.rename(handle: session.handle, name: name)
+            try await model.rename(session, to: name)
             await model.refresh(); dismiss()
         } catch { self.error = error.localizedDescription }
     }
