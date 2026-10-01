@@ -1,6 +1,6 @@
 # Orc
 
-<img src="Resources/AppIcon.png" alt="Orc: an orca with a terminal-chevron tail on an ocean-blue tile" width="128" height="128">
+<img src="Resources/AppIcon.png" alt="Orc: an orca fin surfacing from a terminal window on an ocean-blue tile" width="128" height="128">
 
 Native macOS clients for agent and shell sessions that keep running in the background. The SwiftUI app lists and creates sessions and attaches to them in embedded libghostty views. The `orc` CLI lists, creates, and attaches to those same sessions, and the official Orca mobile app can view and type into them.
 
@@ -165,7 +165,7 @@ A restart ends every session. The next time Orc or `orc` starts the runtime, the
 
 ## Build and install
 
-Requires Apple Silicon, macOS 14+, Python 3.12+, npm, and Xcode with the macOS SDK. Install the Metal component if necessary:
+Requires Apple Silicon, macOS 14+, Python 3.12+, npm, and Xcode with the macOS SDK. The app icon's source is `Resources/AppIcon.svg`; after editing it, render the PNG the build uses with `swift scripts/render-icon.swift Resources/AppIcon.svg Resources/AppIcon.png 1024`. Install the Metal component if necessary:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain

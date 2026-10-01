@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1F5FC0"/><stop offset="1" stop-color="#0A1D44"/></linearGradient>
+    <radialGradient id="shine" cx="0.5" cy="0" r="0.75"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.35"/></filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#shine)"/>
+  <g clip-path="url(#tile)">
+
+    <path d="M 530,410 C 566,313 584,226 591,180 C 652,208 703,313 710,410 Z" fill="#F5F7FB" stroke="#F5F7FB" stroke-width="13" stroke-linejoin="round" />
+    <rect x="196" y="384" width="632" height="420" rx="64" fill="#0B0F17"/>
+    <path d="M 300,560 L 380,620 L 300,680" fill="none" stroke="#3FD8FF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="414" y="660" width="120" height="38" rx="19" fill="#3FD8FF"/>
+
+  </g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="3"/>
+</svg>
