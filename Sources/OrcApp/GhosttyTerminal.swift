@@ -179,11 +179,83 @@ import OrcKit
     }
 }
 
-struct GhosttyTerminal: NSViewRepresentable {
+/// The terminals of the most recently shown sessions, kept attached so switching back to one is
+/// immediate and keeps its scrollback, scroll position and selection. Only the shown terminal draws.
+@MainActor final class TerminalCache {
+    static let limit = 10
+    let container = TerminalContainerView()
+    private let makeTerminal: @MainActor (Session) -> GhosttyView
+    private var terminals: [String: GhosttyView] = [:]
+    /// Session handles, most recently shown first.
+    private var recent: [String] = []
+
+    var handles: [String] { recent }
+
+    init(makeTerminal: @escaping @MainActor (Session) -> GhosttyView = { GhosttyView(session: $0) }) { self.makeTerminal = makeTerminal }
+
+    func terminal(for handle: String) -> GhosttyView? { terminals[handle] }
+
+    func show(_ session: Session) {
+        if let existing = terminals[session.handle], existing.isDetached { evict(session.handle) }
+        let terminal = terminals[session.handle] ?? {
+            let terminal = makeTerminal(session)
+            terminals[session.handle] = terminal
+            container.addSubview(terminal)
+            return terminal
+        }()
+        terminal.setAccessibilityLabel("Terminal — \(session.name)")
+        recent.removeAll { $0 == session.handle }
+        recent.insert(session.handle, at: 0)
+        container.show(terminal)
+        while recent.count > Self.limit, let oldest = recent.last { evict(oldest) }
+    }
+
+    /// Drops the terminals of sessions that no longer exist.
+    func keep(_ sessions: [Session]) {
+        let handles = Set(sessions.map(\.handle))
+        for handle in recent where !handles.contains(handle) { evict(handle) }
+    }
+
+    private func evict(_ handle: String) {
+        if let terminal = terminals.removeValue(forKey: handle) {
+            terminal.detach()
+            terminal.removeFromSuperview()
+        }
+        recent.removeAll { $0 == handle }
+    }
+}
+
+/// Holds the cached terminals and sizes only the shown one, so a hidden terminal never resizes its
+/// session, which another viewer may be sizing.
+final class TerminalContainerView: NSView {
+    private weak var shown: GhosttyView?
+
+    func show(_ terminal: GhosttyView) {
+        for case let other as GhosttyView in subviews where other !== terminal { other.setShown(false) }
+        shown = terminal
+        terminal.frame = bounds
+        terminal.setShown(true)
+        if let window { window.makeFirstResponder(terminal) }
+    }
+
+    override func layout() {
+        super.layout()
+        shown?.frame = bounds
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let shown, let window { window.makeFirstResponder(shown) }
+    }
+}
+
+/// Shows the selected session's terminal from the cache. The cache outlives this view.
+struct TerminalHost: NSViewRepresentable {
+    let cache: TerminalCache
     let session: Session
-    func makeNSView(context: Context) -> GhosttyView { GhosttyView(session: session) }
-    func updateNSView(_ view: GhosttyView, context: Context) { view.setAccessibilityLabel("Terminal — \(session.name)") }
-    static func dismantleNSView(_ view: GhosttyView, coordinator: ()) { view.detach() }
+    func makeNSView(context: Context) -> TerminalContainerView { cache.container }
+    func updateNSView(_ view: TerminalContainerView, context: Context) { cache.show(session) }
+    static func dismantleNSView(_ view: TerminalContainerView, coordinator: ()) {}
 }
 
 @MainActor final class GhosttyView: NSView, @preconcurrency NSTextInputClient {
@@ -197,7 +269,25 @@ struct GhosttyTerminal: NSViewRepresentable {
     private var handlingKey = false
     private var tracking: NSTrackingArea?
     private var detached = false
+    private var shown = true
     private var visibilityObserver: NSObjectProtocol?
+
+    var isDetached: Bool { detached }
+
+    /// A hidden terminal stays attached and keeps its scrollback, but stops drawing and loses focus.
+    func setShown(_ shown: Bool) {
+        self.shown = shown
+        isHidden = !shown
+        if !shown, let surface { ghostty_surface_set_focus(surface, false) }
+        updateOcclusion()
+    }
+
+    private func updateOcclusion() {
+        guard let surface else { return }
+        let visible = shown && (window?.occlusionState.contains(.visible) ?? false)
+        ghostty_surface_set_occlusion(surface, visible)
+        if visible { ghostty_surface_refresh(surface) }
+    }
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
     init(session: Session, command: String? = nil) {
@@ -216,7 +306,9 @@ struct GhosttyTerminal: NSViewRepresentable {
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard let window, surface == nil, !detached, let app = GhosttyEngine.shared.app else { return }
+        // A cached terminal leaves the window while no session is selected and returns with its surface.
+        if surface != nil { updateOcclusion(); return }
+        guard let window, !detached, let app = GhosttyEngine.shared.app else { return }
         var config = ghostty_surface_config_new()
         config.platform_tag = GHOSTTY_PLATFORM_MACOS
         config.platform.macos.nsview = Unmanaged.passUnretained(self).toOpaque()
@@ -238,13 +330,9 @@ struct GhosttyTerminal: NSViewRepresentable {
         updateSize()
         updateAppearance()
         visibilityObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let surface = self.surface else { return }
-                ghostty_surface_set_occlusion(surface, self.window?.occlusionState.contains(.visible) ?? true)
-                ghostty_surface_refresh(surface)
-            }
+            MainActor.assumeIsolated { self?.updateOcclusion() }
         }
-        window.makeFirstResponder(self)
+        if shown { window.makeFirstResponder(self) }
     }
     func detach() {
         detached = true; markdownPress = nil; hoveredLink = nil

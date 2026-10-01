@@ -274,6 +274,7 @@ struct SessionWindow: View {
     @State private var renamingSession: Session?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
+    @State private var terminals = TerminalCache()
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     /// Whether the selected session's terminal is showing.
     var showsTerminal: Bool { selected.map { model.connected && $0.connected } ?? false }
@@ -340,6 +341,7 @@ struct SessionWindow: View {
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
+        .onChange(of: model.sessions) { _, sessions in terminals.keep(sessions) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             markVisibleOutputRead()
             Task { await notifications.refreshSettings(); model.refreshDockBadge() }
@@ -399,7 +401,7 @@ struct SessionWindow: View {
     private func detail(_ session: Session) -> some View {
         Group {
             if model.connected, session.connected {
-                GhosttyTerminal(session: session).id(session.id)
+                TerminalHost(cache: terminals, session: session)
             } else {
                 ContentUnavailableView(model.connected ? "Session Offline" : "Runtime Not Connected", systemImage: "bolt.horizontal.circle",
                     description: Text(model.connected ? "\(session.name) is not connected. Orc reconnects when it is available."
