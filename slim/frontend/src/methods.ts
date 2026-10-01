@@ -259,9 +259,15 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'history.list': async () => ({ sessions: await history.list() }),
 
-    'history.reopen': (params) => history.reopen(
-      { entry: typeof params.entry === 'string' ? params.entry : undefined, name: typeof params.name === 'string' ? params.name : undefined },
-      typeof params.as === 'string' && params.as ? params.as : undefined),
+    'history.conversations': async (params) => ({
+      conversations: await history.conversations(typeof params.query === 'string' ? params.query : '', params.allProjects === true,
+        Math.min(200, Math.max(1, Number(params.limit ?? 50))))
+    }),
+
+    'history.reopen': (params) => {
+      const text = (value: unknown) => typeof value === 'string' && value ? value : undefined
+      return history.reopen({ entry: text(params.entry), name: text(params.name), conversation: text(params.conversation) }, text(params.as))
+    },
 
     'terminal.read': async (params) => {
       const target = session(params.terminal)

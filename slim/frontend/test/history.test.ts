@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { existsSync, realpathSync } from 'node:fs'
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -67,7 +67,9 @@ test('recently closed lists resumable agent sessions from the last week, newest 
   await ended(profile, { name: 'busy', agent: 'pi', endedAgo: 60_000, events: [reply('b-1', 'x')] })
   const expired = await ended(profile, { name: 'expired', agent: 'pi', endedAgo: 31 * DAY, events: [reply('e-1', 'x')] })
 
-  const frontend = await Frontend.start(profile)
+  // Agent histories elsewhere on this computer stay out of the listing.
+  const none = join(profile, 'no-agent-history')
+  const frontend = await Frontend.start(profile, [], { CODEX_HOME: none, CLAUDE_CONFIG_DIR: none, PI_CODING_AGENT_DIR: none })
   t.after(() => frontend.kill('SIGKILL'))
   await frontend.rpc('terminal.create', { name: 'busy', cwd: profile, argv: ['/bin/sleep', '600'] })
 
@@ -92,18 +94,19 @@ test('recently closed lists resumable agent sessions from the last week, newest 
     const orc = await cli(profile)
     const listed = await orc(['history'])
     assert.equal(listed.code, 0, listed.stderr)
-    assert.match(listed.stdout, /^SESSION\tAGENT\tCLOSED\tPROJECT\ncoder\tcodex\t10m ago\t.+\nhelper\tpi\t1h ago\t/)
-    const json = await orc(['history', '--json'])
-    assert.deepEqual(JSON.parse(json.stdout).map((session: { name: string }) => session.name), ['coder', 'helper'])
+    assert.match(listed.stdout, /^Recently closed\nSESSION\tAGENT\tCLOSED\tPROJECT\ncoder\tcodex\t10m ago\t.+\nhelper\tpi\t1h ago\t.+\n\nConversations in registered projects\n  No conversations\.\n$/)
+    const json = JSON.parse((await orc(['history', 'help', '--json'])).stdout)
+    assert.deepEqual(json.sessions.map((session: { name: string }) => session.name), ['helper'])
+    assert.deepEqual(json.conversations, [])
     const refused = await orc(['reopen', 'shell'])
     assert.notEqual(refused.code, 0)
-    assert.match(refused.stderr, /no recently closed agent session shell/)
+    assert.match(refused.stderr, /no recently closed agent session or conversation shell/)
   } else {
     t.diagnostic(`skipped the CLI checks: build the orc CLI (${ORC})`)
   }
 })
 
-test('a closed agent reopens with its conversation, under its name or another', { skip: !AGENTS && 'set SLIM_AGENT_TESTS=1' }, async (t) => {
+test('a closed agent reopens with its conversation, under its name or another, and its conversation opens once', { skip: !AGENTS && 'set SLIM_AGENT_TESTS=1' }, async (t) => {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))
   const project = join(profile, 'project')
@@ -123,7 +126,28 @@ test('a closed agent reopens with its conversation, under its name or another', 
   assert.equal(reopened.code, 0, reopened.stderr)
   assert.equal(JSON.parse(reopened.stdout).name, 'helper-2')
   assert.deepEqual((await frontend.rpc('history.list')).sessions, [])
-  await frontend.rpc('agent.send', { to: 'helper-2', text: 'Which single word did you reply with earlier in this conversation? Reply with only that word.' })
+  const recall = 'Which single word did you reply with earlier in this conversation? Reply with only that word.'
+  await frontend.rpc('agent.send', { to: 'helper-2', text: recall })
+  assert.equal(await answered('helper-2'), 'BRAVO')
+
+  // The conversation library knows the session has it open, and opening it again switches to that session.
+  const [conversation] = (await frontend.rpc('history.conversations', { query: 'BRAVO', allProjects: true })).conversations
+    .filter((candidate: { cwd: string }) => candidate.cwd === realpathSync(project))
+  assert.equal(conversation.openIn, 'helper-2')
+  assert.deepEqual(await frontend.rpc('history.reopen', { conversation: conversation.id }),
+    { handle: (await frontend.rpc('agent.status', { name: 'helper-2' })).handle, name: 'helper-2', agent: 'pi', alreadyOpen: true })
+
+  // Once its session closes, opening the conversation reopens that session.
+  await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
+  assert.equal((await frontend.rpc('history.reopen', { conversation: conversation.id })).name, 'helper-2')
+  assert.deepEqual((await frontend.rpc('history.list')).sessions, [])
+  await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
+
+  // Without a closed session, it opens from the agent's own history, named after its title.
+  await rm(join(profile, 'ended'), { recursive: true, force: true })
+  const opened = await frontend.rpc('history.reopen', { conversation: conversation.id })
+  assert.equal(opened.name, 'helper-2')
+  await frontend.rpc('agent.send', { to: 'helper-2', text: recall })
   assert.equal(await answered('helper-2'), 'BRAVO')
   await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
 })

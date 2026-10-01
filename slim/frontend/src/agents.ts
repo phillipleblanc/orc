@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { agentArgv, installAgentHooks, isAgentKind, type AgentHooks, type AgentKind, type ProviderSession } from './agent-hooks.ts'
+import { agentArgv, installAgentHooks, isAgentKind, resumedConversation, type AgentHooks, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import { AgentMonitor } from './agent-monitor.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import type { Projects } from './projects.ts'
@@ -146,6 +146,14 @@ export class AgentDirectory extends EventEmitter {
 
   monitor(session: TerminalSession): AgentMonitor | undefined {
     return this.records.get(session)?.monitor
+  }
+
+  /** The conversation each running agent is on: the one its hooks reported, or the one it was started to resume. */
+  conversations(): { name: string; agent: AgentKind; conversation: ProviderSession }[] {
+    return [...this.records.values()].map(({ session, monitor }) => ({
+      name: session.meta.name, agent: monitor.kind,
+      conversation: monitor.providerSession.id || monitor.providerSession.transcriptPath ? monitor.providerSession : resumedConversation(monitor.kind, session.meta.argv)
+    }))
   }
 
   isAgent(session: TerminalSession): boolean {

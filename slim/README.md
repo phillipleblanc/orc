@@ -158,6 +158,20 @@ listed). Each has its last reply from the agent's events and the non-blank lines
 `history.reopen` starts one again, by `entry` or `name`, under its name or `as`, the same way a restore
 does. Ended sessions are deleted 30 days after they end, with their agent events.
 
+`history.conversations` searches the agents' own histories: Codex's `sessions/` (titles from its
+`session_index.jsonl`), Claude's `projects/*/` and Pi's `sessions/*/`, under `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR` from the login shell or their defaults. Only the first
+and last 256 KiB of a transcript are read: the start holds its folder and first prompt, the end its
+latest title and reply. Conversations without a prompt from a person are left out, including Codex
+reviewer, subagent and voice threads, and injected instructions are not taken as the first prompt.
+Parsed transcripts are cached in `<profile>/conversations.json` by size and modification time. Results
+are newest first and, unless `allProjects`, in a registered project; conversations of recently closed
+sessions are left to `history.list`. `openIn` names a running session on the conversation: the one its
+hooks reported, or the one its argv resumes. `history.reopen` with `conversation` (an id or a prefix of
+at least six characters; a `name` that matches no closed session is tried the same way) returns that
+running session with `alreadyOpen`, reopens the recently closed session that has the conversation, or
+starts a new session in its folder named after its title.
+
 ## Restarting the computer
 
 A restart ends every session. The first frontend after it starts the sessions that were running

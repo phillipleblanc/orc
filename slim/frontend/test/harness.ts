@@ -40,10 +40,10 @@ export class Frontend {
   }
 
   /** Starts a frontend on a free port unless `extraArgs` names one; the default port belongs to the developer's runtime. */
-  static async start(profile: string, extraArgs: string[] = []): Promise<Frontend> {
+  static async start(profile: string, extraArgs: string[] = [], env: Record<string, string> = {}): Promise<Frontend> {
     const port = extraArgs.includes('--port') ? [] : ['--port', '0']
     const child = spawn(process.execPath, [FRONTEND, '--profile', profile, '--holder', HOLDER, '--json', ...port, ...extraArgs], {
-      env: isolatedEnvironment(), stdio: ['ignore', 'pipe', 'pipe']
+      env: { ...isolatedEnvironment(), ...env }, stdio: ['ignore', 'pipe', 'pipe']
     })
     let stderr = ''
     child.stderr!.on('data', (chunk) => { stderr += chunk })

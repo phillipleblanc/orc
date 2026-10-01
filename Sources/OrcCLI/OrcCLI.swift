@@ -113,21 +113,44 @@ import COrcSupport
                 }
             }
         case "history":
-            guard options.isEmpty else { throw OrcError("Usage: orc history [--json]") }
-            let closed = try await service.closedSessions()
-            if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(closed))) }
-            else if closed.isEmpty { print("No recently closed agent sessions.") }
+            let allProjects = flag("--all")
+            guard options.count <= 1, options.first?.hasPrefix("--") != true else { throw OrcError("Usage: orc history [QUERY] [--all] [--json]") }
+            let query = options.first ?? ""
+            let terms = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+            let closed = try await service.closedSessions().filter { session in
+                let words = [session.name, session.agent, session.cwd, session.lastMessage ?? ""].joined(separator: "\n").lowercased()
+                return terms.allSatisfy { words.contains($0) }
+            }
+            let conversations = try await service.conversations(query: query, allProjects: allProjects, limit: 20)
+            if json {
+                try emit(["sessions": try JSONSerialization.jsonObject(with: JSONEncoder().encode(closed)),
+                          "conversations": try JSONSerialization.jsonObject(with: JSONEncoder().encode(conversations))])
+                return
+            }
+            print("Recently closed")
+            if closed.isEmpty { print("  No recently closed agent sessions\(query.isEmpty ? "" : " match").") }
             else {
                 print("SESSION\tAGENT\tCLOSED\tPROJECT")
                 for session in closed { print("\(safe(session.name))\t\(session.agent)\t\(session.age())\t\(safe(session.cwd))") }
             }
+            print("\nConversations\(allProjects ? "" : " in registered projects")")
+            if conversations.isEmpty { print("  No conversations\(query.isEmpty ? "" : " match").") }
+            else {
+                print("ID\tAGENT\tUPDATED\tPROJECT\tTITLE")
+                for conversation in conversations {
+                    let title = safe(conversation.displayTitle.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")
+                    print("\(conversation.id.prefix(12))\t\(conversation.agent)\t\(conversation.age())\t\(safe(URL(fileURLWithPath: conversation.cwd).lastPathComponent))\t\(title.prefix(60))\(conversation.openIn.map { " (open in \(safe($0)))" } ?? "")")
+                }
+            }
         case "reopen":
             let newName = try value("--name")
-            guard options.count == 1 else { throw OrcError("Usage: orc reopen NAME [--name NEW] [--json]") }
+            guard options.count == 1 else { throw OrcError("Usage: orc reopen NAME|ID [--name NEW] [--json]") }
             let reopened = try await service.reopen(name: options[0], as: newName)
-            if json { try emit(["handle": reopened.handle, "name": reopened.name, "attachCommand": "orc attach \(shellQuote(reopened.name))"]) }
-            else {
-                print("Reopened \(safe(reopened.name))\norc attach \(shellQuote(reopened.name))")
+            if json {
+                try emit(["handle": reopened.handle, "name": reopened.name, "alreadyOpen": reopened.alreadyOpen,
+                          "attachCommand": "orc attach \(shellQuote(reopened.name))"])
+            } else {
+                print("\(reopened.alreadyOpen ? "Already open as" : "Reopened") \(safe(reopened.name))\norc attach \(shellQuote(reopened.name))")
                 if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 { try await run(["attach", reopened.handle]) }
             }
         case "attach":
@@ -276,8 +299,8 @@ import COrcSupport
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
     orc agent                               Spawn agents and message them by name (orc agent --help)
-    orc history [--json]                     List agent sessions closed in the last week
-    orc reopen NAME [--name NEW] [--json]    Reopen one, resuming its conversation, and attach
+    orc history [QUERY] [--all] [--json]     Recently closed agent sessions and agent conversations
+    orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]

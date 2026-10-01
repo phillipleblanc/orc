@@ -138,12 +138,22 @@ The runtime listens on port 6768 on every interface. Pairing does not use Orca R
 Agent sessions closed in the last week can be reopened, resuming their conversations with their undelivered messages and wakes. In Orc, they are listed under **Recently Closed** below the sessions: click one to reopen it and attach, hover to see its last reply and screen, or choose **Reopen with New Name…** from its menu. **Reopen Closed Session** (⇧⌘T) reopens the most recent one. `orc attach`'s picker lists them after the running sessions.
 
 ```sh
-orc history                    # Agent sessions closed in the last week
+orc history                    # Agent sessions closed in the last week, and recent conversations
 orc reopen remove-dep          # Reopen one under its name and attach
 orc reopen remove-dep --name remove-dep-2
 ```
 
 Terminal sessions are not listed. A session that is reopened, or whose name is in use again, leaves the list.
+
+### Agent conversations
+
+**Open…** (⌘K) searches recently closed agent sessions and every Codex, Claude and Pi conversation in the agents' own histories, including ones started outside Orc. Conversations in registered projects are searched unless **All projects** is checked. Every word typed must appear in the title, first prompt, last reply or folder. The preview shows the first prompt and last reply; ↵ opens the selection in a new session in its folder, resuming the conversation and named after its title, and ⌥↵ asks for a name first. A conversation that a running session already has open switches to that session instead, and one that belongs to a recently closed session reopens that session. Close a conversation that is open in another app or terminal before opening it in Orc.
+
+```sh
+orc history cache flaky        # Closed sessions and conversations matching every word
+orc history --all              # Include conversations outside registered projects
+orc reopen 01a0f112-21e6       # Open a conversation by its id or the start of it
+```
 
 ### Restarting your Mac
 

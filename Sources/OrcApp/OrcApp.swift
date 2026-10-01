@@ -17,6 +17,7 @@ import OrcKit
                     Button("New Session…") { model.revealWindow?(); model.showCreate = true }.keyboardShortcut("n")
                 }
                 CommandGroup(after: .newItem) {
+                    Button("Open…") { model.revealWindow?(); model.showOpen = true }.keyboardShortcut("k")
                     Button("Session Overview") { openWindow(id: "overview") }
                         .keyboardShortcut("o", modifiers: [.command, .shift])
                     Button("Add Project…") { model.revealWindow?(); model.showProject = true }
@@ -61,6 +62,7 @@ import OrcKit
     @Published var showCreate = false
     @Published var showProject = false
     @Published var showPhonePairing = false
+    @Published var showOpen = false
     @Published var connected = false
     @Published var loading = false
     @Published private(set) var notificationNavigation = UUID()
@@ -204,6 +206,13 @@ extension SessionModel {
         await refresh()
         if let session = sessions.first(where: { $0.handle == reopened.handle }) { requestAttachment(to: session) }
     }
+    /// Opens an agent conversation in a new session, or switches to the session that has it open, and attaches.
+    func open(_ conversation: AgentConversation, as name: String? = nil) async throws {
+        let opened = try await service.open(conversation: conversation.id, as: name)
+        closedListedFor = nil
+        await refresh()
+        if let session = sessions.first(where: { $0.handle == opened.handle }) { requestAttachment(to: session) }
+    }
     func reopenLatest() async throws {
         guard let latest = closed.first else { return }
         do { try await reopen(latest) } catch { reopeningAs = latest; throw error }
@@ -275,6 +284,7 @@ struct SessionWindow: View {
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
+        .sheet(isPresented: $model.showOpen) { OpenConversationView(model: model) }
         .onChange(of: model.selected) { previous, _ in
             if let selected, let projectID = projectFilter.projectID, selected.worktreeId != projectID {
                 projectFilter.projectID = nil

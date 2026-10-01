@@ -163,6 +163,15 @@ export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks
   }
 }
 
+/** The conversation an argv built by `agentArgv` resumes, if any. */
+export function resumedConversation(kind: AgentKind, argv: string[]): ProviderSession {
+  const flag = kind === 'codex' ? 'resume' : kind === 'claude' ? '--resume' : '--session'
+  const index = argv.indexOf(flag)
+  const value = index >= 0 ? argv[index + 1] : undefined
+  if (!value || value.startsWith('-')) return {}
+  return kind === 'pi' && value.includes('/') ? { transcriptPath: value } : { id: value }
+}
+
 /**
  * The caller's part of an argv that `agentArgv` built, including the model and effort: everything
  * except the executable, Orc's own flags and hooks, and the conversation it resumed.

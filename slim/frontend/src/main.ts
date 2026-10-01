@@ -14,6 +14,7 @@ import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
+import { ConversationIndex } from './conversations.ts'
 import { SessionHistory } from './history.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
@@ -64,7 +65,7 @@ await devices.load()
 const keypair = await loadOrCreateKeypair(profile)
 const agents = new AgentDirectory(store, projects, profile)
 const wakes = new WakeDirectory(store, agents, profile)
-const history = new SessionHistory({ store, agents, projects })
+const history = new SessionHistory({ store, agents, projects }, new ConversationIndex(profile))
 const discovered = await store.discover()
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
