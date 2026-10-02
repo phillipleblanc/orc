@@ -95,8 +95,8 @@ struct SessionSidebarHeader: View {
     }
 }
 
-/// A session in the sidebar: its status icon and name, with its agent and overview group beneath the
-/// name. A child is indented under its parent; a parent with children can collapse them.
+/// A session in the sidebar: its status icon and name, with its agent, overview group and labels beneath
+/// the name. A child is indented under its parent; a parent with children can collapse them.
 struct SessionSidebarRow: View {
     let session: Session
     let name: String
@@ -104,6 +104,8 @@ struct SessionSidebarRow: View {
     let muted: Bool
     /// The session's overview group, unless it is ungrouped.
     var group: String? = nil
+    /// The names of the session's overview labels.
+    var labels: [String] = []
     let isChild: Bool
     /// Whether the session's children are collapsed, for a session that has children.
     let childrenCollapsed: Bool?
@@ -117,7 +119,7 @@ struct SessionSidebarRow: View {
                     Text(name).font(.headline).lineLimit(1)
                 }
                 // Aligned with the name: the icon is 12 points wide, followed by 8 points of spacing.
-                Text([session.agentIdentity ?? "terminal", group].compactMap { $0 }.joined(separator: " · "))
+                Text(detail)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .padding(.leading, 20)
             }
@@ -134,4 +136,6 @@ struct SessionSidebarRow: View {
         .padding(.leading, isChild ? 20 : 0)
         .padding(.vertical, 3)
     }
+
+    var detail: String { ([session.agentIdentity ?? "terminal"] + [group].compactMap { $0 } + labels).joined(separator: " · ") }
 }

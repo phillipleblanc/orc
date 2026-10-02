@@ -376,7 +376,8 @@ struct SessionWindow: View {
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
-                          group: board.board.group(of: session.name)?.name, isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
+                          group: board.board.group(of: session.name)?.name, labels: board.board.labels(for: session.name).map(\.name),
+                          isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }
         .accessibilityElement(children: hasChildren ? .contain : .combine)
