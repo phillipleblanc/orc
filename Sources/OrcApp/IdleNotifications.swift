@@ -18,17 +18,18 @@ import OrcKit
             }
         }
     }
-    private let center = UNUserNotificationCenter.current()
+    /// Nil outside an app bundle, where the notification center raises an exception.
+    private let center: UNUserNotificationCenter? = Bundle.main.bundleURL.pathExtension == "app" ? .current() : nil
     private var authorization: Task<Void, Never>?
     private var pendingSelection: Target?
 
     override private init() {
         super.init()
-        center.delegate = self
+        center?.delegate = self
     }
 
     func start() {
-        guard authorization == nil else { return }
+        guard authorization == nil, let center else { return }
         authorization = Task {
             do {
                 // Ask for every notification feature we use, including the Dock badge.
@@ -41,6 +42,7 @@ import OrcKit
     }
 
     private func isAuthorized() async -> Bool {
+        guard let center else { return false }
         let settings = await center.notificationSettings()
         let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
         if !allowed {
@@ -61,7 +63,7 @@ import OrcKit
     func setBadgeCount(_ count: Int) async {
         start()
         await authorization?.value
-        do { try await center.setBadgeCount(count) }
+        do { try await center?.setBadgeCount(count) }
         catch { warning = "Could not update the Dock badge: \(error.localizedDescription)" }
     }
 
@@ -80,7 +82,7 @@ import OrcKit
         // Reusing an identifier can silently update the previous notification
         // instead of presenting a banner for the next completed work cycle.
         let id = "orc-agent-idle-" + session.handle + "-" + UUID().uuidString
-        do { try await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
+        do { try await center?.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
         catch { warning = "Could not show the idle notification: \(error.localizedDescription)" }
     }
 

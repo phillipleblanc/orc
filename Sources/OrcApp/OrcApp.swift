@@ -10,7 +10,7 @@ import OrcKit
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
         Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board) }
-            .defaultSize(width: 380, height: 560)
+            .defaultSize(width: 1440, height: 936)
             .windowResizability(.contentMinSize)
             .commands {
                 CommandGroup(replacing: .newItem) {
@@ -253,11 +253,11 @@ extension SessionModel {
     }
 }
 
-/// The session list alone, or the list with the selected session's terminal.
-enum SessionWindowMode: Equatable {
-    case compact, attached
-    var size: NSSize { self == .compact ? NSSize(width: 380, height: 560) : NSSize(width: 1440, height: 936) }
-    var minimumWidth: CGFloat { self == .compact ? 340 : 900 }
+/// What the session window shows in place of a terminal.
+enum SessionPlaceholder: Equatable {
+    /// Nothing until the first listing, so the window does not flash a state that the listing replaces.
+    case loading
+    case runtimeNotConnected, offline(String), noProjects, noSessions, noSelection
 }
 
 struct SessionWindow: View {
@@ -278,7 +278,14 @@ struct SessionWindow: View {
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     /// Whether the selected session's terminal is showing.
     var showsTerminal: Bool { selected.map { model.connected && $0.connected } ?? false }
-    var mode: SessionWindowMode { selected == nil ? .compact : .attached }
+    /// What shows in place of the terminal, or nil while the selected session's terminal shows.
+    var placeholder: SessionPlaceholder? {
+        if showsTerminal { return nil }
+        if !model.connected { return selected != nil || model.error != nil ? .runtimeNotConnected : .loading }
+        if let selected { return .offline(selected.name) }
+        if model.workspaces.isEmpty { return .noProjects }
+        return model.sessions.isEmpty ? .noSessions : .noSelection
+    }
     var hierarchy: SessionHierarchy { model.hierarchy }
     var sections: [SessionSidebarSection] {
         sidebarOrder.order.sections(of: model.sessions, workspaces: model.workspaces, collapsed: collapsedParents)
@@ -290,11 +297,9 @@ struct SessionWindow: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                sidebar.frame(width: selected == nil ? nil : 260)
-                if let selected {
-                    Divider()
-                    detail(selected).frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                sidebar.frame(width: 260)
+                Divider()
+                detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if let error = sidebarOrder.error ?? model.reviewError ?? model.error ?? notifications.warning {
                 Divider()
@@ -303,8 +308,7 @@ struct SessionWindow: View {
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }
-        .frame(minWidth: mode.minimumWidth, minHeight: 440)
-        .background(SessionWindowSizer(mode: mode).allowsHitTesting(false).accessibilityHidden(true))
+        .frame(minWidth: 900, minHeight: 440)
         .background(TerminalWindowBackground(engine: ghostty, showingTerminal: showsTerminal).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar {
             ToolbarItem {
@@ -316,7 +320,6 @@ struct SessionWindow: View {
                 Button { inspectorShown.toggle() } label: { Label("Info", systemImage: "info.circle") }
                     .keyboardShortcut("i", modifiers: [.command, .option])
                     .help(inspectorShown ? "Hide Session Info (⌥⌘I)" : "Show Session Info (⌥⌘I)")
-                    .disabled(selected == nil)
             }
         }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
@@ -356,13 +359,6 @@ struct SessionWindow: View {
                            hasChildren: row.hasChildren, isChild: row.parentID != nil)
             }
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
-            if model.sessions.isEmpty, !model.loading {
-                if model.workspaces.isEmpty {
-                    Button("Add a Project…") { model.showProject = true }.padding()
-                } else {
-                    Text("Create a session with + or ⌘N.").font(.callout).foregroundStyle(.secondary).padding()
-                }
-            }
             HStack {
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -396,20 +392,51 @@ struct SessionWindow: View {
             }
         }
     }
-    /// The selected session's terminal, with its details in an inspector beside it.
-    private func detail(_ session: Session) -> some View {
+    /// The selected session's terminal, or a placeholder in its place, with an inspector beside it.
+    private var detail: some View {
         Group {
-            if model.connected, session.connected {
-                TerminalHost(cache: terminals, session: session)
+            if let selected, showsTerminal {
+                TerminalHost(cache: terminals, session: selected)
             } else {
-                ContentUnavailableView(model.connected ? "Session Offline" : "Runtime Not Connected", systemImage: "bolt.horizontal.circle",
-                    description: Text(model.connected ? "\(session.name) is not connected. Orc reconnects when it is available."
-                                                      : "Orc is reconnecting to the session runtime."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
+                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .inspector(isPresented: $inspectorShown) {
-            inspector(session).inspectorColumnWidth(min: 240, ideal: 300, max: 440)
+            Group {
+                if let selected { inspector(selected) }
+                else { ContentUnavailableView("No Selection", systemImage: "info.circle").background(Color(nsColor: .windowBackgroundColor)) }
+            }
+            .inspectorColumnWidth(min: 240, ideal: 300, max: 440)
+        }
+    }
+    @ViewBuilder private var emptyState: some View {
+        switch placeholder {
+        case .runtimeNotConnected:
+            ContentUnavailableView("Runtime Not Connected", systemImage: "bolt.horizontal.circle",
+                                   description: Text("Orc is reconnecting to the session runtime."))
+        case .offline(let name):
+            ContentUnavailableView("Session Offline", systemImage: "bolt.horizontal.circle",
+                                   description: Text("\(name) is not connected. Orc reconnects when it is available."))
+        case .noProjects:
+            ContentUnavailableView {
+                Label("No Projects", systemImage: "folder")
+            } description: {
+                Text("Add a project to start agents and terminals in it.")
+            } actions: {
+                Button("Add Project…") { model.showProject = true }
+            }
+        case .noSessions, .noSelection:
+            ContentUnavailableView {
+                Label(placeholder == .noSessions ? "No Sessions" : "No Session Selected", systemImage: "terminal")
+            } description: {
+                Text(placeholder == .noSessions ? "Start an agent or terminal in one of your projects, or open a previous conversation."
+                                                : "Choose a session from the list, start a new one, or open a previous conversation.")
+            } actions: {
+                Button("New Session") { model.showCreate = true }
+                Button("Open…") { model.showOpen = true }
+            }
+        case .loading, nil:
+            Color.clear
         }
     }
     private func inspector(_ session: Session) -> some View {
@@ -500,8 +527,6 @@ private struct SessionNotesEditor: View {
     }
 }
 
-/// Resize only when moving between list, details and attachment, preserving
-/// manual resizing within each mode. The top-left corner stays in place.
 /// Makes the window translucent while it shows a terminal whose Ghostty settings ask for it.
 struct TerminalWindowBackground: NSViewRepresentable {
     @ObservedObject var engine: GhosttyEngine
@@ -517,31 +542,6 @@ struct TerminalWindowBackground: NSViewRepresentable {
         func apply() {
             guard let window else { return }
             GhosttyEngine.shared.applyWindowBackground(window, showingTerminal: showingTerminal)
-        }
-    }
-}
-
-struct SessionWindowSizer: NSViewRepresentable {
-    let mode: SessionWindowMode
-    func makeNSView(context: Context) -> SizingView { SizingView(mode: mode) }
-    func updateNSView(_ view: SizingView, context: Context) { view.setMode(mode) }
-    final class SizingView: NSView {
-        private var mode: SessionWindowMode
-        init(mode: SessionWindowMode) { self.mode = mode; super.init(frame: .zero) }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); resize() }
-        func setMode(_ mode: SessionWindowMode) {
-            guard self.mode != mode else { return }; self.mode = mode
-            DispatchQueue.main.async { [weak self] in self?.resize() }
-        }
-        private func resize() {
-            guard let window else { return }
-            let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: mode.size)).size
-            let screen = window.screen?.visibleFrame ?? window.frame
-            let width = min(size.width, screen.width), height = min(size.height, screen.height)
-            let x = max(screen.minX, min(window.frame.minX, screen.maxX - width))
-            let y = max(screen.minY, min(window.frame.maxY - height, screen.maxY - height))
-            window.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true, animate: false)
         }
     }
 }
