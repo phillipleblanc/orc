@@ -112,6 +112,10 @@ public struct SessionService {
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
         try SessionNotesStore.rename(session.name, to: name)
     }
+    /// Ends the session and the program running in it. A closed agent session can be reopened.
+    public func close(handle: String) async throws {
+        _ = try await LocalRPC.call("terminal.close", ["terminal": handle])
+    }
     func validatedName(_ name: String) throws -> String {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Session.isValidName(name) else {

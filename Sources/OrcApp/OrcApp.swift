@@ -247,6 +247,12 @@ extension SessionModel {
         await refresh()
         if let session = sessions.first(where: { $0.handle == opened.handle }) { requestAttachment(to: session) }
     }
+    /// Ends the session; an agent session joins the recently closed sessions.
+    func close(_ session: Session) async throws {
+        try await service.close(handle: session.handle)
+        closedListedFor = nil
+        await refresh()
+    }
     func reopenLatest() async throws {
         guard let latest = closed.first else { return }
         do { try await reopen(latest) } catch { reopeningAs = latest; throw error }
@@ -272,6 +278,8 @@ struct SessionWindow: View {
     /// Projects whose sidebar sections are collapsed, by project id, one per line.
     @AppStorage("collapsedSidebarProjects") private var collapsedProjectsStorage = ""
     @State private var renamingSession: Session?
+    @State private var closingSession: Session?
+    @State private var closeError: String?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
@@ -327,6 +335,22 @@ struct SessionWindow: View {
         .sheet(isPresented: $model.showPhonePairing) { PhonePairingView() }
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
+        .alert("Close “\(closingSession?.name ?? "")”?", isPresented: Binding(get: { closingSession != nil }, set: { if !$0 { closingSession = nil } }),
+               presenting: closingSession) { session in
+            Button("Close Session", role: .destructive) {
+                Task {
+                    do { try await model.close(session) }
+                    catch { closeError = "Could not close \(session.name): \(error.localizedDescription)" }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { session in
+            Text(session.agentIdentity == nil ? "The terminal and everything running in it stop."
+                                              : "The agent stops. You can reopen it from Recently Closed.")
+        }
+        .alert("Could Not Close Session", isPresented: Binding(get: { closeError != nil }, set: { if !$0 { closeError = nil } })) {
+            Button("OK") {}
+        } message: { Text(closeError ?? "") }
         .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
         .sheet(isPresented: $model.showOpen) { OpenConversationView(model: model) }
         .onChange(of: model.selected) { _, _ in
@@ -390,6 +414,8 @@ struct SessionWindow: View {
                     model.setMuted(!muted, for: session)
                 }
             }
+            Divider()
+            Button("Close Session…", systemImage: "xmark.circle", role: .destructive) { closingSession = session }
         }
     }
     /// The selected session's terminal, or a placeholder in its place, with an inspector beside it.

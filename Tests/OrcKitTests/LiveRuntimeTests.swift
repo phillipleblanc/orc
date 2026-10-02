@@ -45,6 +45,24 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    @MainActor func testCloseEndsTheSession() async throws {
+        let worktree = try isolatedWorktree()
+        let service = SessionService()
+        let name = "orc-close-" + UUID().uuidString.prefix(8)
+        let handle = try await service.create(name: name, worktree: "path:" + worktree, command: nil)
+        do {
+            try await service.close(handle: handle)
+        } catch {
+            _ = try? await LocalRPC.call("terminal.close", ["terminal": handle])
+            throw error
+        }
+        let remaining = try await service.list().terminals
+        XCTAssertFalse(remaining.contains { $0.handle == handle || $0.name == name })
+        do {
+            try await service.close(handle: handle)
+            XCTFail("Closing an ended session should fail")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no session"), error.localizedDescription) }
+    }
     @MainActor func testChildSessionNameAppearsUnderParent() async throws {
         let worktree = try isolatedWorktree()
         let service = SessionService()
