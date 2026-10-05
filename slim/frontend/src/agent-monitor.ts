@@ -51,6 +51,9 @@ export class AgentMonitor extends EventEmitter {
   lastIdleAt = 0
   lastEventAt = 0
   dialog: string | null = null
+  // What a prompt interrupted, which answering it returns to. Pi reports every dialog as a prompt, including one an
+  // extension command opens while the agent is idle (an account picker), and no turn follows it.
+  private beforePrompt: 'idle' | 'working' = 'working'
   // When Claude queued text submitted during the current turn, or 0. Claude fires UserPromptSubmit
   // when it queues such text, not when it reads it.
   private queuedAt = 0
@@ -149,17 +152,21 @@ export class AgentMonitor extends EventEmitter {
       case 'PostToolUse':
       case 'SubagentStart':
       case 'SubagentStop':
-      case 'PermissionResolved':
         if (record.event === 'UserPromptSubmit' && (this.state === 'working' || this.state === 'permission')) this.queuedAt = at
         this.ready = true
         this.transition('working', at)
         break
       case 'PermissionRequest':
         this.ready = true
-        this.transition('permission', at)
+        this.prompt(at)
+        break
+      case 'PermissionResolved':
+        this.ready = true
+        // Only a prompt still open is answered: a turn may have ended, or another started, first.
+        if (this.state === 'permission') this.transition(this.beforePrompt, at, { turnEnded: false })
         break
       case 'Notification':
-        if (payload.notification_type === 'permission_prompt') this.transition('permission', at)
+        if (payload.notification_type === 'permission_prompt') this.prompt(at)
         else if (payload.notification_type === 'idle_prompt' && this.state !== 'working') this.transition('idle', at)
         break
       case 'Stop':
@@ -185,10 +192,16 @@ export class AgentMonitor extends EventEmitter {
     this.exited = true
   }
 
-  private transition(state: AgentState, at = Date.now()): void {
+  private prompt(at: number): void {
+    if (this.state !== 'permission') this.beforePrompt = this.state === 'working' ? 'working' : 'idle'
+    this.transition('permission', at)
+  }
+
+  /** `turnEnded` is false for an idle agent returning from a prompt, which ends no turn. */
+  private transition(state: AgentState, at = Date.now(), { turnEnded = true } = {}): void {
     if (this.exited) return
     if (state === 'idle') this.queuedAt = 0
-    if (state === 'idle' && this.state !== 'idle') this.lastIdleAt = at
+    if (state === 'idle' && this.state !== 'idle' && turnEnded) this.lastIdleAt = at
     const changed = state !== this.state
     this.state = state
     if (changed) this.emit('change', this)

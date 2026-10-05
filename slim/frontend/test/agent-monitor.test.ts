@@ -92,3 +92,29 @@ test('Claude keeps working after a turn while text queued during it is still to 
   assert.equal(await after(event('UserPromptSubmit', 'p7') + event('UserPromptSubmit', 'p7') + event('Stop', 'p7'), prompt('p7')), 'working')
   assert.equal(await after(event('Stop', 'p8'), queue('dequeue') + prompt('p8')), 'idle')
 })
+
+test('answering a prompt returns to what it interrupted: an idle agent stays idle without ending a turn', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'slim-monitor-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const file = join(directory, 'events.jsonl')
+  const at = (event: string, time: number) => JSON.stringify({ agent: 'pi', event, time, payload: { session_id: 's1' } }) + '\n'
+  // A turn ends, then an extension command (Pi's /codex-account) opens a picker while the agent is idle.
+  await writeFile(file, at('SessionStart', 10) + at('UserPromptSubmit', 20) + at('Stop', 30) + at('PermissionRequest', 40) + at('PermissionResolved', 41))
+  const monitor = new AgentMonitor('pi', file, new StandInSession() as unknown as TerminalSession)
+  await monitor.start()
+  t.after(() => monitor.stop())
+  assert.equal(monitor.state, 'idle')
+  assert.equal(monitor.lastIdleAt, 30_000)
+
+  // A prompt during a turn returns to the turn once answered.
+  await appendFile(file, line('UserPromptSubmit') + line('PermissionRequest'))
+  await until(async () => monitor.state === 'permission', 2000, 'the prompt')
+  await appendFile(file, line('PermissionResolved'))
+  await until(async () => monitor.state === 'working', 2000, 'back to the turn')
+
+  // A turn that ends while its prompt is open stays ended when the prompt closes.
+  await appendFile(file, line('PermissionRequest') + line('Stop') + line('PermissionResolved'))
+  await until(async () => monitor.state === 'idle', 2000, 'idle after the turn')
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  assert.equal(monitor.state, 'idle')
+})
