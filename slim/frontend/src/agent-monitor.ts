@@ -29,7 +29,8 @@ const SPINNER = /^[⠀-⣿◐◑◒◓]/
 const BLOCKING_DIALOGS: Record<AgentKind, RegExp[]> = {
   codex: [/Trust this folder\?/, /Hooks need review/],
   claude: [/Quick safety check/, /Do you trust the files in this folder\?/],
-  pi: []
+  pi: [],
+  durable: []
 }
 
 /**

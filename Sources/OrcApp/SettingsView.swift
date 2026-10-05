@@ -75,6 +75,7 @@ struct SettingsView: View {
         case .codex: "Codex"
         case .claude: "Claude"
         case .pi: "Pi"
+        case .durable: "Durable (experimental)"
         case .terminal: "Terminal"
         }
     }

@@ -275,6 +275,9 @@ struct SessionWindow: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("sessionInspectorShown") private var inspectorShown = false
+    /// How durable agent sessions show: a chat view's id, or the terminal.
+    @AppStorage("durableChatVariant") private var durableView = "durable-1"
+    @StateObject private var durableChat = DurableChatModel()
     /// Projects whose sidebar sections are collapsed, by project id, one per line.
     @AppStorage("collapsedSidebarProjects") private var collapsedProjectsStorage = ""
     @State private var renamingSession: Session?
@@ -284,6 +287,8 @@ struct SessionWindow: View {
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
+    /// Whether the selected session is a durable agent, which shows a chat view unless the terminal is chosen.
+    var selectedIsDurable: Bool { selected?.agentIdentity == "durable" }
     /// Whether the selected session's terminal is showing.
     var showsTerminal: Bool { selected.map { model.connected && $0.connected } ?? false }
     /// What shows in place of the terminal, or nil while the selected session's terminal shows.
@@ -319,6 +324,22 @@ struct SessionWindow: View {
         .frame(minWidth: 900, minHeight: 440)
         .background(TerminalWindowBackground(engine: ghostty, showingTerminal: showsTerminal).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar {
+            if selectedIsDurable {
+                ToolbarItem {
+                    Menu {
+                        Picker("View", selection: $durableView) {
+                            ForEach(durableChat.variants) { variant in
+                                Text(variant.title).tag(variant.id).help(variant.description)
+                            }
+                            Divider()
+                            Text("Terminal").tag(DurableChatModel.terminal)
+                        }.pickerStyle(.inline)
+                    } label: {
+                        Label("View", systemImage: durableView == DurableChatModel.terminal ? "terminal" : "bubble.left.and.text.bubble.right")
+                    }
+                    .help("Choose how this durable agent shows")
+                }
+            }
             ToolbarItem {
                 Button { openWindow(id: "overview") } label: { Label("Session Overview", systemImage: "square.grid.2x2") }
                     .help("Session Overview (⇧⌘O)").accessibilityIdentifier("session-overview")
@@ -422,9 +443,19 @@ struct SessionWindow: View {
     private var detail: some View {
         Group {
             if let selected, showsTerminal {
-                TerminalHost(cache: terminals, session: selected)
+                if selectedIsDurable, durableView != DurableChatModel.terminal {
+                    DurableChatHost(session: selected, variant: durableView, model: durableChat)
+                } else {
+                    TerminalHost(cache: terminals, session: selected)
+                }
             } else {
                 emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .onChange(of: durableChat.variants) { _, variants in
+            // A view the runtime no longer offers falls back to the first one.
+            if durableView != DurableChatModel.terminal, let first = variants.first, !variants.contains(where: { $0.id == durableView }) {
+                durableView = first.id
             }
         }
         .inspector(isPresented: $inspectorShown) {
@@ -607,6 +638,7 @@ struct CreateSessionView: View {
                 Button("Add Project…") { showProject = true }.disabled(creating)
                 Picker("Run", selection: $agent) {
                     Text("Pi").tag("pi"); Text("Codex").tag("codex"); Text("Claude Code").tag("claude")
+                    Text("Durable (experimental)").tag("durable")
                     Text("Terminal").tag("terminal"); Text("Custom command").tag("custom")
                 }
                 if agent == "custom" { TextField("Command", text: $customCommand) }

@@ -198,7 +198,10 @@ export class Catalog extends EventEmitter {
   }
 }
 
-/** Pi transcripts use the omp format; clients render Pi sessions through the omp decoder. */
+/**
+ * Pi transcripts use the omp format; clients render Pi sessions through the omp decoder. Durable
+ * agents are Pi's kind too, and their chat is served as omp messages (see native-chat/durable.ts).
+ */
 export function chatAgentType(kind: string): string {
-  return kind === 'pi' ? 'omp' : kind
+  return kind === 'pi' || kind === 'durable' ? 'omp' : kind
 }

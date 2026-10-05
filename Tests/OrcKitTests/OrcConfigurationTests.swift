@@ -31,7 +31,7 @@ final class OrcConfigurationTests: XCTestCase {
             try Data("{\"defaultSessionType\":\"\(type.rawValue)\"}".utf8).write(to: file)
             let config = try OrcConfiguration.load(from: file)
             XCTAssertEqual(config.defaultSessionType, type)
-            let expected: [SessionType: String] = [.codex: "codex --no-daemon", .claude: "claude", .pi: "pi"]
+            let expected: [SessionType: String] = [.codex: "codex --no-daemon", .claude: "claude", .pi: "pi", .durable: "durable"]
             XCTAssertEqual(config.defaultSessionType.command, expected[type])
         }
     }

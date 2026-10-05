@@ -2,20 +2,29 @@
   "name": "orc-frontend",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-durable": "1.0.2",
     "@xterm/addon-serialize": "0.15.0-beta.300",
     "@xterm/headless": "6.1.0-beta.302",
+    "dompurify": "3.4.16",
+    "marked": "18.0.14",
+    "proper-lockfile": "4.1.2",
     "tweetnacl": "1.0.3",
     "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",
+    "@types/proper-lockfile": "4.1.4",
     "@types/ws": "8.18.2",
     "typescript": "7.0.2"
   }

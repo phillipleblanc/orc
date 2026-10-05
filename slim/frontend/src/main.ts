@@ -3,8 +3,12 @@ import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { resumedConversation } from './agent-hooks.ts'
 import { AgentDirectory } from './agents.ts'
 import { Devices, pairingLink } from './devices.ts'
+import { ChatServer } from './durable/chat-server.ts'
+import { durableSocket } from './durable/paths.ts'
+import { DurableUpgrades } from './durable/upgrades.ts'
 import { loadOrCreateKeypair } from './e2ee.ts'
 import { Catalog } from './catalog.ts'
 import { clientEventMethods } from './client-events.ts'
@@ -15,7 +19,7 @@ import { terminalMultiplex } from './multiplex.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { ConversationIndex } from './conversations.ts'
-import { SessionHistory } from './history.ts'
+import { endedSessions, SessionHistory, startAgain } from './history.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
@@ -67,10 +71,26 @@ const agents = new AgentDirectory(store, projects, profile)
 const wakes = new WakeDirectory(store, agents, profile)
 const history = new SessionHistory({ store, agents, projects }, new ConversationIndex(profile))
 const discovered = await store.discover()
+// Durable agents left on older code by an update restart on this frontend's code.
+new DurableUpgrades(store, agents, async (session) => {
+  const name = session.meta.name
+  await store.end(session)
+  const ended = (await endedSessions(store)).find((candidate) => candidate.meta.id === session.meta.id)
+  if (!ended) throw new Error('its ended session record is missing')
+  await startAgain({ store, agents, projects }, ended, name)
+}, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
 const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, history, catalog, subscriptions }
-const nativeChat = nativeChatMethods(subscriptions)
+// A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
+const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
+  for (const session of store.list()) {
+    if (session.meta.agent !== 'durable') continue
+    const conversation = resumedConversation('durable', session.meta.argv)
+    if (conversation.transcriptPath && (conversation.transcriptPath === transcriptPath || conversation.id === sessionId)) return durableSocket(conversation.transcriptPath)
+  }
+  return null
+})
 const mobileTerminal = mobileTerminalMethods(store, subscriptions)
 const clientEvents = clientEventMethods(catalog, subscriptions)
 const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
@@ -95,6 +115,12 @@ try {
   process.exit(1)
 }
 const websocketEndpoint = `ws://127.0.0.1:${websocket.port}`
+const chat = new ChatServer((name) => {
+  const session = store.get(name)
+  const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
+  return storage ? durableSocket(storage) : null
+})
+await chat.listen()
 const rpcPath = join(profile, 'rpc.sock')
 await unlink(rpcPath).catch(() => {})
 // Pairing is administered only over the owner-authenticated local socket, never over the WebSocket.
@@ -110,6 +136,11 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   },
   ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
   'slim.pairing.list': () => ({ devices: devices.list() }),
+  'durable.chat': async (params) => {
+    const name = String(params.name ?? '')
+    if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
+    return { variants: (await chat.variants()).map((variant) => ({ ...variant, url: chat.url(variant.id, name) })) }
+  },
   'slim.pairing.revoke': async (params) => {
     const revoked = await devices.revoke(String(params.deviceId))
     if (revoked) websocket.disconnectDevice(String(params.deviceId))
@@ -148,6 +179,7 @@ async function shutdown(): Promise<void> {
   await bootRecord.save()
   await rpc.close()
   await websocket.close()
+  await chat.close()
   await store.detachAll()
   await unlink(metadataPath).catch(() => {})
   await unlink(join(profile, 'frontend.lock')).catch(() => {})

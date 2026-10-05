@@ -4,6 +4,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentArgv, installAgentHooks, isAgentKind, resumedConversation, type AgentHooks, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import { AgentMonitor } from './agent-monitor.ts'
+import { durableRequest } from './durable/connection.ts'
+import { durableSocket, newDurableStorage } from './durable/paths.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import type { Projects } from './projects.ts'
 import { RpcError } from './rpc-server.ts'
@@ -76,14 +78,15 @@ export class AgentDirectory extends EventEmitter {
 
   /** Starts an agent in a new session, without waiting for it. */
   async launch(options: SpawnOptions): Promise<TerminalSession> {
-    if (!isAgentKind(options.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude or pi')
+    if (!isAgentKind(options.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude, pi or durable')
     const project = options.project ? this.projects.resolve(options.project) : options.cwd ? this.projects.containing(options.cwd) : undefined
     if (options.project && !project) throw new RpcError('not_found', `no project ${options.project}`)
     const cwd = options.cwd ?? project?.path
     if (!cwd) throw new RpcError('invalid_argument', 'choose a project or a working directory')
     const login = await loginEnvironment()
-    const executable = resolveExecutable(options.agent, login)
+    const executable = options.agent === 'durable' ? process.execPath : resolveExecutable(options.agent, login)
     if (!executable) throw new RpcError('not_found', `${options.agent} is not on the login shell's PATH`)
+    const resume = options.agent === 'durable' && !options.resume?.transcriptPath ? { transcriptPath: newDurableStorage(this.profile) } : options.resume
     this.hooks ??= installAgentHooks(this.profile)
     const hooks = await this.hooks
     await mkdir(join(this.profile, 'agent-events'), { recursive: true, mode: 0o700 })
@@ -91,7 +94,7 @@ export class AgentDirectory extends EventEmitter {
     return this.store.create({
       name: options.name,
       cwd,
-      argv: agentArgv(options.agent, executable, hooks, options),
+      argv: agentArgv(options.agent, executable, hooks, { ...options, resume }),
       env: sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: events, ORC_RUNTIME_DIR: this.profile }),
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,
@@ -262,6 +265,20 @@ export class AgentDirectory extends EventEmitter {
       if (!message) return
       const idle = record.monitor.effectiveState === 'idle'
       const body = message.from ? `[from ${message.from}]\n${message.text}` : message.text
+      if (record.monitor.kind === 'durable') {
+        // A durable agent queues it itself: a steer reaches the current run, a follow-up starts the next.
+        try {
+          await durableRequest(durableSocket(resumedConversation('durable', record.session.meta.argv).transcriptPath!), 'submit',
+            { text: body, mode: message.whenIdle ? 'followUp' : 'steer' })
+        } catch {
+          return
+        }
+        record.queue = record.queue.filter((queued) => queued !== message)
+        this.typed.add(message)
+        record.lastDeliveredAt = Date.now()
+        await this.save(record)
+        continue
+      }
       const bracketed = await record.session.bracketedPaste()
       record.session.input(bracketed ? `\x1b[200~${body}\x1b[201~` : body)
       await new Promise((resolve) => setTimeout(resolve, PASTE_SETTLE_MS))
@@ -286,6 +303,7 @@ export class AgentDirectory extends EventEmitter {
   private next(record: AgentRecord): QueuedMessage | undefined {
     const { monitor } = record
     if (!monitor.ready) return undefined
+    if (monitor.kind === 'durable') return monitor.state === 'ended' ? undefined : record.queue[0]
     switch (monitor.effectiveState) {
       case 'idle': return record.queue[0]
       case 'working': return record.queue.find((message) => !message.whenIdle)

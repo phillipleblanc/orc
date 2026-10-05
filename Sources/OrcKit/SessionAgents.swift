@@ -39,10 +39,10 @@ public struct SessionAgentCommand {
         var agent: String?, name = options["name"]
         switch action {
         case .spawn:
-            guard let kind = positional.first, ["codex", "claude", "pi"].contains(kind) else { throw OrcError("Choose codex, claude or pi.") }
+            guard let kind = positional.first, ["codex", "claude", "pi", "durable"].contains(kind) else { throw OrcError("Choose codex, claude, pi or durable.") }
             agent = kind
             if positional.count == 2 { guard name == nil else { throw OrcError("Give the name once.") }; name = positional[1] }
-            guard positional.count <= 2, name != nil else { throw OrcError("Usage: orc agent spawn codex|claude|pi NAME [--prompt-file FILE]") }
+            guard positional.count <= 2, name != nil else { throw OrcError("Usage: orc agent spawn codex|claude|pi|durable NAME [--prompt-file FILE]") }
         case .list:
             guard positional.isEmpty else { throw OrcError("Usage: orc agent list [--json]") }
         case .send, .status, .wait:
@@ -76,7 +76,7 @@ public struct SessionAgentCommand {
     }
 
     public static let help = """
-    orc agent spawn codex|claude|pi NAME [--project SELECTOR] [--prompt-file FILE]
+    orc agent spawn codex|claude|pi|durable NAME [--project SELECTOR] [--prompt-file FILE]
         [--model MODEL] [--effort LEVEL] [--timeout-seconds SECONDS] [--json]
     orc agent send NAME [--file FILE] [--when-idle] [--json]
     orc agent list [--json]
@@ -90,7 +90,8 @@ public struct SessionAgentCommand {
     running; an idle agent starts a turn with it. With --when-idle, the message waits until the
     agent is idle and starts a turn of its own. Messages wait while the agent is at a permission
     prompt or dialog. Wait returns once the agent has finished working on everything sent to it.
-    orc close NAME ends an agent's session.
+    orc close NAME ends an agent's session. A durable agent is Orc's own experimental agent on
+    pi-durable: it signs in with Pi's credentials and keeps its conversation in SQLite.
     """
 }
 

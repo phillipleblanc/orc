@@ -11,6 +11,7 @@ final class SessionAgentCommandTests: XCTestCase {
         XCTAssertTrue(positional.json)
         XCTAssertEqual(try SessionAgentCommand(["spawn", "pi", "--name", "helper"]).name, "helper")
         XCTAssertThrowsError(try SessionAgentCommand(["spawn", "pi", "helper", "--name", "other"]))
+        XCTAssertEqual(try SessionAgentCommand(["spawn", "durable", "notes"]).agent, "durable")
         XCTAssertThrowsError(try SessionAgentCommand(["spawn", "vim", "editor"]))
         XCTAssertThrowsError(try SessionAgentCommand(["spawn", "codex"]))
     }

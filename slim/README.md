@@ -160,6 +160,60 @@ Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) a
 (its runtime profile, so `orc` run inside it reaches the same runtime); agents also get
 `ORC_AGENT_EVENTS`.
 
+### Durable agents (experimental)
+
+A `durable` agent is Orc's own agent on `@earendil-works/pi-durable`. Its session runs
+`src/durable/worker.ts` with the runtime's Node, inside a `/bin/sh` loop (`orc-durable`) that starts
+the worker again whenever it exits with status 75. The worker keeps one conversation in
+`<profile>/durable/<id>.sqlite`, which it alone writes and which outlives the session, and runs
+pi-durable's read, write, edit and bash tools in the session's directory. Every model turn, tool call
+and queued message is committed before it shows, so a worker started again on the same file (after a
+crash, a restart of the computer, or a reopen) continues mid-turn; a tool call the crash cut off gets
+an `interrupted` result.
+
+The worker signs in with Pi's credentials: the providers in `~/.pi/agent/auth.json`, locked the way Pi
+locks it so a token refresh never spends a refresh token Pi is using, and the OpenAI-compatible and
+Anthropic-compatible providers of Pi's `models.json`. Without `--model PROVIDER/ID` it starts on Pi's
+default model and thinking level. It offers the models of Pi's scope (`enabledModels`, which
+`/scoped-models` saves), resolved as Pi resolves it (`model-scope.ts`), or every signed-in model
+without one; switching to a model scoped with a thinking level (`provider/id:high`) applies it. A
+model offers the thinking levels its `thinkingLevelMap` allows (pi-ai's `getSupportedThinkingLevels`),
+and a level it lacks moves to the nearest one it has, as Pi clamps it. Its system prompt adds Pi's global `AGENTS.md` and each `AGENTS.md`
+(or `CLAUDE.md`) from the root down to the working directory. `--faux` answers with the scripted model
+in `faux.ts` instead, for tests and demos.
+
+It writes the same lifecycle events as the other agents' hooks. Messages from `agent.send`,
+`agent.spawn` and wakes go to the agent's own queue over the worker's socket instead of being typed: a
+steer joins the current run, and a `whenIdle` message is a follow-up for the next. Its terminal shows
+the conversation as text and takes input: Enter sends (steering while it works), Alt-Enter or a lone
+Ctrl-J queues a follow-up, Esc stops, `/compact` and `/new [note]` act on the context. Newlines in
+input that arrives more than a character at a time, as phones send it, stay in the message.
+
+The worker reports the version of the code it started with: a hash of `src/durable/` and the locked
+pi package versions (`version.ts`). A frontend serving other code restarts the worker at its next idle
+moment, so an update reaches running agents and their conversations continue. A session running the
+loop is asked to `upgrade`: the worker closes and exits 75, and the loop starts the new code in the
+same session. Any other is ended and started again under its name, as reopening does. A session is
+restarted at most once per version, so a worker that still reports other code is left alone.
+
+Phones see a durable agent as an `omp` agent, with its conversation id and storage file as the
+provider session, so the Orca app offers its native chat for sessions in a listed local project.
+`nativeChat.readSession` and `nativeChat.subscribe` for a running durable agent's conversation are
+served from its worker (`native-chat/durable.ts`): user input, thinking as reasoning, the answer with
+its tool calls, each tool result (an edit with its patch), and markers for stops, errors, summaries
+and new contexts, paged by whole entries with entry ids as offsets. The phone types into the session's
+terminal as for any agent.
+
+The worker serves the conversation on `<profile>/durable/<id>.sock` as newline-delimited JSON (see the
+top of `worker.ts`): a snapshot followed by pi-durable's agent events, and `submit`, `abort`,
+`withdraw`, `compact`, `reset`, `configure` and `models`. The frontend serves chat views of durable
+agents on `127.0.0.1`, on a port chosen at startup. Each `src/chat/durable-N/` directory is one view,
+listed by its `<title>` and description; `src/chat/shared/` holds their client and formatting, and
+`/chat/vendor/` serves `marked` and DOMPurify. `/chat/socket?session=NAME&token=TOKEN` relays a
+WebSocket to the agent's worker socket; the token changes with every frontend. `durable.chat`, served
+only on the owner-only RPC socket, returns each view's URL for a session. Orc.app shows the chosen view
+in place of the terminal.
+
 ## Recently closed sessions
 
 `history.list` returns agent sessions that ended in the last 7 days, newest first: for each name, the

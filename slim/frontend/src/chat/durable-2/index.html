@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Workbench</title>
+  <meta name="description" content="An IDE-like workspace: the transcript as a document beside an inspector for status, activity, usage and settings.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app" id="app" data-rail="shown">
+    <header class="topbar">
+      <div class="tb-title">
+        <span class="state-dot" id="tb-dot" aria-hidden="true"></span>
+        <h1 class="tb-name" id="tb-name">Agent</h1>
+        <button class="tb-model" id="model-button" type="button" aria-haspopup="dialog" aria-expanded="false" hidden>
+          <span class="tb-model-name"></span>
+          <span class="tb-level"></span>
+          <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>
+        </button>
+      </div>
+      <div class="tb-state" id="tb-state"></div>
+      <button class="icon-btn" id="rail-toggle" type="button" aria-controls="rail" aria-expanded="true" aria-label="Hide inspector" title="Toggle inspector">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 2.75v10.5"/><path class="fill" d="M10 2.75h2.25a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H10z" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </header>
+
+    <div class="body">
+      <section class="main" aria-label="Conversation">
+        <div class="banner" id="banner" role="status" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="banner-text">Connection lost. Reconnecting…</span>
+        </div>
+
+        <div class="scroller" id="scroller">
+          <div class="doc">
+            <div class="placeholder" id="connecting">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Connecting to the agent…</span>
+            </div>
+            <div class="placeholder empty" id="empty" hidden>
+              <svg class="ico empty-mark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="m4.5 6.25 2 1.75-2 1.75M8 10h3.5"/></svg>
+              <h2>No messages yet</h2>
+              <p id="empty-detail">Describe a task below. Tool calls, output and diffs appear here as the agent works.</p>
+            </div>
+            <div class="log" id="log"></div>
+            <div class="log live" id="live"></div>
+          </div>
+        </div>
+
+        <div class="float-anchor">
+          <button class="jump" id="jump" type="button" hidden>
+            <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v9.5M4 8.5l4 4 4-4"/></svg>
+            <span>Jump to latest</span>
+          </button>
+          <div class="toasts" id="toasts" aria-live="polite"></div>
+        </div>
+
+        <form class="composer" id="composer">
+          <div class="queue" id="queue" aria-label="Waiting messages"></div>
+          <div class="composer-box">
+            <textarea id="input" rows="1" aria-label="Message" placeholder="Ask the agent to do something…" autocomplete="off" spellcheck="true"></textarea>
+            <div class="composer-bar">
+              <div class="seg" id="segment" role="radiogroup" aria-label="Enter while the agent works" hidden>
+                <button type="button" role="radio" aria-checked="true" data-mode="steer" title="Reach the current run at its next step">Steer</button>
+                <button type="button" role="radio" aria-checked="false" data-mode="followUp" title="Wait until the current run ends">Queue</button>
+              </div>
+              <span class="hint" id="hint"></span>
+              <span class="grow"></span>
+              <button class="btn btn-stop" id="stop" type="button" hidden aria-label="Stop the agent" title="Stop (Esc)">
+                <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
+                <span>Stop</span><kbd>esc</kbd>
+              </button>
+              <button class="btn btn-send" id="send" type="submit" aria-label="Send" disabled>
+                <span class="send-label">Send</span>
+                <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3.25M3.75 7.5 8 3.25l4.25 4.25"/></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside class="rail" id="rail" aria-label="Inspector" tabindex="-1">
+        <details class="sec" data-section="status" open>
+          <summary><span class="sec-title">Status</span></summary>
+          <div class="sec-body">
+            <div class="status-card" data-el="statusCard" data-state="offline">
+              <div class="status-line">
+                <span class="state-dot" aria-hidden="true"></span>
+                <span class="status-label" data-el="statusLabel" aria-live="polite">Connecting</span>
+                <span class="status-timer" data-el="statusTimer"></span>
+              </div>
+              <div class="status-step" data-el="statusStep" aria-live="polite" hidden></div>
+              <p class="status-detail" data-el="statusDetail" hidden></p>
+            </div>
+          </div>
+        </details>
+
+        <details class="sec" data-section="activity" open>
+          <summary><span class="sec-title">Activity</span><span class="sec-aside" data-el="activityCount"></span></summary>
+          <div class="sec-body" data-el="activity"></div>
+        </details>
+
+        <details class="sec" data-section="usage" open>
+          <summary><span class="sec-title">Usage</span><span class="sec-aside" data-el="usageCost"></span></summary>
+          <div class="sec-body">
+            <div class="meter-block">
+              <div class="meter-head"><span>Context</span><span class="meter-value" data-el="meterValue"></span></div>
+              <div class="meter" data-el="meter" role="meter" aria-label="Context used" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span data-el="meterFill"></span></div>
+            </div>
+            <div class="usage-models" data-el="usageModels"></div>
+          </div>
+        </details>
+
+        <details class="sec" data-section="agent" open>
+          <summary><span class="sec-title">Agent</span></summary>
+          <div class="sec-body agent-body">
+            <div class="field">
+              <span class="field-label">Directory</span>
+              <div class="path-row">
+                <code class="path" data-el="cwd">—</code>
+                <button class="icon-btn small" type="button" data-el="copyCwd" aria-label="Copy working directory" title="Copy path">
+                  <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.75"/><path d="M10.75 5.25V3.5a1.25 1.25 0 0 0-1.25-1.25h-6A1.25 1.25 0 0 0 2.25 3.5v6a1.25 1.25 0 0 0 1.25 1.25h1.75"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="agent-actions">
+              <button class="btn btn-secondary" type="button" data-el="compact" disabled title="Summarize earlier turns to free context">Compact</button>
+              <button class="btn btn-secondary btn-danger" type="button" data-el="newContext" disabled title="Start over with an empty context">New context…</button>
+            </div>
+          </div>
+        </details>
+      </aside>
+      <div class="scrim" id="scrim" hidden></div>
+    </div>
+  </div>
+
+  <div class="model-popover" id="model-popover" role="dialog" aria-label="Model" hidden>
+    <input id="model-filter" type="search" placeholder="Search models" aria-label="Search models" autocomplete="off">
+    <div class="model-list" id="model-list" role="listbox" aria-label="Models"></div>
+    <div class="levels" id="levels" role="radiogroup" aria-label="Thinking"></div>
+  </div>
+
+  <dialog class="dialog" id="new-context" aria-labelledby="new-context-title">
+    <form method="dialog">
+      <h2 id="new-context-title">Start a new context?</h2>
+      <p>The agent starts over with an empty context, keeping only the note below.</p>
+      <label class="field">
+        <span class="field-label">Note for the new context <span class="optional">(optional)</span></span>
+        <textarea id="new-context-note" rows="3" placeholder="What the agent should know going in"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button class="btn btn-secondary" value="cancel" type="submit">Cancel</button>
+        <button class="btn btn-primary btn-danger-fill" value="confirm" type="submit" id="new-context-confirm">Start new context</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum SessionType: String, Codable, CaseIterable {
-    case codex, claude, pi, terminal
+    case codex, claude, pi, durable, terminal
     public var command: String? {
         switch self {
         case .codex: return "codex --no-daemon"

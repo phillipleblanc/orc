@@ -89,12 +89,12 @@ import COrcSupport
             let requestedName = try value("--name")
             let customCommand = try value("--command")
             guard options.count <= 1, options.first?.hasPrefix("--") != true else {
-                throw OrcError("Usage: orc new [codex|claude|pi|terminal] [--name NAME] [--project SELECTOR] [--json]")
+                throw OrcError("Usage: orc new [codex|claude|pi|durable|terminal] [--name NAME] [--project SELECTOR] [--json]")
             }
             let type: SessionType?
             if let requestedType = options.first {
                 guard let parsed = SessionType(rawValue: requestedType) else {
-                    throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, or terminal; use --name NAME to name it.")
+                    throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, durable, or terminal; use --name NAME to name it.")
                 }
                 guard customCommand == nil else { throw OrcError("Choose a session type or --command, not both.") }
                 type = parsed
@@ -296,7 +296,7 @@ import COrcSupport
     orc list [--json]                         List sessions
     orc projects [--json]                    List projects
     orc projects add PATH [--default]        Register a project folder
-    orc new [codex|claude|pi|terminal]        Create and attach (default: codex)
+    orc new [codex|claude|pi|durable|terminal] Create and attach (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
             [--project SELECTOR] [--json]    Override the configured project
     orc new --command 'COMMAND'              Run a custom command instead

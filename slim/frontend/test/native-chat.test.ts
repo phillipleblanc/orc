@@ -4,6 +4,7 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { decodeLine, fallbackId, INTERRUPTED_TEXT, type TranscriptFormat } from '../src/native-chat/decoders.ts'
+import { entryMessages, entryWindow } from '../src/native-chat/durable.ts'
 import { destroyProfile, Frontend, makeProfile } from './harness.ts'
 import { connectWithGrant } from './runtime-client.ts'
 
@@ -57,6 +58,42 @@ test('Codex rollout lines decode to chat messages', () => {
   assert.equal(item({ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix the bug' }] }), null)
   assert.equal(item({ type: 'message', role: 'user', content: [{ type: 'text', text: '<skill>\nname: x' }] }), null)
   assert.equal(decode('codex', { timestamp: AT, type: 'session_meta', payload: { id: 's1', cwd: '/w' } }), null)
+})
+
+test('durable agent entries become chat messages, paged by whole entries', () => {
+  const at = Date.parse(AT)
+  const entries = [
+    { id: 7, kind: 'pi.user', model: [{ role: 'user', content: '[from lead]\nFix the bug', timestamp: at }] },
+    { id: 8, kind: 'pi.system', model: [{ role: 'system', content: '' }] },
+    { id: 9, kind: 'pi.assistant', model: [{ role: 'assistant', timestamp: at, stopReason: 'toolUse', content: [
+      { type: 'thinking', thinking: 'Look at math.ts first.' },
+      { type: 'text', text: 'Fixing it.' },
+      { type: 'toolCall', id: 'call-1', name: 'edit', arguments: { path: 'math.ts', edits: [] } }] }] },
+    { id: 10, kind: 'pi.tool-result', model: [{ role: 'toolResult', toolCallId: 'call-1', toolName: 'edit', isError: false, timestamp: at,
+      content: [{ type: 'text', text: 'Replaced 1 block\n<harness>\n[info] Formatted the file\n</harness>' }],
+      details: { diff: '-2 a - b\n+2 a + b', patch: '--- math.ts\n+++ math.ts\n@@ -2,1 +2,1 @@\n-  return a - b\n+  return a + b\n' } }] },
+    { id: 11, kind: 'pi.assistant', model: [{ role: 'assistant', timestamp: at, stopReason: 'aborted', content: [] }] },
+    { id: 12, kind: 'pi.reset', model: [{ role: 'user', content: 'we were fixing math.ts', timestamp: at }] }
+  ]
+  const window = entryWindow(entries, 100)
+  assert.deepEqual(window.messages.map((message) => [message.id, message.role]), [
+    ['durable:7', 'user'], ['durable:9:thinking', 'reasoning'], ['durable:9', 'assistant'], ['durable:10', 'tool'],
+    ['durable:11:stopped', 'system'], ['durable:12', 'system']
+  ])
+  assert.deepEqual(window.messages[2].blocks, [{ type: 'text', text: 'Fixing it.' }, { type: 'tool-call', name: 'edit', input: { path: 'math.ts', edits: [] }, callId: 'call-1' }])
+  assert.deepEqual(window.messages[3].blocks, [{ type: 'tool-result', output: 'Replaced 1 block\nFormatted the file',
+    editPatch: { filePath: 'math.ts', hunks: [{ oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, lines: ['-  return a - b', '+  return a + b'] }] } }])
+  assert.deepEqual(window.messages[4].blocks, [{ type: 'text', text: INTERRUPTED_TEXT }])
+  assert.deepEqual(window.messages[5].blocks, [{ type: 'text', text: 'New context: we were fixing math.ts' }])
+  assert.deepEqual([window.hasMore, window.beforeOffset], [false, 7])
+
+  // A page never splits an entry's messages, and the next page ends where it began.
+  const last = entryWindow(entries, 2)
+  assert.deepEqual(last.messages.map((message) => message.id), ['durable:11:stopped', 'durable:12'])
+  const before = entryWindow(entries, 2, last.beforeOffset)
+  assert.deepEqual(before.messages.map((message) => message.id), ['durable:9:thinking', 'durable:9', 'durable:10'])
+  assert.deepEqual([before.hasMore, before.beforeOffset], [true, 9])
+  assert.equal(entryMessages(entries[1]).length, 0)
 })
 
 test('omp and Pi session lines decode to chat messages', () => {

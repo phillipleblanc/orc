@@ -2,6 +2,7 @@ import { RpcError, type Handlers } from '../rpc-server.ts'
 import { holdStream, type ConnectionSubscriptions } from '../subscriptions.ts'
 import type { StreamingHandler } from '../websocket-server.ts'
 import type { NativeChatBlock, NativeChatMessage } from './decoders.ts'
+import { DurableFollower, readDurableWindow } from './durable.ts'
 import { readWindow, resolveTranscript, transcriptFormat, TranscriptFollower, type TranscriptWindow } from './transcripts.ts'
 
 const DEFAULT_WINDOW = 40
@@ -43,15 +44,23 @@ function sessionParams(params: Record<string, any>) {
   return { format, sessionId: params.sessionId as string, limit, transcriptPath }
 }
 
-/** `nativeChat.*`, the Orca mobile app's chat view: an agent's conversation, decoded from its transcript file. */
-export function nativeChatMethods(subscriptions: ConnectionSubscriptions): { handlers: Handlers; streaming: Record<string, StreamingHandler> } {
+/** The socket of the running durable agent whose conversation this is, or null. */
+export type DurableChatResolver = (sessionId: string, transcriptPath: string | undefined) => string | null
+
+/**
+ * `nativeChat.*`, the Orca mobile app's chat view: an agent's conversation, decoded from its
+ * transcript file, or served by a durable agent's worker.
+ */
+export function nativeChatMethods(subscriptions: ConnectionSubscriptions, durableSocket: DurableChatResolver = () => null): { handlers: Handlers; streaming: Record<string, StreamingHandler> } {
   return {
     handlers: {
       'nativeChat.readSession': async (params) => {
         const { format, sessionId, limit, transcriptPath } = sessionParams(params)
+        const beforeOffset = typeof params.beforeOffset === 'number' ? params.beforeOffset : undefined
+        const durable = durableSocket(sessionId, transcriptPath)
+        if (durable) return windowFor(await readDurableWindow(durable, limit, beforeOffset))
         const path = await resolveTranscript(format, sessionId, transcriptPath)
         if (!path) return { messages: [], hasMore: false, beforeOffset: 0, error: 'Transcript unavailable', notFound: true }
-        const beforeOffset = typeof params.beforeOffset === 'number' ? params.beforeOffset : undefined
         return windowFor(await readWindow(path, format, limit, beforeOffset))
       },
       'nativeChat.unsubscribe': (params, context) => {
@@ -66,13 +75,20 @@ export function nativeChatMethods(subscriptions: ConnectionSubscriptions): { han
         const key = `nativeChat:${typeof params.subscriptionId === 'string' ? params.subscriptionId : `${params.agent}:${sessionId}`}`
         const announcePending = params.capabilities?.transcriptPending === 1
         return holdStream(subscriptions, context, key, () => {
-          const follower = new TranscriptFollower(format, sessionId, transcriptPath, limit, {
+          const listener = {
             pending: () => { if (announcePending) emit({ type: 'snapshot', messages: [], hasMore: false, pending: true }) },
-            snapshot: (window) => emit({ type: 'snapshot', ...windowFor(window) }),
-            replacement: (window) => emit({ type: 'replacement', ...windowFor(window) }),
-            appended: (messages) => emit({ type: 'appended', messages: clipped(messages) }),
-            error: (message) => emit({ type: 'error', message })
-          })
+            snapshot: (window: TranscriptWindow) => emit({ type: 'snapshot', ...windowFor(window) }),
+            replacement: (window: TranscriptWindow) => emit({ type: 'replacement', ...windowFor(window) }),
+            appended: (messages: NativeChatMessage[]) => emit({ type: 'appended', messages: clipped(messages) }),
+            error: (message: string) => emit({ type: 'error', message })
+          }
+          const durable = durableSocket(sessionId, transcriptPath)
+          if (durable) {
+            const follower = new DurableFollower(durable, limit, listener)
+            follower.start()
+            return () => follower.stop()
+          }
+          const follower = new TranscriptFollower(format, sessionId, transcriptPath, limit, listener)
           void follower.start().catch((error: Error) => emit({ type: 'snapshot', messages: [], hasMore: false, error: error.message }))
           return () => follower.stop()
         })

@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { DURABLE_LOOP, DURABLE_LOOP_NAME, DURABLE_WORKER, durableConversationId } from './durable/paths.ts'
 
-export type AgentKind = 'codex' | 'claude' | 'pi'
-export const AGENT_KINDS: readonly AgentKind[] = ['codex', 'claude', 'pi']
+export type AgentKind = 'codex' | 'claude' | 'pi' | 'durable'
+export const AGENT_KINDS: readonly AgentKind[] = ['codex', 'claude', 'pi', 'durable']
 
 export function isAgentKind(value: unknown): value is AgentKind {
   return typeof value === 'string' && (AGENT_KINDS as readonly string[]).includes(value)
@@ -143,7 +144,8 @@ const CLAUDE_FLAGS = new Set(['--dangerously-skip-permissions'])
 /**
  * The argv that starts `kind` with Orc's status reporting. Agents act without asking for approval:
  * Codex with `--yolo` (also outside its sandbox), Claude with `--dangerously-skip-permissions`.
- * `resume` continues that conversation instead of starting a new one.
+ * `resume` continues that conversation instead of starting a new one. A durable agent's `executable`
+ * is the runtime's Node, and its conversation is always `resume.transcriptPath`, a new file or not.
  */
 export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks, options: LaunchOptions = {}): string[] {
   const { model, effort, args = [], resume = {} } = options
@@ -160,15 +162,20 @@ export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks
       return [executable, '-e', hooks.piExtension, ...(session ? ['--session', session] : []),
         ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
     }
+    case 'durable':
+      // A loop runs the worker, so it can restart on newer code without ending the session.
+      return ['/bin/sh', '-c', DURABLE_LOOP, DURABLE_LOOP_NAME, executable, DURABLE_WORKER, '--storage', resume.transcriptPath ?? '',
+        ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
   }
 }
 
 /** The conversation an argv built by `agentArgv` resumes, if any. */
 export function resumedConversation(kind: AgentKind, argv: string[]): ProviderSession {
-  const flag = kind === 'codex' ? 'resume' : kind === 'claude' ? '--resume' : '--session'
+  const flag = kind === 'codex' ? 'resume' : kind === 'claude' ? '--resume' : kind === 'durable' ? '--storage' : '--session'
   const index = argv.indexOf(flag)
   const value = index >= 0 ? argv[index + 1] : undefined
   if (!value || value.startsWith('-')) return {}
+  if (kind === 'durable') return { id: durableConversationId(value), transcriptPath: value }
   return kind === 'pi' && value.includes('/') ? { transcriptPath: value } : { id: value }
 }
 
@@ -177,7 +184,8 @@ export function resumedConversation(kind: AgentKind, argv: string[]): ProviderSe
  * except the executable, Orc's own flags and hooks, and the conversation it resumed.
  */
 export function callerArguments(kind: AgentKind, argv: string[]): string[] {
-  const words = argv.slice(1)
+  // A durable agent's arguments follow its worker, with or without the restart loop around it.
+  const words = argv.slice(kind === 'durable' ? argv.findIndex((word) => word.endsWith('/durable/worker.ts')) + 1 : 1)
   const kept: string[] = []
   for (let index = 0; index < words.length; index++) {
     const word = words[index]
@@ -187,6 +195,7 @@ export function callerArguments(kind: AgentKind, argv: string[]): string[] {
     if (ours) continue
     const withValue = kind === 'codex' ? (word === '-c' && /^hooks(\.state)?=/.test(next)) || (word === 'resume' && !next.startsWith('-'))
       : kind === 'claude' ? (word === '--settings' && next.includes('/agent-hooks/')) || word === '--resume'
+      : kind === 'durable' ? word === '--storage'
       : (word === '-e' && next.includes('/agent-hooks/')) || word === '--session'
     if (withValue) {
       index++
