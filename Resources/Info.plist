@@ -11,5 +11,6 @@
 <key>CFBundleVersion</key><string>21</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Orc's runtime and the agents in its sessions reach models and services on your local network, such as a model server on another machine, and paired phones connect to it.</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
