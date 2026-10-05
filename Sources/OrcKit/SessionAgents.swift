@@ -5,6 +5,7 @@ import Darwin
 public struct SessionAgentCommand {
     public enum Action: String { case spawn, send, list, status, wait }
     public let action: Action
+    /// The agent to spawn; nil spawns the default agent (see `defaultAgent`).
     public let agent: String?
     public let name: String?
     public let options: [String: String]
@@ -39,10 +40,11 @@ public struct SessionAgentCommand {
         var agent: String?, name = options["name"]
         switch action {
         case .spawn:
-            guard let kind = positional.first, ["codex", "claude", "pi", "durable"].contains(kind) else { throw OrcError("Choose codex, claude, pi or durable.") }
-            agent = kind
-            if positional.count == 2 { guard name == nil else { throw OrcError("Give the name once.") }; name = positional[1] }
-            guard positional.count <= 2, name != nil else { throw OrcError("Usage: orc agent spawn codex|claude|pi|durable NAME [--prompt-file FILE]") }
+            var rest = positional[...]
+            if let kind = rest.first, ["codex", "claude", "pi", "durable"].contains(kind) { agent = kind; rest = rest.dropFirst() }
+            guard rest.count <= 1 else { throw OrcError("Choose codex, claude, pi or durable, then the name.") }
+            if let given = rest.first { guard name == nil else { throw OrcError("Give the name once.") }; name = given }
+            guard name != nil else { throw OrcError("Usage: orc agent spawn [codex|claude|pi|durable] NAME [--prompt-file FILE]") }
         case .list:
             guard positional.isEmpty else { throw OrcError("Usage: orc agent list [--json]") }
         case .send, .status, .wait:
@@ -53,6 +55,14 @@ public struct SessionAgentCommand {
             throw OrcError("--timeout-seconds must be an integer from 1 to 3600.")
         }
         self.action = action; self.agent = agent; self.name = name; self.options = options; self.whenIdle = whenIdle; self.json = json
+    }
+
+    /// The agent spawn starts when none is given: the default session type, as for `orc new`, when it is an agent.
+    public static func defaultAgent(_ config: OrcConfiguration) throws -> String {
+        guard config.defaultSessionType != .terminal else {
+            throw OrcError("The default session type is terminal, which is not an agent. Choose codex, claude, pi or durable, or make an agent the default in Orc's Settings.")
+        }
+        return config.defaultSessionType.rawValue
     }
 
     /// Text from `--prompt-file`/`--file`, or from standard input when it is not a terminal.
@@ -76,22 +86,23 @@ public struct SessionAgentCommand {
     }
 
     public static let help = """
-    orc agent spawn codex|claude|pi|durable NAME [--project SELECTOR] [--prompt-file FILE]
+    orc agent spawn [codex|claude|pi|durable] NAME [--project SELECTOR] [--prompt-file FILE]
         [--model MODEL] [--effort LEVEL] [--timeout-seconds SECONDS] [--json]
     orc agent send NAME [--file FILE] [--when-idle] [--json]
     orc agent list [--json]
     orc agent status NAME [--json]
     orc agent wait NAME [--timeout-seconds SECONDS] [--json]
 
-    An agent is a session, and its name is its identity. Spawn starts the agent in --project (or
-    the current directory), waits until it is ready and types the prompt exactly as given; without
-    --prompt-file, a prompt piped on standard input is used. Send types a message that begins with
-    a line naming the sender. A working agent reads it at its next step, after the tool call it is
-    running; an idle agent starts a turn with it. With --when-idle, the message waits until the
-    agent is idle and starts a turn of its own. Messages wait while the agent is at a permission
-    prompt or dialog. Wait returns once the agent has finished working on everything sent to it.
-    orc close NAME ends an agent's session. A durable agent is Orc's own experimental agent on
-    pi-durable: it signs in with Pi's credentials and keeps its conversation in SQLite.
+    An agent is a session, and its name is its identity. Spawn starts the agent (without one, the
+    default agent, as for orc new) in --project (or the current directory), waits until it is ready
+    and types the prompt exactly as given; without --prompt-file, a prompt piped on standard input
+    is used. Send types a message that begins with a line naming the sender. A working agent reads
+    it at its next step, after the tool call it is running; an idle agent starts a turn with it.
+    With --when-idle, the message waits until the agent is idle and starts a turn of its own.
+    Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent
+    has finished working on everything sent to it. orc close NAME ends an agent's session. A
+    durable agent is Orc's own experimental agent on pi-durable: it signs in with Pi's credentials
+    and keeps its conversation in SQLite.
     """
 }
 
@@ -102,7 +113,8 @@ public enum SessionAgentService {
         let timeout = Int(command.options["timeout-seconds"] ?? "") ?? (command.action == .wait ? 600 : 120)
         switch command.action {
         case .spawn:
-            var params: [String: Any] = ["agent": command.agent!, "name": command.name!, "timeoutMs": timeout * 1000]
+            let agent = try command.agent ?? SessionAgentCommand.defaultAgent(OrcConfiguration.load())
+            var params: [String: Any] = ["agent": agent, "name": command.name!, "timeoutMs": timeout * 1000]
             if let selector = command.options["project"] {
                 params["project"] = "id:" + (try SessionCreationDefaults.project(selector, in: await SessionService().workspaces()).id)
             } else {

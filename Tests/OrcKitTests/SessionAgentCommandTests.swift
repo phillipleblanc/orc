@@ -14,6 +14,18 @@ final class SessionAgentCommandTests: XCTestCase {
         XCTAssertEqual(try SessionAgentCommand(["spawn", "durable", "notes"]).agent, "durable")
         XCTAssertThrowsError(try SessionAgentCommand(["spawn", "vim", "editor"]))
         XCTAssertThrowsError(try SessionAgentCommand(["spawn", "codex"]))
+        XCTAssertThrowsError(try SessionAgentCommand(["spawn"]))
+    }
+
+    func testSpawnWithoutAnAgentUsesTheDefaultAgent() throws {
+        let named = try SessionAgentCommand(["spawn", "fix-ci", "--project", "orc"])
+        XCTAssertNil(named.agent)
+        XCTAssertEqual(named.name, "fix-ci")
+        XCTAssertNil(try SessionAgentCommand(["spawn", "--name", "fix-ci"]).agent)
+        XCTAssertThrowsError(try SessionAgentCommand(["spawn", "fix-ci", "--name", "other"]))
+        XCTAssertEqual(try SessionAgentCommand.defaultAgent(OrcConfiguration()), "codex")
+        XCTAssertEqual(try SessionAgentCommand.defaultAgent(OrcConfiguration(defaultSessionType: .pi)), "pi")
+        XCTAssertThrowsError(try SessionAgentCommand.defaultAgent(OrcConfiguration(defaultSessionType: .terminal)))
     }
 
     func testMessagingCommandsTakeOneName() throws {
