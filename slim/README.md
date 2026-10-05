@@ -123,9 +123,8 @@ nothing. The frontend's `AgentMonitor` replays the file when it starts and follo
 
 Codex fires no hook before its first prompt, so it counts as ready once its title settles without a
 spinner. Claude fires no hook for an interrupted turn, so a `working` Claude whose title shows its
-idle mark for 1.5 s without new events becomes `idle`; after `agent.stop`, the same applies to a
-pending permission prompt. A trust or hook-review dialog on screen reports `permission` whatever the
-hooks say, because a typed Enter would answer it.
+idle mark for 1.5 s without new events becomes `idle`. A trust or hook-review dialog on screen
+reports `permission` whatever the hooks say, because a typed Enter would answer it.
 
 Claude fires `UserPromptSubmit` when it queues text submitted during a turn, not when it reads it.
 Text still queued when the turn ends starts another turn, which fires no hook until its `Stop`. So
@@ -144,8 +143,9 @@ dialog. A `whenIdle` message and the prompt of `agent.spawn` wait until the agen
 `agent.spawn` types its prompt unchanged. `agent.wait` resolves once the agent has finished a turn
 after the last delivered message and nothing is queued.
 
-`orc agent spawn|send|list|status|wait|stop` uses these methods when the runtime advertises
+`orc agent spawn|send|list|status|wait` uses these methods when the runtime advertises
 `orc.agents.v1`; commands run inside a session send its `ORC_SESSION_NAME` as the sender and parent.
+`orc close` ends a session with `terminal.close`.
 
 `wake.create` sends an agent a message from `wake` later: a `timer` after `delayMs`, a `pid` when that
 process exits, or a `script` started at once when it exits. A process is identified by its pid and

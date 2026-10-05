@@ -109,5 +109,5 @@ test('after a restart, agents continue their conversations and keep their wakes'
     await frontend.rpc('agent.send', { to: spawn.name, text: 'Which single word did you reply with earlier in this conversation? Reply with only that word.' })
   }
   for (const { spawn, word } of agents) assert.equal(await answered(spawn.name), word, spawn.name)
-  for (const { spawn } of agents) await frontend.rpc('agent.stop', { name: spawn.name, kill: true })
+  for (const { spawn } of agents) await frontend.rpc('terminal.close', { terminal: spawn.name })
 })

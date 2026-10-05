@@ -20,6 +20,7 @@ orc new terminal --project path:/absolute/path/to/registered/project
 orc attach
 orc attach fleet-rules
 orc attach fleet-rules --read-only
+orc close fleet-rules
 ```
 
 Run **`orc new`** to start the configured agent in the configured project and attach to it immediately in an interactive terminal. The default agent is **Codex**. Register a project folder with `orc projects add PATH --default`, or select one with `--project`. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to your login shell. Use `--command 'COMMAND'` for a custom command instead of a session type. Noninteractive use prints the attach command without opening a terminal; `--json` retains its creation-only output for scripts.
@@ -99,10 +100,10 @@ orc agent send fix-ci --when-idle < next-task.md
 orc agent wait fix-ci
 orc agent list
 orc agent status fix-ci
-orc agent stop fix-ci [--kill]
+orc close fix-ci
 ```
 
-Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`). A working agent reads it at its next step, after the tool call it is running; an idle agent starts a turn with it. With `--when-idle`, the message waits until the agent is idle and starts a turn of its own. Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent has finished everything sent to it. Stop interrupts the current turn and drops queued messages; `--kill` ends the session. Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
+Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`). A working agent reads it at its next step, after the tool call it is running; an idle agent starts a turn with it. With `--when-idle`, the message waits until the agent is idle and starts a turn of its own. Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent has finished everything sent to it. `orc close NAME` ends a session, agent or shell; a closed agent session can be [reopened](#recently-closed-agents). Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
 
 An agent can also have a message sent to itself later:
 

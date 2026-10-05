@@ -17,7 +17,7 @@ final class SessionAgentCommandTests: XCTestCase {
 
     func testMessagingCommandsTakeOneName() throws {
         XCTAssertEqual(try SessionAgentCommand(["send", "fix-ci", "--file", "note.md"]).options["file"], "note.md")
-        XCTAssertTrue(try SessionAgentCommand(["stop", "fix-ci", "--kill"]).kill)
+        XCTAssertThrowsError(try SessionAgentCommand(["stop", "fix-ci"]))
         XCTAssertEqual(try SessionAgentCommand(["wait", "fix-ci", "--timeout-seconds", "30"]).options["timeout-seconds"], "30")
         XCTAssertThrowsError(try SessionAgentCommand(["send"]))
         XCTAssertThrowsError(try SessionAgentCommand(["status", "a", "b"]))

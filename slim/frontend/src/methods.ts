@@ -252,8 +252,6 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'agent.wait': (params) => agents.wait(String(params.name), Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 30_000))),
 
-    'agent.stop': (params) => agents.stop(String(params.name), params.kill === true),
-
     'wake.create': (params) => wakes.create(String(params.name ?? ''), params),
 
     'wake.list': async (params) => ({ wakes: await wakes.list(String(params.name ?? '')) }),

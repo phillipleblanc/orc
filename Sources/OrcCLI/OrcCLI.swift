@@ -153,6 +153,11 @@ import COrcSupport
                 print("\(reopened.alreadyOpen ? "Already open as" : "Reopened") \(safe(reopened.name))\norc attach \(shellQuote(reopened.name))")
                 if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 { try await run(["attach", reopened.handle]) }
             }
+        case "close":
+            guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc close NAME [--json]") }
+            let result = try await LocalRPC.call("terminal.close", ["terminal": options[0]])
+            if json { try emit(["name": options[0], "handle": (result["close"] as? [String: Any])?["handle"] ?? NSNull()]) }
+            else { print("Closed \(safe(options[0])).") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
@@ -301,6 +306,7 @@ import COrcSupport
     orc agent                               Spawn agents and message them by name (orc agent --help)
     orc history [QUERY] [--all] [--json]     Recently closed agent sessions and agent conversations
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
+    orc close NAME [--json]                  End a session; a closed agent session can be reopened
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]

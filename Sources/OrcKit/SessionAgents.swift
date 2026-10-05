@@ -3,32 +3,30 @@ import Darwin
 
 /// Agent commands for runtimes that advertise `orc.agents.v1`: agents are sessions addressed by name.
 public struct SessionAgentCommand {
-    public enum Action: String { case spawn, send, list, status, wait, stop }
+    public enum Action: String { case spawn, send, list, status, wait }
     public let action: Action
     public let agent: String?
     public let name: String?
     public let options: [String: String]
-    public let kill: Bool
     public let whenIdle: Bool
     public let json: Bool
 
     public init(_ arguments: [String]) throws {
         guard let first = arguments.first, let action = Action(rawValue: first) else {
-            throw OrcError("Use `orc agent spawn|send|list|status|wait|stop`. Run `orc agent --help` for details.")
+            throw OrcError("Use `orc agent spawn|send|list|status|wait`. Run `orc agent --help` for details.")
         }
         let allowed: Set<String>
         switch action {
         case .spawn: allowed = ["name", "project", "prompt-file", "model", "effort", "timeout-seconds"]
         case .send: allowed = ["file", "prompt-file"]
         case .wait: allowed = ["timeout-seconds"]
-        case .list, .status, .stop: allowed = []
+        case .list, .status: allowed = []
         }
-        var positional: [String] = [], options: [String: String] = [:], json = false, kill = false, whenIdle = false
+        var positional: [String] = [], options: [String: String] = [:], json = false, whenIdle = false
         var index = 1
         while index < arguments.count {
             let value = arguments[index]
             if value == "--json" { json = true; index += 1; continue }
-            if value == "--kill", action == .stop { kill = true; index += 1; continue }
             if value == "--when-idle", action == .send { whenIdle = true; index += 1; continue }
             if value.hasPrefix("--") {
                 let key = String(value.dropFirst(2))
@@ -47,14 +45,14 @@ public struct SessionAgentCommand {
             guard positional.count <= 2, name != nil else { throw OrcError("Usage: orc agent spawn codex|claude|pi NAME [--prompt-file FILE]") }
         case .list:
             guard positional.isEmpty else { throw OrcError("Usage: orc agent list [--json]") }
-        case .send, .status, .wait, .stop:
+        case .send, .status, .wait:
             guard positional.count == 1 else { throw OrcError("Agent \(action.rawValue) takes one agent name.") }
             name = positional[0]
         }
         if let seconds = options["timeout-seconds"], Int(seconds).map({ (1...3600).contains($0) }) != true {
             throw OrcError("--timeout-seconds must be an integer from 1 to 3600.")
         }
-        self.action = action; self.agent = agent; self.name = name; self.options = options; self.kill = kill; self.whenIdle = whenIdle; self.json = json
+        self.action = action; self.agent = agent; self.name = name; self.options = options; self.whenIdle = whenIdle; self.json = json
     }
 
     /// Text from `--prompt-file`/`--file`, or from standard input when it is not a terminal.
@@ -84,7 +82,6 @@ public struct SessionAgentCommand {
     orc agent list [--json]
     orc agent status NAME [--json]
     orc agent wait NAME [--timeout-seconds SECONDS] [--json]
-    orc agent stop NAME [--kill] [--json]
 
     An agent is a session, and its name is its identity. Spawn starts the agent in --project (or
     the current directory), waits until it is ready and types the prompt exactly as given; without
@@ -93,7 +90,7 @@ public struct SessionAgentCommand {
     running; an idle agent starts a turn with it. With --when-idle, the message waits until the
     agent is idle and starts a turn of its own. Messages wait while the agent is at a permission
     prompt or dialog. Wait returns once the agent has finished working on everything sent to it.
-    Stop interrupts the current turn and drops queued messages; --kill ends the session.
+    orc close NAME ends an agent's session.
     """
 }
 
@@ -124,8 +121,6 @@ public enum SessionAgentService {
             return (try await LocalRPC.call("agent.list"), true)
         case .status:
             return (try await LocalRPC.call("agent.status", ["name": command.name!]), true)
-        case .stop:
-            return (try await LocalRPC.call("agent.stop", ["name": command.name!, "kill": command.kill], timeout: 30), true)
         case .wait:
             let deadline = Date().addingTimeInterval(TimeInterval(timeout))
             while true {
@@ -157,7 +152,7 @@ public enum SessionAgentService {
             return line(body) + (body["delivered"] as? Bool == true ? "\nMessage sent." : "\nMessage queued.")
         case .wait:
             return line(body) + (body["done"] as? Bool == true ? "" : "\nTimed out before the agent finished.")
-        case .status, .stop:
+        case .status:
             var text = line(body)
             if let message = body["lastAssistantMessage"] as? String { text += "\n\n" + message }
             return text

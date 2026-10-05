@@ -69,4 +69,7 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
   assert.notEqual(relaunched, firstPid, 'Orc started a new frontend')
   const after = JSON.parse(await orc('list', '--json'))
   assert.equal(after[0].handle, created.handle, 'the same session survived')
+
+  assert.equal((await orc('close', 'shell-a')).trim(), 'Closed shell-a.')
+  assert.deepEqual(JSON.parse(await orc('list', '--json')), [])
 })

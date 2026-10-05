@@ -106,11 +106,10 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   assert.equal(existsSync(join(project, 'approval-probe')), true)
   assert.equal((await events('asker')).some((event) => event.event === 'PermissionRequest'), false)
 
-  // Stop interrupts the current turn.
+  // Esc typed into the session interrupts the turn, and Codex's Interrupt hook ends it.
   await orc(['agent', 'send', 'asker'], { input: 'Run the shell command `sleep 60`, then reply with only the word LATE.' })
   await until(async () => (await frontend.rpc('agent.status', { name: 'asker' })).state === 'working', 60_000, 'asker to start working')
-  const stopped = await orc(['agent', 'stop', 'asker', '--json'])
-  assert.equal(stopped.json().interrupted, true)
+  await frontend.rpc('terminal.send', { terminal: 'asker', text: '\x1b' })
   const interrupted = await until(async () => {
     const status = await frontend.rpc('agent.status', { name: 'asker' })
     return status.state === 'idle' && status
@@ -164,7 +163,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     // Claude reports no hook for an interrupted turn; its idle title ends the turn instead.
     await orc(['agent', 'send', 'reviewer'], { input: 'Write a 600-word story about a lighthouse. Do not use any tools.' })
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start working')
-    await orc(['agent', 'stop', 'reviewer'])
+    await frontend.rpc('terminal.send', { terminal: 'reviewer', text: '\x1b' })
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'idle', 15_000, 'reviewer to be idle after the interrupt')
   }
 
@@ -197,6 +196,9 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   assert.equal(listedSessions.find((session) => session.title === 'plain')?.agentIdentity, 'codex')
   await until(async () => (await frontend.rpc('terminal.agentStatus', { terminal: 'plain' })).agentStatus.isRunningAgent, 20_000, 'plain to report an agent')
 
-  for (const name of ['coder', 'asker', 'helper', 'plain', ...(CLAUDE_DIR ? ['reviewer'] : [])]) await orc(['agent', 'stop', name, '--kill'])
+  const closed = await orc(['close', 'coder'])
+  assert.equal(closed.stdout.trim(), 'Closed coder.')
+  for (const name of ['asker', 'helper', 'plain', ...(CLAUDE_DIR ? ['reviewer'] : [])]) assert.equal((await orc(['close', name])).code, 0)
+  assert.match((await orc(['close', 'coder'])).stderr, /no session coder/)
   await until(async () => (await frontend.rpc('agent.list')).agents.length === 0, 20_000, 'agents to end')
 })

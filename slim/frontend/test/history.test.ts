@@ -121,7 +121,7 @@ test('a closed agent reopens with its conversation, under its name or another, a
   const answered = async (name: string) => (await frontend.rpc('agent.wait', { name, timeoutMs: 180_000 })).lastAssistantMessage?.trim()
   await frontend.rpc('agent.spawn', { agent: 'pi', name: 'helper', cwd: project, effort: 'low', prompt: 'Reply with only the word BRAVO.' })
   assert.equal(await answered('helper'), 'BRAVO')
-  await frontend.rpc('agent.stop', { name: 'helper', kill: true })
+  await frontend.rpc('terminal.close', { terminal: 'helper' })
 
   const [closed] = (await frontend.rpc('history.list')).sessions
   assert.equal(closed.name, 'helper')
@@ -143,10 +143,10 @@ test('a closed agent reopens with its conversation, under its name or another, a
     { handle: (await frontend.rpc('agent.status', { name: 'helper-2' })).handle, name: 'helper-2', agent: 'pi', alreadyOpen: true })
 
   // Once its session closes, opening the conversation reopens that session.
-  await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
+  await frontend.rpc('terminal.close', { terminal: 'helper-2' })
   assert.equal((await frontend.rpc('history.reopen', { conversation: conversation.id })).name, 'helper-2')
   assert.deepEqual((await frontend.rpc('history.list')).sessions, [])
-  await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
+  await frontend.rpc('terminal.close', { terminal: 'helper-2' })
 
   // Without a closed session, it opens from the agent's own history, named after its title.
   await rm(join(profile, 'ended'), { recursive: true, force: true })
@@ -154,5 +154,5 @@ test('a closed agent reopens with its conversation, under its name or another, a
   assert.equal(opened.name, 'helper-2')
   await frontend.rpc('agent.send', { to: 'helper-2', text: recall })
   assert.equal(await answered('helper-2'), 'BRAVO')
-  await frontend.rpc('agent.stop', { name: 'helper-2', kill: true })
+  await frontend.rpc('terminal.close', { terminal: 'helper-2' })
 })

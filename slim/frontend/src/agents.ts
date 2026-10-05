@@ -134,17 +134,6 @@ export class AgentDirectory extends EventEmitter {
     return { ...this.describe(record), done }
   }
 
-  stop(name: string, kill: boolean): Promise<Record<string, unknown>> | Record<string, unknown> {
-    const record = this.get(name)
-    const dropped = record.queue.length
-    record.queue = []
-    void this.save(record)
-    if (kill) return this.store.end(record.session).then(() => ({ ...this.describe(record), dropped, killed: true }))
-    record.monitor.noteInterrupt()
-    record.session.input('\x1b')
-    return { ...this.describe(record), dropped, interrupted: true }
-  }
-
   list(): Record<string, unknown>[] {
     return [...this.records.values()].map((record) => this.describe(record))
   }

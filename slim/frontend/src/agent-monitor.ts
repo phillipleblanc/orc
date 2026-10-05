@@ -50,7 +50,6 @@ export class AgentMonitor extends EventEmitter {
   lastIdleAt = 0
   lastEventAt = 0
   dialog: string | null = null
-  private interruptRequested = false
   // When Claude queued text submitted during the current turn, or 0. Claude fires UserPromptSubmit
   // when it queues such text, not when it reads it.
   private queuedAt = 0
@@ -187,10 +186,7 @@ export class AgentMonitor extends EventEmitter {
 
   private transition(state: AgentState, at = Date.now()): void {
     if (this.exited) return
-    if (state === 'idle') {
-      this.interruptRequested = false
-      this.queuedAt = 0
-    }
+    if (state === 'idle') this.queuedAt = 0
     if (state === 'idle' && this.state !== 'idle') this.lastIdleAt = at
     const changed = state !== this.state
     this.state = state
@@ -204,12 +200,6 @@ export class AgentMonitor extends EventEmitter {
     const settle = this.queuedAt + CLAUDE_QUEUE_SETTLE_MS - Date.now()
     if (settle > 0) await new Promise((resolve) => setTimeout(resolve, settle))
     return this.claudeQueue.continuesAfter(transcript, promptId).catch(() => false)
-  }
-
-  /** Records that Orc interrupted the current turn, so an idle title may end a pending approval too. */
-  noteInterrupt(): void {
-    this.interruptRequested = true
-    this.observeTitle(this.session.title)
   }
 
   /**
@@ -233,13 +223,10 @@ export class AgentMonitor extends EventEmitter {
   private observeClaudeTitle(title: string): void {
     if (this.titleTimer) clearTimeout(this.titleTimer)
     this.titleTimer = null
-    const interruptible = this.state === 'working' || (this.interruptRequested && this.state === 'permission')
-    if (!interruptible || !CLAUDE_IDLE_TITLE.test(title)) return
+    if (this.state !== 'working' || !CLAUDE_IDLE_TITLE.test(title)) return
     const since = this.lastEventAt
     this.titleTimer = setTimeout(() => {
-      const stillInterruptible = this.state === 'working' || (this.interruptRequested && this.state === 'permission')
-      if (!stillInterruptible || this.lastEventAt !== since || !CLAUDE_IDLE_TITLE.test(this.session.title)) return
-      this.interruptRequested = false
+      if (this.state !== 'working' || this.lastEventAt !== since || !CLAUDE_IDLE_TITLE.test(this.session.title)) return
       this.transition('idle')
     }, CLAUDE_IDLE_SETTLE_MS)
   }
