@@ -168,25 +168,77 @@ struct BriefView: View {
 }
 
 /// The floating panel's content: the session's name and its brief.
+/// The floating panel's content: the session's name and state, an agent's brief, the session's project and its notes.
 struct StatusPanelView: View {
+    @ObservedObject var model: SessionModel
     @ObservedObject var briefs: BriefModel
     let name: String
+    var close: () -> Void = {}
+
+    private var session: Session? { model.sessions.first { $0.name == name } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(name).font(.headline).lineLimit(1)
-                // Reset times and ages tick by the minute.
-                TimelineView(.everyMinute) { _ in BriefView(briefs: briefs, name: name) }
+        VStack(alignment: .leading, spacing: 0) {
+            header.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let session {
+                        if session.agentIdentity != nil {
+                            // Ages tick by the minute.
+                            TimelineView(.everyMinute) { _ in BriefView(briefs: briefs, name: name) }
+                            Divider()
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Project").font(.caption).foregroundStyle(.secondary)
+                            Text(session.worktreePath).font(.callout).textSelection(.enabled)
+                        }
+                        if model.hierarchy.parent(of: session) != nil {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Full name").font(.caption).foregroundStyle(.secondary)
+                                Text(session.name).font(.callout).textSelection(.enabled)
+                            }
+                        }
+                        SessionNotesEditor(session: session).id(session.name)
+                    } else {
+                        Text("This session is no longer running.").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 16).padding(.top, 30).padding(.bottom, 16)
         }
-        .frame(minWidth: 280, idealWidth: 340, minHeight: 160)
+        .frame(minWidth: 280, idealWidth: 360, minHeight: 200)
+        // The panel's title bar is transparent and hidden; the header takes its place.
+        .ignoresSafeArea()
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if let session {
+                SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.map { model.hierarchy.displayName(for: $0) } ?? name).font(.headline).lineLimit(1)
+                if let session {
+                    Text([session.agentIdentity, model.statusLabel(for: session)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            Button(action: close) {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22).background(Circle().fill(.quaternary))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain).help("Close (Esc)").accessibilityLabel("Close")
+        }
     }
 }
 
-/// The brief of the session in view in a floating translucent panel, which can be dragged anywhere and stays out of
-/// the way of typing: it never takes keyboard focus, and it hides while Orc is in the background.
+/// The session in view in a floating translucent panel, which can be dragged anywhere and stays out of the way of
+/// typing: it takes keyboard focus only for its notes, and it hides while Orc is in the background.
 @MainActor final class StatusPanel: NSObject, NSWindowDelegate {
     static let shared = StatusPanel()
     private var panel: NSPanel?
@@ -195,7 +247,7 @@ struct StatusPanelView: View {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    func show(_ name: String, briefs: BriefModel, over window: NSWindow?) {
+    func show(_ name: String, model: SessionModel, briefs: BriefModel, over window: NSWindow?) {
         let panel = self.panel ?? make()
         self.panel = panel
         self.name = name
@@ -203,7 +255,7 @@ struct StatusPanelView: View {
         effect.material = .hudWindow
         effect.blendingMode = .behindWindow
         effect.state = .active
-        let host = NSHostingView(rootView: StatusPanelView(briefs: briefs, name: name))
+        let host = NSHostingView(rootView: StatusPanelView(model: model, briefs: briefs, name: name) { [weak self] in self?.close() })
         host.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(host)
         NSLayoutConstraint.activate([
@@ -215,7 +267,7 @@ struct StatusPanelView: View {
         // Until it is moved, the panel sits at the top right of the window, over the end of the terminal's lines.
         if !panel.setFrameUsingName(Self.frameName), let window {
             let frame = window.frame
-            panel.setFrame(NSRect(x: frame.maxX - 380, y: frame.maxY - 520, width: 360, height: 460), display: false)
+            panel.setFrame(NSRect(x: frame.maxX - 380, y: frame.maxY - 620, width: 360, height: 560), display: false)
         }
         panel.orderFront(nil)
     }
@@ -229,7 +281,7 @@ struct StatusPanelView: View {
 
     private func make() -> NSPanel {
         let panel = Panel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 460),
-                          styleMask: [.titled, .closable, .resizable, .utilityWindow, .fullSizeContentView, .nonactivatingPanel],
+                          styleMask: [.titled, .resizable, .utilityWindow, .fullSizeContentView, .nonactivatingPanel],
                           backing: .buffered, defer: true)
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
@@ -240,8 +292,8 @@ struct StatusPanelView: View {
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // The content's own close button stands in for the title bar's.
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { panel.standardWindowButton(button)?.isHidden = true }
         panel.setFrameAutosaveName(Self.frameName)
         panel.delegate = self
         panel.onClose = { [weak self] in self?.close() }

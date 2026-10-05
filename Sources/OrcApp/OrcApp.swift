@@ -278,7 +278,6 @@ struct SessionWindow: View {
     @ObservedObject private var ghostty = GhosttyEngine.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
-    @AppStorage("sessionInspectorShown") private var inspectorShown = false
     /// Coming back to an agent session after a while shows its status in a floating panel.
     @AppStorage("showStatusOnReturn") private var showStatusOnReturn = true
     /// The session in view, whose last look is recorded while it stays in view.
@@ -358,13 +357,8 @@ struct SessionWindow: View {
             ToolbarItem {
                 Button(action: toggleStatus) { Label("Status", systemImage: "checklist") }
                     .keyboardShortcut("s", modifiers: [.command, .option])
-                    .help(StatusPanel.shared.isVisible ? "Hide Agent Status (⌥⌘S)" : "Show Agent Status (⌥⌘S)")
-                    .disabled(selected?.agentIdentity == nil)
-            }
-            ToolbarItem {
-                Button { inspectorShown.toggle() } label: { Label("Info", systemImage: "info.circle") }
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                    .help(inspectorShown ? "Hide Session Info (⌥⌘I)" : "Show Session Info (⌥⌘I)")
+                    .help(StatusPanel.shared.isVisible ? "Hide Session Status (⌥⌘S)" : "Show Session Status (⌥⌘S)")
+                    .disabled(selected == nil)
             }
         }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
@@ -398,7 +392,7 @@ struct SessionWindow: View {
             markVisibleOutputRead()
             // An open status panel follows the selection.
             if StatusPanel.shared.isVisible {
-                if let selected, selected.agentIdentity != nil { StatusPanel.shared.show(selected.name, briefs: briefs, over: NSApp.mainWindow) }
+                if let selected { StatusPanel.shared.show(selected.name, model: model, briefs: briefs, over: NSApp.mainWindow) }
                 else { StatusPanel.shared.close() }
             }
             updateViewing()
@@ -467,7 +461,7 @@ struct SessionWindow: View {
             Button("Close Session…", systemImage: "xmark.circle", role: .destructive) { closingSession = session }
         }
     }
-    /// The selected session's terminal, or a placeholder in its place, with an inspector beside it.
+    /// The selected session's terminal, or a placeholder in its place.
     private var detail: some View {
         Group {
             if let selected, showsTerminal {
@@ -485,13 +479,6 @@ struct SessionWindow: View {
             if durableView != DurableChatModel.terminal, let first = variants.first, !variants.contains(where: { $0.id == durableView }) {
                 durableView = first.id
             }
-        }
-        .inspector(isPresented: $inspectorShown) {
-            Group {
-                if let selected { inspector(selected) }
-                else { ContentUnavailableView("No Selection", systemImage: "info.circle").background(Color(nsColor: .windowBackgroundColor)) }
-            }
-            .inspectorColumnWidth(min: 240, ideal: 300, max: 440)
         }
     }
     @ViewBuilder private var emptyState: some View {
@@ -524,41 +511,6 @@ struct SessionWindow: View {
             Color.clear
         }
     }
-    private func inspector(_ session: Session) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(hierarchy.displayName(for: session)).font(.title3.bold()).textSelection(.enabled)
-                HStack(spacing: 7) {
-                    SessionStatusIcon(session: session, activity: model.activity(for: session), muted: model.isMuted(session))
-                        .accessibilityHidden(true)
-                    Text(model.statusLabel(for: session))
-                }.font(.callout)
-                Divider()
-                if session.agentIdentity != nil {
-                    BriefView(briefs: briefs, name: session.name)
-                    Divider()
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Project").font(.caption).foregroundStyle(.secondary)
-                    Text(session.worktreePath).font(.callout).textSelection(.enabled)
-                }
-                if hierarchy.parent(of: session) != nil {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Full name").font(.caption).foregroundStyle(.secondary)
-                        Text(session.name).font(.callout).textSelection(.enabled)
-                    }
-                }
-                if let agent = session.agentIdentity {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Agent").font(.caption).foregroundStyle(.secondary)
-                        Text(agent).font(.callout)
-                    }
-                }
-                SessionNotesEditor(session: session).id(session.name)
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
         model.selected = session.id
@@ -574,14 +526,14 @@ struct SessionWindow: View {
             returnPending = false
             if showStatusOnReturn, session.agentIdentity != nil, let brief = briefs.briefs[session.name],
                viewLog.isReturning(to: session.name, brief: brief) {
-                StatusPanel.shared.show(session.name, briefs: briefs, over: NSApp.mainWindow)
+                StatusPanel.shared.show(session.name, model: model, briefs: briefs, over: NSApp.mainWindow)
             }
         }
         viewing = session.name
     }
     private func toggleStatus() {
         if StatusPanel.shared.isVisible { StatusPanel.shared.close() }
-        else if let selected, selected.agentIdentity != nil { StatusPanel.shared.show(selected.name, briefs: briefs, over: NSApp.mainWindow) }
+        else if let selected { StatusPanel.shared.show(selected.name, model: model, briefs: briefs, over: NSApp.mainWindow) }
     }
     private func markVisibleOutputRead() {
         guard NSApplication.shared.isActive,
@@ -592,7 +544,7 @@ struct SessionWindow: View {
     }
 }
 
-private struct SessionNotesEditor: View {
+struct SessionNotesEditor: View {
     let session: Session
     @State private var notes: String
     @State private var error: String?

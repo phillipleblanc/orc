@@ -37,36 +37,43 @@ final class AgentStatusTests: XCTestCase {
         XCTAssertEqual(row.detail, "pi · Checkpoint: fix PR1 Clippy · Priority")
     }
 
-    @MainActor func testThePanelShowsTheBrief() async throws {
+    @MainActor func testThePanelShowsTheSessionAndAnAgentsBrief() async throws {
         _ = NSApplication.shared
+        let model = SessionModel(monitorSessions: false)
+        model.sessions = try [("cayenne-caching-cdc", "pi"), ("scratch", nil)].map { name, agent in
+            try decode(["handle": name, "title": name, "worktreeId": "w", "worktreePath": "/Users/phillip/code/spiceai-project", "connected": true,
+                        "writable": true, "agentIdentity": agent as Any? ?? NSNull()])
+        }
         let briefs = BriefModel(monitor: false)
         briefs.briefs = ["cayenne-caching-cdc": AgentBrief(name: "cayenne-caching-cdc", brief: content, generatedAt: Date().addingTimeInterval(-240),
                                                            model: "cuda-gpu-dev/qwen-flash-next", error: nil, generating: false)]
-        let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 360, height: 560))
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        let host = NSHostingView(rootView: StatusPanelView(briefs: briefs, name: "cayenne-caching-cdc"))
-        host.frame = effect.bounds
-        host.autoresizingMask = [.width, .height]
-        effect.addSubview(host)
-        let window = NSWindow(contentRect: effect.frame, styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.isReleasedWhenClosed = false
-        window.contentView = effect
-        window.orderFront(nil)
-        defer { window.close() }
-        try await Task.sleep(for: .milliseconds(300))
-        guard let directory = ProcessInfo.processInfo.environment["ORC_WINDOW_SNAPSHOT_DIR"] else { return }
-        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            window.appearance = NSAppearance(named: appearance)
-            try await Task.sleep(for: .milliseconds(150))
-            let bitmap = try XCTUnwrap(effect.bitmapImageRepForCachingDisplay(in: effect.bounds))
-            effect.cacheDisplay(in: effect.bounds, to: bitmap)
-            let url = URL(fileURLWithPath: directory)
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: url.appendingPathComponent("status-panel-\(appearance == .aqua ? "light" : "dark").png"))
+        for name in ["cayenne-caching-cdc", "scratch"] {
+            let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 360, height: 640))
+            effect.material = .hudWindow
+            effect.blendingMode = .behindWindow
+            effect.state = .active
+            let host = NSHostingView(rootView: StatusPanelView(model: model, briefs: briefs, name: name))
+            host.frame = effect.bounds
+            host.autoresizingMask = [.width, .height]
+            effect.addSubview(host)
+            let window = NSWindow(contentRect: effect.frame, styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+            window.titlebarAppearsTransparent = true
+            window.isReleasedWhenClosed = false
+            window.contentView = effect
+            window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(300))
+            guard let directory = ProcessInfo.processInfo.environment["ORC_WINDOW_SNAPSHOT_DIR"] else { continue }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                try await Task.sleep(for: .milliseconds(150))
+                let bitmap = try XCTUnwrap(effect.bitmapImageRepForCachingDisplay(in: effect.bounds))
+                effect.cacheDisplay(in: effect.bounds, to: bitmap)
+                let url = URL(fileURLWithPath: directory)
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: url.appendingPathComponent("status-panel-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+            }
         }
     }
 }
