@@ -266,8 +266,9 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
   and `repo.add` use Orca's request and result shapes, including agent identity and status.
   `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
-  access links, and `usage.read` reports Claude's and Codex's subscription usage with their sign-ins; they are not served
-  over the WebSocket.
+  access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
+  `brief.refresh`, `brief.settings` and `brief.configure` serve agents' status briefs written from their transcripts;
+  they are not served over the WebSocket.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
   `session.tabs.subscribe` and `runtime.clientEvents.subscribe`, and `nativeChat.*` to mobile

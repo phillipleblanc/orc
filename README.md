@@ -147,6 +147,19 @@ The runtime listens on port 6768 on every interface. Pairing does not use Orca R
 
 The runtime reads usage with the agents' own sign-ins: Claude Code's from the Keychain (or `.credentials.json` in its config directory), and Codex's through `codex app-server`, else the ChatGPT endpoint with `~/.codex/auth.json`. Neither sign-in is changed; an expired Claude sign-in recovers the next time `claude` runs. Usage is checked when Orc becomes active and every 15 minutes while it is, and refetched only once it is 5 minutes old; the refresh button fetches it now. After a failure, the last usage stays visible with a warning for 30 minutes, or a day when the provider rate limited the request.
 
+### Agent status
+
+Orc keeps a short status of each agent session: its goal, its progress, what it is doing right now, its next three steps, and anything it is waiting on from you. A model you choose under Settings → **Agent Status** (one of Pi's scoped models; off until chosen) writes it from the agent's own transcript, starting from the agent's latest summary of its conversation, so the agent is never messaged and its context is untouched. A status is written about 20 seconds after an agent's turn ends or it stops for permission, and every 15 minutes while it works, when its transcript changed; automatic statuses for a session are at least 5 minutes apart, and one is written at a time.
+
+The sidebar shows each agent's status headline after its agent. Session Info (⌥⌘I) shows the full status, with a button to write a new one now. **Status** (⌥⌘S) shows it in a floating translucent panel that you can drag anywhere, for example beside the agent's transcript; it follows the selected session, never takes keyboard focus, hides while Orc is in the background, and closes with its close button or Esc. Coming back to an agent session after 15 minutes away, when its status is newer than your last look, opens the panel by itself; Settings turns that off.
+
+```sh
+orc brief cayenne-caching-cdc            # The latest status
+orc brief cayenne-caching-cdc --refresh  # Write a new one now and print it
+```
+
+Statuses are kept in the runtime profile under `briefs/`, and the model in `brief-settings.json`.
+
 ### Recently closed agents
 
 Agent sessions closed in the last week can be reopened, resuming their conversations with their undelivered messages and wakes. In Orc, they are listed under **Recently Closed** below the sessions: click one to reopen it and attach, hover to see its last reply and screen, or choose **Reopen with New Name…** from its menu. **Reopen Closed Session** (⇧⌘T) reopens the most recent one. `orc attach`'s picker lists them after the running sessions.

@@ -102,6 +102,8 @@ struct SessionSidebarRow: View {
     let name: String
     let activity: AgentActivity
     let muted: Bool
+    /// The headline of the agent's status brief.
+    var headline: String? = nil
     /// The session's overview group, unless it is ungrouped.
     var group: String? = nil
     /// The names of the session's overview labels.
@@ -122,6 +124,7 @@ struct SessionSidebarRow: View {
                 Text(detail)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     .padding(.leading, 20)
+                    .help(detail)
             }
             Spacer(minLength: 0)
             if let collapsed = childrenCollapsed {
@@ -137,5 +140,5 @@ struct SessionSidebarRow: View {
         .padding(.vertical, 3)
     }
 
-    var detail: String { ([session.agentIdentity ?? "terminal"] + [group].compactMap { $0 } + labels).joined(separator: " · ") }
+    var detail: String { ([session.agentIdentity ?? "terminal"] + [headline, group].compactMap { $0 } + labels).joined(separator: " · ") }
 }

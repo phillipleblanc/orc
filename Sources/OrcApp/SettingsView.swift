@@ -11,6 +11,13 @@ struct SettingsView: View {
     /// A configured project selector that names no registered project, offered until another is chosen.
     @State private var unregistered: String?
     @State private var error: String?
+    @AppStorage("showStatusOnReturn") private var showStatusOnReturn = true
+    /// The model the runtime writes agent status briefs with, as `provider/id`, or "" for none.
+    @State private var statusModel = ""
+    @State private var statusModels: [(model: String, name: String)] = []
+    /// The model as the runtime has it, once read; a choice that differs is saved.
+    @State private var savedStatusModel: String?
+    @State private var statusError: String?
 
     var body: some View {
         Form {
@@ -27,10 +34,35 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
+            Section("Agent Status") {
+                Picker("Status model", selection: $statusModel) {
+                    Text("Off").tag("")
+                    ForEach(statusModels, id: \.model) { Text("\($0.name) (\($0.model))").tag($0.model) }
+                }
+                .disabled(savedStatusModel == nil)
+                Toggle("Show status when returning to an agent", isOn: $showStatusOnReturn)
+                Text("Orc writes where each agent's work stands from its transcript with this model, one of Pi's: after the agent's turns and every 15 minutes while it works, without messaging the agent. Coming back to an agent after 15 minutes away shows its status in a floating panel; ⌥⌘S shows it any time.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let statusError { Text(statusError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480)
         .onAppear(perform: load)
+        .task { await loadStatus() }
+        .onChange(of: statusModel) { _, value in
+            guard let saved = savedStatusModel, value != saved else { return }
+            Task {
+                do {
+                    try await BriefModel.configure(model: value.isEmpty ? nil : value)
+                    savedStatusModel = value
+                    statusError = nil
+                } catch {
+                    statusError = error.localizedDescription
+                    statusModel = saved
+                }
+            }
+        }
         .onChange(of: model.workspaces) { _, _ in load() }
         .onChange(of: agent) { _, value in
             guard let stored, value != stored.agent else { return }
@@ -67,6 +99,21 @@ struct SettingsView: View {
         } catch {
             self.error = error.localizedDescription
             load()
+        }
+    }
+
+    private func loadStatus() async {
+        do {
+            let settings = try await BriefModel.settings()
+            statusModels = settings.models
+            if let model = settings.model, !settings.models.contains(where: { $0.model == model }) {
+                statusModels.insert((model, model), at: 0)
+            }
+            savedStatusModel = settings.model ?? ""
+            statusModel = settings.model ?? ""
+            statusError = nil
+        } catch {
+            statusError = "Could not read the status model: \(error.localizedDescription)"
         }
     }
 

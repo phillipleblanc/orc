@@ -153,6 +153,15 @@ import COrcSupport
                 print("\(reopened.alreadyOpen ? "Already open as" : "Reopened") \(safe(reopened.name))\norc attach \(shellQuote(reopened.name))")
                 if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 { try await run(["attach", reopened.handle]) }
             }
+        case "brief":
+            let refresh = flag("--refresh")
+            guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc brief NAME [--refresh] [--json]") }
+            // Writing a brief takes a model a minute or more on a long transcript.
+            let record = refresh
+                ? try await LocalRPC.call("brief.refresh", ["name": options[0], "wait": true], timeout: 360)
+                : (try await LocalRPC.call("brief.list")["briefs"] as? [[String: Any]] ?? []).first { $0["name"] as? String == options[0] }
+            guard let record else { throw OrcError("\(options[0]) is not a running agent session. Run `orc agent list` for their names.") }
+            if json { try emit(record) } else { print(try AgentBrief(record: record).text()) }
         case "close":
             guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc close NAME [--json]") }
             let result = try await LocalRPC.call("terminal.close", ["terminal": options[0]])
@@ -307,6 +316,7 @@ import COrcSupport
     orc history [QUERY] [--all] [--json]     Recently closed agent sessions and agent conversations
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
     orc close NAME [--json]                  End a session; a closed agent session can be reopened
+    orc brief NAME [--refresh] [--json]      Where an agent's work stands: goal, progress, now, next
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]

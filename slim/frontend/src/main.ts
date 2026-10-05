@@ -10,6 +10,9 @@ import { ChatServer } from './durable/chat-server.ts'
 import { durableSocket } from './durable/paths.ts'
 import { DurableUpgrades } from './durable/upgrades.ts'
 import { loadOrCreateKeypair } from './e2ee.ts'
+import { BriefService } from './brief/service.ts'
+import { briefSources } from './brief/sources.ts'
+import { briefModels, writeBrief } from './brief/writer.ts'
 import { Catalog } from './catalog.ts'
 import { clientEventMethods } from './client-events.ts'
 import { createHandlers, createSessionStreams } from './methods.ts'
@@ -83,6 +86,10 @@ new DurableUpgrades(store, agents, async (session) => {
   if (!ended) throw new Error('its ended session record is missing')
   await startAgain({ store, agents, projects }, ended, name)
 }, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
+// Status briefs of agent sessions, written by the model chosen in Orc's Settings from the agents' transcripts.
+const briefs = new BriefService({ profile, sessions: briefSources(store, agents), write: writeBrief })
+agents.on('change', (session) => briefs.observe(session.meta.name))
+await briefs.start()
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
 const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, history, catalog, subscriptions }
@@ -152,6 +159,15 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
     const name = String(params.name ?? '')
     if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
     return { variants: (await chat.variants()).map((variant) => ({ ...variant, url: chat.url(variant.id, name) })) }
+  },
+  'brief.list': () => ({ briefs: briefs.list() }),
+  'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
+  'brief.settings': async () => ({ ...briefs.settings, models: await briefModels() }),
+  'brief.configure': async (params) => {
+    const model = typeof params.model === 'string' && params.model ? params.model : null
+    if (model && !(await briefModels()).some((candidate) => candidate.model === model)) throw new RpcError('invalid_argument', `${model} is not one of Pi's models`)
+    await briefs.configure(model)
+    return briefs.settings
   },
   'usage.read': async (params) => {
     const refresh: UsageRefresh = params.refresh === 'force' || params.refresh === 'none' ? params.refresh : 'stale'

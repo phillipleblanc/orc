@@ -8,9 +8,10 @@ import OrcKit
     @StateObject private var board = SessionBoardModel()
     @StateObject private var sidebarOrder = SessionSidebarModel()
     @StateObject private var usage = UsageModel()
+    @StateObject private var briefs = BriefModel()
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
-        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board, usage: usage) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board, usage: usage, briefs: briefs) }
             .defaultSize(width: 1440, height: 936)
             .windowResizability(.contentMinSize)
             .commands {
@@ -272,11 +273,18 @@ struct SessionWindow: View {
     @ObservedObject var sidebarOrder: SessionSidebarModel
     @ObservedObject var board: SessionBoardModel
     @ObservedObject var usage: UsageModel
+    @ObservedObject var briefs: BriefModel
     @ObservedObject private var notifications = IdleNotifications.shared
     @ObservedObject private var ghostty = GhosttyEngine.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
     @AppStorage("sessionInspectorShown") private var inspectorShown = false
+    /// Coming back to an agent session after a while shows its status in a floating panel.
+    @AppStorage("showStatusOnReturn") private var showStatusOnReturn = true
+    /// The session in view, whose last look is recorded while it stays in view.
+    @State private var viewing: String?
+    @State private var returnPending = false
+    private let viewLog = SessionViewLog()
     /// How durable agent sessions show: a chat view's id, or the terminal.
     @AppStorage("durableChatVariant") private var durableView = "durable-1"
     @StateObject private var durableChat = DurableChatModel()
@@ -348,6 +356,12 @@ struct SessionWindow: View {
             }
             ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") }
             ToolbarItem {
+                Button(action: toggleStatus) { Label("Status", systemImage: "checklist") }
+                    .keyboardShortcut("s", modifiers: [.command, .option])
+                    .help(StatusPanel.shared.isVisible ? "Hide Agent Status (⌥⌘S)" : "Show Agent Status (⌥⌘S)")
+                    .disabled(selected?.agentIdentity == nil)
+            }
+            ToolbarItem {
                 Button { inspectorShown.toggle() } label: { Label("Info", systemImage: "info.circle") }
                     .keyboardShortcut("i", modifiers: [.command, .option])
                     .help(inspectorShown ? "Hide Session Info (⌥⌘I)" : "Show Session Info (⌥⌘I)")
@@ -382,18 +396,28 @@ struct SessionWindow: View {
             }
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
             markVisibleOutputRead()
+            // An open status panel follows the selection.
+            if StatusPanel.shared.isVisible {
+                if let selected, selected.agentIdentity != nil { StatusPanel.shared.show(selected.name, briefs: briefs, over: NSApp.mainWindow) }
+                else { StatusPanel.shared.close() }
+            }
+            updateViewing()
         }
+        .onChange(of: briefs.loaded) { _, _ in if returnPending { updateViewing() } }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in updateViewing() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in updateViewing() }
         .onAppear {
             model.revealWindow = { openWindow(id: "sessions") }
             openRequestedAttachment()
         }
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
-        .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
+        .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead(); updateViewing() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.sessions) { _, sessions in terminals.keep(sessions) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             markVisibleOutputRead()
+            updateViewing()
             Task { await notifications.refreshSettings(); model.refreshDockBadge() }
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
@@ -420,6 +444,7 @@ struct SessionWindow: View {
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
+                          headline: briefs.briefs[session.name]?.brief?.headline,
                           group: board.board.group(of: session.name)?.name, labels: board.board.labels(for: session.name).map(\.name),
                           isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
@@ -509,6 +534,10 @@ struct SessionWindow: View {
                     Text(model.statusLabel(for: session))
                 }.font(.callout)
                 Divider()
+                if session.agentIdentity != nil {
+                    BriefView(briefs: briefs, name: session.name)
+                    Divider()
+                }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Project").font(.caption).foregroundStyle(.secondary)
                     Text(session.worktreePath).font(.callout).textSelection(.enabled)
@@ -533,6 +562,26 @@ struct SessionWindow: View {
     private func openRequestedAttachment() {
         guard let session = model.takeAttachmentRequest() else { return }
         model.selected = session.id
+    }
+    /// Records how long the session in view was looked at, and on coming back to an agent session after a while
+    /// to a newer brief, shows the brief in the status panel.
+    private func updateViewing() {
+        let inView = NSApplication.shared.isActive && controlActiveState == .key ? selected : nil
+        if let viewing { viewLog.viewed(viewing) }
+        guard let session = inView else { viewing = nil; return }
+        if session.name != viewing || returnPending {
+            guard briefs.loaded else { returnPending = true; return }
+            returnPending = false
+            if showStatusOnReturn, session.agentIdentity != nil, let brief = briefs.briefs[session.name],
+               viewLog.isReturning(to: session.name, brief: brief) {
+                StatusPanel.shared.show(session.name, briefs: briefs, over: NSApp.mainWindow)
+            }
+        }
+        viewing = session.name
+    }
+    private func toggleStatus() {
+        if StatusPanel.shared.isVisible { StatusPanel.shared.close() }
+        else if let selected, selected.agentIdentity != nil { StatusPanel.shared.show(selected.name, briefs: briefs, over: NSApp.mainWindow) }
     }
     private func markVisibleOutputRead() {
         guard NSApplication.shared.isActive,

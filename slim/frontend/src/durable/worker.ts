@@ -31,16 +31,14 @@ import { parseArgs } from 'node:util'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models'
-import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import { calculateContextTokens, estimateMessageTokens } from '@earendil-works/pi-ai/utils/estimate'
 import { createRegistry, defineExtension, Harness, InboxDoc, section, watchEvents, type AgentEvent, type AgentEventStream, type Conversation, type SnapshotEvent } from '@earendil-works/pi-durable'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { CodingTools } from '@earendil-works/pi-durable/tools'
-import { PiAuthFile, piAgentDir } from './credentials.ts'
+import { piAgentDir } from './credentials.ts'
 import { installFaux } from './faux.ts'
-import { resolveModelScope } from './model-scope.ts'
-import { installPiModels } from './pi-models.ts'
+import { piModels, piScopedModels, piSettings } from './pi-models.ts'
 import { DURABLE_RESTART_STATUS, durableConversationId, durableSocket } from './paths.ts'
 import { messageText, TerminalView } from './terminal-view.ts'
 import { durableCodeVersion } from './version.ts'
@@ -68,18 +66,9 @@ Work until the task is done, then answer briefly with what you did and anything 
 Read files before you edit them. Prefer small, focused changes that match the surrounding code.
 Messages beginning with a line like "[from NAME]" come from another agent or a scheduled wake, not from the user.`
 
-const models = builtinModels({ credentials: new PiAuthFile() })
-installPiModels(models)
+const models = piModels()
 let fauxModel: { provider: string; modelId: string } | undefined
 if (values.faux === true) fauxModel = installFaux(models)
-
-function piSettings(): { defaultProvider?: string; defaultModel?: string; defaultThinkingLevel?: string; enabledModels?: unknown } {
-  try {
-    return JSON.parse(readFileSync(join(piAgentDir(), 'settings.json'), 'utf8'))
-  } catch {
-    return {}
-  }
-}
 
 /** `provider/id`, or a bare model ID looked up across providers; Pi's default model when absent. */
 function resolveModel(spec: string | undefined): { provider: string; modelId: string } | undefined {
@@ -95,16 +84,9 @@ function resolveModel(spec: string | undefined): { provider: string; modelId: st
   return found ? { provider: found.provider, modelId: found.id } : undefined
 }
 
-/**
- * The models to offer: Pi's scope (`enabledModels`, which `/scoped-models` saves) resolved against the
- * signed-in providers' models, or all of them without one. The conversation's model is always offered.
- */
+/** The models to offer: Pi's scoped models (see `piScopedModels`), and always the conversation's model. */
 async function offeredModels(current?: { provider: string; modelId: string }) {
-  const available = await models.getAvailable()
-  const patterns = piSettings().enabledModels
-  const scoped = Array.isArray(patterns) && patterns.length > 0
-    ? resolveModelScope(patterns.filter((pattern): pattern is string => typeof pattern === 'string'), available)
-    : available.map((model) => ({ model, thinkingLevel: undefined }))
+  const scoped = await piScopedModels(models)
   if (current && !scoped.some(({ model }) => model.provider === current.provider && model.id === current.modelId)) {
     const model = models.getModel(current.provider, current.modelId)
     if (model) scoped.unshift({ model, thinkingLevel: undefined })
