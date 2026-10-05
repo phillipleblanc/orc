@@ -152,7 +152,8 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     const screen = await frontend.rpc('terminal.read', { terminal: 'reviewer' })
     assert.ok(screen.read.lines.some((line: string) => line.includes('ECHO')))
     assert.equal((await frontend.rpc('agent.status', { name: 'reviewer' })).state, 'idle')
-    assert.equal((await phoneView(phone, 'reviewer')).lastReply, 'ECHO')
+    // Claude writes its reply to the transcript shortly after its Stop hook.
+    await until(async () => (await phoneView(phone, 'reviewer')).lastReply === 'ECHO', 10_000, 'the phone to show the reply')
     // Text sent while Claude writes its last reply runs as another turn that no hook announces; wait covers it.
     await orc(['agent', 'send', 'reviewer'], { input: 'Without using any tools, write a 300-word story about a lighthouse, then end with a line containing only the word ALPHA.' })
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start the story')
