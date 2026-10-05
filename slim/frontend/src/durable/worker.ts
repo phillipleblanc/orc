@@ -9,14 +9,17 @@
 // for Orc's agent messages:
 //
 //   → { id, method, params }                       ← { id, result } or { id, error }
-//   subscribe                                      ← { type: "snapshot", snapshot, inbox, info, timing }, then
-//                                                    { type: "events", events } per commit and
-//                                                    { type: "inbox", items } when the queue changes
+//   subscribe                                      ← { type: "snapshot", snapshot, inbox, info, context, timing }, then
+//                                                    { type: "events", events } per commit,
+//                                                    { type: "inbox", items } when the queue changes and
+//                                                    { type: "context", tokens } when the context's size changes
 //   submit { text, mode: "steer" | "followUp" }    ← { submissionId }
 //   abort | withdraw { submissionId } | compact | reset { note? }
 //   configure { model?: { provider, modelId }, thinkingLevel? } | info
 //   models: the signed-in models within Pi's scope (`enabledModels`), with any scoped thinking level
 //   upgrade: closes and exits with DURABLE_RESTART_STATUS, for the session's loop to start it again
+//
+// `context` is the size of the model context the next request sends, in tokens (see `contextTokens`).
 //
 // Lifecycle events go to $ORC_AGENT_EVENTS in the shape of Orc's agent hooks, so Orc reports the
 // agent's state like any other agent's.
@@ -26,8 +29,10 @@ import { homedir, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
+import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
+import { calculateContextTokens, estimateMessageTokens } from '@earendil-works/pi-ai/utils/estimate'
 import { createRegistry, defineExtension, Harness, InboxDoc, section, watchEvents, type AgentEvent, type AgentEventStream, type Conversation, type SnapshotEvent } from '@earendil-works/pi-durable'
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
@@ -249,6 +254,27 @@ async function inboxItems(): Promise<{ id: number; mode: string; text: string }[
     item.mode === 'write' ? [] : [{ id: item.id, mode: item.mode, text: typeof item.content === 'string' ? item.content : messageText({ role: 'user', content: item.content }) }])
 }
 
+/**
+ * The size of the model context the next request sends, measured as pi-durable measures it for compaction: the
+ * usage the newest answer since the head marker reported, plus estimates of the messages after it. Without such an
+ * answer, as after a compaction or a reset, it is the estimate of every message.
+ */
+async function contextTokens(): Promise<number> {
+  const view = await root.context(context)
+  const after = (view.head?.id as number | undefined) ?? Number.NEGATIVE_INFINITY
+  let measured: AssistantMessage | undefined
+  for (let index = view.entries.length - 1; index >= 0 && !measured; index--) {
+    if ((view.entries[index].id as number) <= after) continue
+    measured = view.contributions[index].findLast((message): message is AssistantMessage =>
+      message.role === 'assistant' && calculateContextTokens(message.usage) > 0)
+  }
+  const rest: readonly Message[] = measured ? view.messages.slice(view.messages.lastIndexOf(measured) + 1) : view.messages
+  return rest.reduce((tokens, message) => tokens + estimateMessageTokens(message), measured ? calculateContextTokens(measured.usage) : 0)
+}
+
+// Events that change the model context: an entry appended, or the stream starting over.
+const CONTEXT_EVENTS = new Set(['snapshot', 'message_end', 'entry_appended', 'tool_execution_end'])
+
 async function info(): Promise<Record<string, unknown>> {
   const agent = await root.agent(context)
   const resolved = agent.model ? models.getModel(agent.model.provider, agent.model.modelId) : undefined
@@ -352,11 +378,16 @@ function serve(socket: Socket): void {
           stream = await watchEvents(harness, root.id, context)
           send({ id, result: {} })
           const timing = { runStartedAt, tools: Object.fromEntries(toolStartedAt) }
-          send({ type: 'snapshot', snapshot: await withHistory(stream.snapshot), inbox: await inboxItems(), info: await info(), timing })
+          let tokens = await contextTokens()
+          send({ type: 'snapshot', snapshot: await withHistory(stream.snapshot), inbox: await inboxItems(), info: await info(), context: tokens, timing })
           stream.start(async (events) => {
             send({ type: 'events', events: await Promise.all(events.map((event) => event.type === 'snapshot' ? withHistory(event) : event)) })
             if (events.some((event) => event.type === 'inbox_update' || event.type === 'snapshot')) send({ type: 'inbox', items: await inboxItems() })
             if (events.some((event) => event.type === 'agent_changed')) send({ type: 'info', info: await info() })
+            if (events.some((event) => CONTEXT_EVENTS.has(event.type))) {
+              const now = await contextTokens()
+              if (now !== tokens) send({ type: 'context', tokens: (tokens = now) })
+            }
           })
         })().catch((error: Error) => send({ id, error: error.message }))
         continue

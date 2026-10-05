@@ -67,19 +67,25 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   const snapshot = await until(async () => chat.messages.find((message) => message.type === 'snapshot'), 5000, 'the snapshot')
   assert.equal(snapshot.snapshot.entries.filter((entry: any) => entry.kind === 'pi.user').length, 2)
   assert.equal(snapshot.info.model.provider, 'faux')
+  assert.ok(snapshot.context > 0)
   assert.ok((await chat.request('submit', { text: 'from the chat', mode: 'steer' })).result.submissionId)
   await until(async () => chat.messages.some((message) => message.type === 'events' &&
     message.events.some((event: any) => event.type === 'message_end' && event.entry.kind === 'pi.assistant' &&
       JSON.stringify(event.entry.model).includes('echo: from the chat'))), 10_000, 'the answer to the chat message')
+  const contextSize = () => chat.messages.findLast((message) => message.type === 'context')?.tokens
+  const grown = await until(async () => contextSize() > snapshot.context && contextSize(), 5000, 'the context to grow')
 
-  // After a new context the model sees only what follows, and views still show everything.
+  // After a new context the model sees only what follows, and views still show everything; the
+  // context's size is what follows too, before any answer reports it.
   await chat.request('reset', { note: 'we were testing' })
+  const shrunk = await until(async () => contextSize() < grown && contextSize(), 5000, 'the context to shrink')
   const later = await chatSocket(url)
   t.after(() => later.socket.close())
   await later.request('subscribe')
   const shown = await until(async () => later.messages.find((message) => message.type === 'snapshot'), 5000, 'the snapshot after a reset')
   assert.deepEqual(shown.snapshot.entries.filter((entry: any) => entry.kind === 'pi.user' || entry.kind === 'pi.reset').map((entry: any) => entry.kind),
     ['pi.user', 'pi.user', 'pi.user', 'pi.reset'])
+  assert.equal(shown.context, shrunk)
 
   // A wrong token gets no socket.
   const refused = new WebSocket(url.replace('http://', 'ws://').replace(/\/chat\/.*$/, '/chat/socket?session=dur&token=wrong'))

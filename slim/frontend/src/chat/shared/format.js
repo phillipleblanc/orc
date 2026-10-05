@@ -159,8 +159,9 @@ export function totalUsage(usage) {
   return total
 }
 
-/** Context tokens of the latest request: what the model saw last time. */
+/** The size of the context the next request sends, as the worker reports it; else what the latest request used. */
 export function contextTokens(agent) {
+  if (agent.contextTokens !== null && agent.contextTokens !== undefined) return agent.contextTokens
   for (let index = agent.entries.length - 1; index >= 0; index--) {
     const usage = agent.entries[index].model?.[0]?.usage
     if (agent.entries[index].kind === 'pi.assistant' && usage?.totalTokens) return (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0)

@@ -28,6 +28,8 @@ export class DurableAgent extends EventTarget {
     this.compactions = []
     this.inbox = []
     this.usage = { models: {}, tools: {} }
+    // The size of the context the next request sends, as the worker measures it.
+    this.contextTokens = null
     this.info = null
     this.errors = []
     this.pending = new Map()
@@ -89,6 +91,7 @@ export class DurableAgent extends EventTarget {
         this.everConnected = true
         this.info = message.info
         this.inbox = message.inbox ?? []
+        this.contextTokens = message.context ?? null
         this.applySnapshot(message.snapshot, message.timing)
         this.emit('reset')
         break
@@ -105,6 +108,10 @@ export class DurableAgent extends EventTarget {
       case 'info':
         this.info = message.info
         this.emit('info')
+        break
+      case 'context':
+        this.contextTokens = message.tokens
+        this.emit('usage')
         break
     }
   }
