@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { open, stat } from 'node:fs/promises'
 import type { AgentKind, ProviderSession } from './agent-hooks.ts'
+import { ClaudeQueue } from './claude-queue.ts'
 import type { TerminalSession } from './terminal-session.ts'
 
 /**
@@ -21,6 +22,8 @@ const TITLE_SETTLE_MS = 500
 // Claude fires no hook when a turn is interrupted; its idle title then stands in for Stop.
 const CLAUDE_IDLE_TITLE = /^✳/
 const CLAUDE_IDLE_SETTLE_MS = 1500
+// Claude appends text it queued to its transcript shortly after the hook that reports it.
+const CLAUDE_QUEUE_SETTLE_MS = 1000
 const SPINNER = /^[⠀-⣿◐◑◒◓]/
 // Full-screen prompts where a stray Enter picks an option. Text is matched on the visible screen.
 const BLOCKING_DIALOGS: Record<AgentKind, RegExp[]> = {
@@ -48,12 +51,16 @@ export class AgentMonitor extends EventEmitter {
   lastEventAt = 0
   dialog: string | null = null
   private interruptRequested = false
+  // When Claude queued text submitted during the current turn, or 0. Claude fires UserPromptSubmit
+  // when it queues such text, not when it reads it.
+  private queuedAt = 0
+  private readonly claudeQueue = new ClaudeQueue()
   private offset = 0
   private partial = ''
   private poll: NodeJS.Timeout | null = null
   private titleTimer: NodeJS.Timeout | null = null
   private screenTimer: NodeJS.Timeout | null = null
-  private reading = false
+  private reading: Promise<void> | null = null
   private readonly onTitle = (title: string) => this.observeTitle(title)
   private readonly onApplied = () => this.scheduleScreenCheck()
   private readonly onExit = () => this.markExited()
@@ -90,34 +97,42 @@ export class AgentMonitor extends EventEmitter {
     return this.dialog && this.state !== 'ended' ? 'permission' : this.state
   }
 
-  private async read(live: boolean): Promise<void> {
-    if (this.reading) return
-    this.reading = true
+  /** Applies every event appended to the file so far. */
+  async refresh(): Promise<void> {
+    // A read already under way may have looked at the file before its latest events.
+    await this.reading
+    await this.read(true)
+  }
+
+  private read(live: boolean): Promise<void> {
+    this.reading ??= this.readNew(live).catch(() => {}).finally(() => { this.reading = null })
+    return this.reading
+  }
+
+  private async readNew(live: boolean): Promise<void> {
+    const size = (await stat(this.file).catch(() => null))?.size ?? 0
+    if (size <= this.offset) return
+    const handle = await open(this.file, 'r')
+    let text: string
     try {
-      const size = (await stat(this.file).catch(() => null))?.size ?? 0
-      if (size <= this.offset) return
-      const handle = await open(this.file, 'r')
-      try {
-        const buffer = Buffer.alloc(size - this.offset)
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, this.offset)
-        this.offset += bytesRead
-        const lines = (this.partial + buffer.subarray(0, bytesRead).toString('utf8')).split('\n')
-        this.partial = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          try {
-            this.apply(JSON.parse(line) as AgentEvent, live)
-          } catch {}
-        }
-      } finally {
-        await handle.close()
-      }
+      const buffer = Buffer.alloc(size - this.offset)
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, this.offset)
+      this.offset += bytesRead
+      text = this.partial + buffer.subarray(0, bytesRead).toString('utf8')
     } finally {
-      this.reading = false
+      await handle.close()
+    }
+    const lines = text.split('\n')
+    this.partial = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        await this.apply(JSON.parse(line) as AgentEvent, live)
+      } catch {}
     }
   }
 
-  private apply(record: AgentEvent, live: boolean): void {
+  private async apply(record: AgentEvent, live: boolean): Promise<void> {
     const at = live ? Date.now() : (record.time ?? 0) * 1000
     const payload = record.payload ?? {}
     this.lastEventAt = at
@@ -135,6 +150,7 @@ export class AgentMonitor extends EventEmitter {
       case 'SubagentStart':
       case 'SubagentStop':
       case 'PermissionResolved':
+        if (record.event === 'UserPromptSubmit' && (this.state === 'working' || this.state === 'permission')) this.queuedAt = at
         this.ready = true
         this.transition('working', at)
         break
@@ -150,6 +166,12 @@ export class AgentMonitor extends EventEmitter {
       case 'StopFailure':
       case 'Interrupt':
         this.ready = true
+        if (record.event === 'Stop' && await this.claudeContinues(payload.prompt_id)) {
+          this.transition('working', at)
+          // Claude's idle title still ends the turn if nothing else will.
+          this.observeTitle(this.session.title)
+          break
+        }
         this.transition('idle', at)
         break
       case 'SessionEnd':
@@ -165,11 +187,23 @@ export class AgentMonitor extends EventEmitter {
 
   private transition(state: AgentState, at = Date.now()): void {
     if (this.exited) return
-    if (state === 'idle') this.interruptRequested = false
+    if (state === 'idle') {
+      this.interruptRequested = false
+      this.queuedAt = 0
+    }
     if (state === 'idle' && this.state !== 'idle') this.lastIdleAt = at
     const changed = state !== this.state
     this.state = state
     if (changed) this.emit('change', this)
+  }
+
+  /** Text Claude queued during the turn can start another turn, which no hook reports until it stops. */
+  private async claudeContinues(promptId: unknown): Promise<boolean> {
+    const transcript = this.providerSession.transcriptPath
+    if (this.kind !== 'claude' || !this.queuedAt || !transcript) return false
+    const settle = this.queuedAt + CLAUDE_QUEUE_SETTLE_MS - Date.now()
+    if (settle > 0) await new Promise((resolve) => setTimeout(resolve, settle))
+    return this.claudeQueue.continuesAfter(transcript, promptId).catch(() => false)
   }
 
   /** Records that Orc interrupted the current turn, so an idle title may end a pending approval too. */

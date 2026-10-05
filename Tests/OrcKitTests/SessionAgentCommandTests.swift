@@ -26,6 +26,15 @@ final class SessionAgentCommandTests: XCTestCase {
         XCTAssertThrowsError(try SessionAgentCommand(["send", "fix-ci", "--kill"]))
     }
 
+    func testSendWaitsForIdleOnlyWhenAsked() throws {
+        XCTAssertFalse(try SessionAgentCommand(["send", "fix-ci"]).whenIdle)
+        XCTAssertTrue(try SessionAgentCommand(["send", "fix-ci", "--when-idle", "--file", "note.md"]).whenIdle)
+        XCTAssertThrowsError(try SessionAgentCommand(["wait", "fix-ci", "--when-idle"]))
+        let send = try SessionAgentCommand(["send", "fix-ci"])
+        XCTAssertEqual(SessionAgentService.describe(send, ["name": "fix-ci", "agent": "codex", "state": "working", "delivered": true]), "fix-ci  codex  working\nMessage sent.")
+        XCTAssertEqual(SessionAgentService.describe(send, ["name": "fix-ci", "agent": "codex", "state": "working", "queued": 1, "delivered": false]), "fix-ci  codex  working  1 queued\nMessage queued.")
+    }
+
     func testDescriptionsNameTheAgentAndItsState() throws {
         let command = try SessionAgentCommand(["list"])
         let text = SessionAgentService.describe(command, ["agents": [["name": "fix-ci", "agent": "codex", "state": "working", "queued": 2, "parent": "lead"]]])

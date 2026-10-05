@@ -240,7 +240,10 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'agent.send': (params) => {
       if (typeof params.to !== 'string' || typeof params.text !== 'string') throw new RpcError('invalid_argument', 'to and text are required')
-      return agents.send(params.to, params.text, typeof params.from === 'string' && params.from ? params.from : undefined)
+      return agents.send(params.to, params.text, {
+        from: typeof params.from === 'string' && params.from ? params.from : undefined,
+        whenIdle: params.whenIdle === true
+      })
     },
 
     'agent.list': () => ({ agents: agents.list() }),

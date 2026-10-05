@@ -11,7 +11,8 @@ import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import type { TerminalSession } from './terminal-session.ts'
 
-type QueuedMessage = { id: string; text: string; from?: string; queuedAt: number }
+/** `whenIdle` holds a message until the agent is idle, so it starts a turn of its own. */
+type QueuedMessage = { id: string; text: string; from?: string; queuedAt: number; whenIdle: boolean }
 type Delivery = { message: QueuedMessage; since: number }
 
 type AgentRecord = {
@@ -21,7 +22,7 @@ type AgentRecord = {
   delivering: Delivery | null
   lastDeliveredAt: number
   unconfirmed: number
-  pumping: boolean
+  pumping: Promise<void> | null
   confirmTimer: NodeJS.Timeout | null
 }
 
@@ -44,21 +45,24 @@ export type SpawnOptions = {
   timeoutMs?: number
 }
 
-// A delivered message is confirmed by the agent starting a turn; until then no other message is typed.
+// A message typed to an idle agent is confirmed by the agent starting a turn; until then no other message is typed.
 const CONFIRM_MS = 20_000
 // Pasted text must be accepted before the separate Enter that submits it.
 const PASTE_SETTLE_MS = 150
 const DEFAULT_TIMEOUT_MS = 90_000
 
 /**
- * Agents are sessions started with Orc's status hooks. They are addressed by session name; messages
- * wait in a per-agent queue until the agent is idle and are typed in one at a time.
+ * Agents are sessions started with Orc's status hooks. They are addressed by session name. Messages
+ * wait in a per-agent queue while the agent cannot take them. A working agent is typed every message
+ * not held for idle, and reads each at its next step; an idle agent is typed one message, which
+ * starts a turn.
  */
 export class AgentDirectory extends EventEmitter {
   private readonly store: SessionStore
   private readonly projects: Projects
   private readonly profile: string
   private readonly records = new Map<TerminalSession, AgentRecord>()
+  private readonly typed = new WeakSet<QueuedMessage>()
   private hooks: Promise<AgentHooks> | null = null
 
   constructor(store: SessionStore, projects: Projects, profile: string) {
@@ -104,18 +108,23 @@ export class AgentDirectory extends EventEmitter {
     const session = await this.launch(options)
     const record = await this.recordFor(session)
     const prompt = options.prompt?.replace(/\s+$/, '')
-    if (prompt) this.enqueue(record, { id: randomUUID(), text: prompt, queuedAt: Date.now() })
+    if (prompt) this.enqueue(record, { id: randomUUID(), text: prompt, queuedAt: Date.now(), whenIdle: true })
     const delivered = await this.until(record, () => !prompt || (record.queue.length === 0 && !record.delivering && record.lastDeliveredAt > 0),
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     return { ...this.describe(record), delivered: Boolean(prompt) && delivered }
   }
 
-  send(to: string, text: string, from?: string): Record<string, unknown> {
+  /** Queues a message, types it if the agent can take it now, and reports whether it was typed. */
+  async send(to: string, text: string, options: { from?: string; whenIdle?: boolean } = {}): Promise<Record<string, unknown>> {
     const record = this.get(to)
     const body = text.replace(/\s+$/, '')
     if (!body) throw new RpcError('invalid_argument', 'the message is empty')
-    this.enqueue(record, { id: randomUUID(), text: body, from, queuedAt: Date.now() })
-    return this.describe(record)
+    const message: QueuedMessage = { id: randomUUID(), text: body, from: options.from, queuedAt: Date.now(), whenIdle: options.whenIdle === true }
+    this.enqueue(record, message)
+    // A pump already under way may have chosen its messages before this one arrived.
+    await record.pumping
+    await this.pump(record)
+    return { ...this.describe(record), delivered: this.typed.has(message) }
   }
 
   /** Resolves when the agent has finished a turn after the last delivered message and has nothing queued. */
@@ -160,11 +169,11 @@ export class AgentDirectory extends EventEmitter {
     return isAgentKind(session.meta.agent) && Boolean(session.meta.events)
   }
 
-  /** Queues a message for an agent session that is still running; other sessions are ignored. */
+  /** Sends a message, as `send` does, to an agent session that is still running; other sessions are ignored. */
   async deliver(session: TerminalSession, text: string, from: string): Promise<void> {
     if (this.store.get(session.meta.name) !== session) return
     const record = this.records.get(session) ?? (await this.attach(session))
-    if (record) this.enqueue(record, { id: randomUUID(), text, from, queuedAt: Date.now() })
+    if (record) this.enqueue(record, { id: randomUUID(), text, from, queuedAt: Date.now(), whenIdle: false })
   }
 
   describe(record: AgentRecord): Record<string, unknown> {
@@ -205,9 +214,11 @@ export class AgentDirectory extends EventEmitter {
     if (!this.isAgent(session)) return undefined
     const monitor = new AgentMonitor(session.meta.agent as AgentKind, session.meta.events!, session)
     const saved = await readFile(join(session.dir, 'queue.json'), 'utf8').then(JSON.parse, () => ({}))
+    // A saved message without `whenIdle` waits for idle.
+    const queue = Array.isArray(saved.queue) ? saved.queue.map((message: QueuedMessage) => ({ ...message, whenIdle: message.whenIdle !== false })) : []
     const record: AgentRecord = {
-      session, monitor, queue: Array.isArray(saved.queue) ? saved.queue : [], delivering: null,
-      lastDeliveredAt: saved.lastDeliveredAt ?? 0, unconfirmed: saved.unconfirmed ?? 0, pumping: false, confirmTimer: null
+      session, monitor, queue, delivering: null,
+      lastDeliveredAt: saved.lastDeliveredAt ?? 0, unconfirmed: saved.unconfirmed ?? 0, pumping: null, confirmTimer: null
     }
     if (this.records.has(session)) return this.records.get(session)
     this.records.set(session, record)
@@ -248,31 +259,48 @@ export class AgentDirectory extends EventEmitter {
     return record.queue.length === 0 && !record.delivering && monitor.effectiveState === 'idle' && monitor.lastIdleAt >= record.lastDeliveredAt
   }
 
-  private async pump(record: AgentRecord): Promise<void> {
-    if (record.pumping) return
-    record.pumping = true
-    try {
-      while (!record.delivering && record.queue.length > 0 && record.session.connected) {
-        const { monitor } = record
-        if (!monitor.ready || monitor.effectiveState !== 'idle') return
-        const message = record.queue[0]
-        const body = message.from ? `[from ${message.from}]\n${message.text}` : message.text
-        const bracketed = await record.session.bracketedPaste()
-        record.session.input(bracketed ? `\x1b[200~${body}\x1b[201~` : body)
-        await new Promise((resolve) => setTimeout(resolve, PASTE_SETTLE_MS))
-        record.session.input('\r')
-        record.queue.shift()
+  /** Types every message the agent can take now; resolves when there is none left. */
+  private pump(record: AgentRecord): Promise<void> {
+    record.pumping ??= this.drain(record).finally(() => { record.pumping = null })
+    return record.pumping
+  }
+
+  private async drain(record: AgentRecord): Promise<void> {
+    while (!record.delivering && record.queue.length > 0 && record.session.connected) {
+      // The newest events show whether a dialog has opened or the turn has ended.
+      await record.monitor.refresh()
+      const message = this.next(record)
+      if (!message) return
+      const idle = record.monitor.effectiveState === 'idle'
+      const body = message.from ? `[from ${message.from}]\n${message.text}` : message.text
+      const bracketed = await record.session.bracketedPaste()
+      record.session.input(bracketed ? `\x1b[200~${body}\x1b[201~` : body)
+      await new Promise((resolve) => setTimeout(resolve, PASTE_SETTLE_MS))
+      record.session.input('\r')
+      record.queue = record.queue.filter((queued) => queued !== message)
+      this.typed.add(message)
+      record.lastDeliveredAt = Date.now()
+      // A working agent holds the text until its next step, so no turn start confirms it.
+      if (idle) {
         record.delivering = { message, since: Date.now() }
-        record.lastDeliveredAt = Date.now()
         record.confirmTimer = setTimeout(() => {
           record.unconfirmed++
           this.confirm(record)
           void this.pump(record)
         }, CONFIRM_MS)
-        await this.save(record)
       }
-    } finally {
-      record.pumping = false
+      await this.save(record)
+    }
+  }
+
+  /** The message to type now: the oldest while the agent is idle, the oldest not held for idle while it works. */
+  private next(record: AgentRecord): QueuedMessage | undefined {
+    const { monitor } = record
+    if (!monitor.ready) return undefined
+    switch (monitor.effectiveState) {
+      case 'idle': return record.queue[0]
+      case 'working': return record.queue.find((message) => !message.whenIdle)
+      default: return undefined
     }
   }
 

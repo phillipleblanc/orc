@@ -32,7 +32,7 @@ const run = promisify(execFile)
  * Wakes send an agent a message later: after a delay, when a process exits, or when a script started
  * for the wake finishes. They are kept in the session's `wakes.json`, so they outlive frontend
  * restarts; wake scripts run in their own process group and outlive them too. A fired wake's message
- * waits in the agent's queue like any other, from `wake`. Ending a session stops its wake scripts.
+ * is sent from `wake` as `agent.send` sends one. Ending a session stops its wake scripts.
  */
 export class WakeDirectory {
   private readonly store: SessionStore

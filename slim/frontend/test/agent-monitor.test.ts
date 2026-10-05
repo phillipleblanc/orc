@@ -43,3 +43,52 @@ test('a conversation that ends and restarts keeps reporting; only the program ex
   await new Promise((resolve) => setTimeout(resolve, 500))
   assert.equal(monitor.state, 'ended', 'events after the program exited change nothing')
 })
+
+test('Claude keeps working after a turn while text queued during it is still to be read', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'slim-monitor-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const file = join(directory, 'events.jsonl')
+  const transcript = join(directory, 'transcript.jsonl')
+  const event = (name: string, promptId?: string) =>
+    JSON.stringify({ agent: 'claude', event: name, time: 1, payload: { session_id: 's1', transcript_path: transcript, ...(promptId ? { prompt_id: promptId } : {}) } }) + '\n'
+  const prompt = (promptId: string) => JSON.stringify({ type: 'user', promptId, message: { role: 'user', content: 'text' } }) + '\n'
+  const queue = (operation: string) => JSON.stringify({ type: 'queue-operation', operation }) + '\n'
+  await writeFile(file, event('SessionStart') + event('UserPromptSubmit', 'p1'))
+  await writeFile(transcript, prompt('p1'))
+  const session = Object.assign(new StandInSession(), { screenText: async () => [] })
+  const monitor = new AgentMonitor('claude', file, session as unknown as TerminalSession)
+  await monitor.start()
+  t.after(() => monitor.stop())
+  assert.equal(monitor.state, 'working')
+  const after = async (events: string, lines = '') => {
+    await appendFile(transcript, lines)
+    await appendFile(file, events)
+    await monitor.refresh()
+    return monitor.state
+  }
+
+  // Text submitted mid-turn and read at the turn's next step ends with the turn.
+  assert.equal(await after(event('UserPromptSubmit', 'p1'), queue('enqueue') + queue('remove')), 'working')
+  assert.equal(await after(event('Stop', 'p1')), 'idle')
+
+  // Text still queued when the turn stops starts another turn, which no hook announces.
+  assert.equal(await after(event('UserPromptSubmit', 'p2'), prompt('p2')), 'working')
+  assert.equal(await after(event('UserPromptSubmit', 'p2'), queue('enqueue')), 'working')
+  assert.equal(await after(event('Stop', 'p2')), 'working')
+  // Claude took the text for that turn before its Stop was read.
+  assert.equal(await after(event('UserPromptSubmit', 'p3'), queue('dequeue') + prompt('p3') + queue('enqueue') + queue('dequeue')), 'working')
+  assert.equal(await after(event('Stop', 'p3')), 'working')
+  assert.equal(await after(event('Stop', 'p4'), prompt('p4')), 'idle')
+
+  // A turn with nothing queued during it ends at its Stop whatever the transcript says.
+  assert.equal(await after(event('UserPromptSubmit', 'p5'), prompt('p5') + queue('enqueue')), 'working')
+  assert.equal(await after(event('Stop', 'p5')), 'idle')
+  // A prompt typed to an idle Claude means nothing was left in its queue.
+  assert.equal(await after(event('UserPromptSubmit', 'p6') + event('UserPromptSubmit', 'p6'), prompt('p6') + queue('enqueue') + queue('remove')), 'working')
+  assert.equal(await after(event('Stop', 'p6')), 'idle')
+
+  // Text queued just before the turn stopped counts once it reaches the transcript.
+  setTimeout(() => void appendFile(transcript, queue('enqueue')), 300)
+  assert.equal(await after(event('UserPromptSubmit', 'p7') + event('UserPromptSubmit', 'p7') + event('Stop', 'p7'), prompt('p7')), 'working')
+  assert.equal(await after(event('Stop', 'p8'), queue('dequeue') + prompt('p8')), 'idle')
+})

@@ -61,6 +61,18 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     const meta = JSON.parse(await readFile(join(profile, 'sessions', name, 'meta.json'), 'utf8'))
     return (await readFile(meta.events, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
   }
+  const count = async (name: string, event: string) => (await events(name)).filter((entry) => entry.event === event).length
+  // A message sent while the agent runs a command reaches the same turn once the command finishes.
+  const steer = async (name: string) => {
+    const [tools, stops] = [await count(name, 'PreToolUse'), await count(name, 'Stop')]
+    await orc(['agent', 'send', name], { input: 'Run the shell command `sleep 10` and wait for it to finish, then reply with only the word WAITED.' })
+    await until(async () => (await count(name, 'PreToolUse')) > tools, 60_000, `${name} to run the command`)
+    const sent = await orc(['agent', 'send', name], { caller: 'lead', input: 'Change of plan: reply with only the word STEERED.' })
+    assert.match(sent.stdout, /Message sent\.$/m)
+    const done = await orc(['agent', 'wait', name, '--json'])
+    assert.equal(done.json().lastAssistantMessage.trim(), 'STEERED')
+    assert.equal(await count(name, 'Stop'), stops + 1)
+  }
 
   // Spawn delivers the prompt verbatim once Codex is ready.
   const coder = await frontend.rpc('agent.spawn', { agent: 'codex', name: 'coder', cwd: project, prompt: 'Reply with only the word ALPHA.', effort: 'low', args: trustProject })
@@ -78,13 +90,14 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   const prompts = (await events('coder')).filter((event) => event.event === 'UserPromptSubmit').map((event) => event.payload.prompt)
   assert.deepEqual(prompts, ['Reply with only the word ALPHA.', '[from lead]\nReply with only the word BRAVO.'])
 
-  // Messages sent while the agent is busy are delivered one turn at a time.
-  await orc(['agent', 'send', 'coder'], { caller: 'lead', input: 'Reply with only the word ONE.' })
-  await orc(['agent', 'send', 'coder'], { caller: 'lead', input: 'Reply with only the word TWO.' })
+  // Messages sent with --when-idle are delivered one turn at a time.
+  await orc(['agent', 'send', 'coder', '--when-idle'], { caller: 'lead', input: 'Reply with only the word ONE.' })
+  const queued = await orc(['agent', 'send', 'coder', '--when-idle'], { caller: 'lead', input: 'Reply with only the word TWO.' })
+  assert.match(queued.stdout, /Message queued\.$/m)
   const third = await orc(['agent', 'wait', 'coder', '--json'])
   assert.equal(third.json().lastAssistantMessage, 'TWO')
-  const turns = (await events('coder')).filter((event) => event.event === 'Stop').length
-  assert.equal(turns, 4)
+  assert.equal(await count('coder', 'Stop'), 4)
+  await steer('coder')
 
   // Codex acts without asking, even when its own configuration asks for approval.
   await frontend.rpc('agent.spawn', { agent: 'codex', name: 'asker', cwd: project, effort: 'low', args: [...trustProject, '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="on-request"'] })
@@ -110,7 +123,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   const listed = await orc(['agent', 'list', '--json'])
   const byName = Object.fromEntries((listed.json().agents as { name: string }[]).map((agent) => [agent.name, agent]))
   assert.equal((byName.coder as any).state, 'idle')
-  assert.equal((byName.coder as any).lastAssistantMessage, 'TWO')
+  assert.equal((byName.coder as any).lastAssistantMessage, 'STEERED')
   assert.ok((byName.coder as any).providerSession.transcriptPath.endsWith('.jsonl'))
 
   // A phone sees the agent's tab with what its chat view needs, and reads the conversation.
@@ -118,7 +131,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   t.after(() => phone.close())
   const coderView = await phoneView(phone, 'coder')
   assert.deepEqual([coderView.tab.launchAgent, coderView.tab.agentStatus.agentType, coderView.tab.agentStatus.state], ['codex', 'codex', 'done'])
-  assert.equal(coderView.lastReply, 'TWO')
+  assert.equal(coderView.lastReply, 'STEERED')
 
   // Pi reports through its extension; the prompt comes from standard input.
   const helper = await orc(['agent', 'spawn', 'pi', 'helper', '--effort', 'low', '--json'], { caller: 'lead', input: 'Reply with only the word DELTA.' })
@@ -131,6 +144,7 @@ test('agents spawn, take messages by name, report status, and survive a frontend
   assert.deepEqual([helperView.tab.launchAgent, helperView.tab.agentStatus.agentType], ['omp', 'omp'])
   assert.equal(helperView.repo?.connectionId, null)
   assert.equal(helperView.lastReply?.trim(), 'DELTA')
+  await steer('helper')
 
   if (CLAUDE_DIR) {
     const reviewer = await orc(['agent', 'spawn', 'claude', 'reviewer', '--model', 'haiku', '--json'], { input: 'Reply with only the word ECHO.', cwd: CLAUDE_DIR })
@@ -140,6 +154,13 @@ test('agents spawn, take messages by name, report status, and survive a frontend
     assert.ok(screen.read.lines.some((line: string) => line.includes('ECHO')))
     assert.equal((await frontend.rpc('agent.status', { name: 'reviewer' })).state, 'idle')
     assert.equal((await phoneView(phone, 'reviewer')).lastReply, 'ECHO')
+    // Text sent while Claude writes its last reply runs as another turn that no hook announces; wait covers it.
+    await orc(['agent', 'send', 'reviewer'], { input: 'Without using any tools, write a 300-word story about a lighthouse, then end with a line containing only the word ALPHA.' })
+    await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start the story')
+    const late = await orc(['agent', 'send', 'reviewer'], { caller: 'lead', input: 'After the story, also add a final line containing only the word BRAVO.' })
+    assert.match(late.stdout, /Message sent\.$/m)
+    const told = await orc(['agent', 'wait', 'reviewer', '--json'])
+    assert.match(told.json().lastAssistantMessage, /BRAVO\W*$/)
     // Claude reports no hook for an interrupted turn; its idle title ends the turn instead.
     await orc(['agent', 'send', 'reviewer'], { input: 'Write a 600-word story about a lighthouse. Do not use any tools.' })
     await until(async () => (await frontend.rpc('agent.status', { name: 'reviewer' })).state === 'working', 30_000, 'reviewer to start working')

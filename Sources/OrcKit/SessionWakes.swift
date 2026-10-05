@@ -62,11 +62,12 @@ public struct SessionWakeCommand {
     orc wake list [--json]
     orc wake cancel ID [--json]     ID may be the first characters of a wake's id
 
-    A wake sends the agent session that set it a message, queued like any other and beginning with
-    [from wake]. A timer's message defaults to "continue". A process or script wake adds the exit
-    status, and a script wake adds the end of the script's output. SCRIPT runs in the current
-    directory with the session's environment, with bash when it is not executable. Wakes survive
-    runtime restarts; ending the session removes its wakes and stops their scripts.
+    A wake sends the agent session that set it a message beginning with [from wake], as orc agent
+    send does: a working agent reads it at its next step. A timer's message defaults to "continue".
+    A process or script wake adds the exit status, and a script wake adds the end of the script's
+    output. SCRIPT runs in the current directory with the session's environment, with bash when it
+    is not executable. Wakes survive runtime restarts; ending the session removes its wakes and
+    stops their scripts.
     """
 }
 

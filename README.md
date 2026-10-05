@@ -95,13 +95,14 @@ Agents are sessions addressed by name. An agent can spawn and message others:
 ```sh
 orc agent spawn codex fix-ci --project spiceai-project < brief.md
 orc agent send fix-ci < followup.md
+orc agent send fix-ci --when-idle < next-task.md
 orc agent wait fix-ci
 orc agent list
 orc agent status fix-ci
 orc agent stop fix-ci [--kill]
 ```
 
-Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`) once the agent is idle; messages to a busy agent wait their turn. Wait returns once the agent has finished everything sent to it. Stop interrupts the current turn and drops queued messages; `--kill` ends the session. Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
+Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`). A working agent reads it at its next step, after the tool call it is running; an idle agent starts a turn with it. With `--when-idle`, the message waits until the agent is idle and starts a turn of its own. Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent has finished everything sent to it. Stop interrupts the current turn and drops queued messages; `--kill` ends the session. Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
 
 An agent can also have a message sent to itself later:
 
@@ -113,7 +114,7 @@ orc wake list
 orc wake cancel 1a2b3c4d
 ```
 
-A wake's message is queued like any other and begins with `[from wake]`. A timer's message defaults to `continue`; a process or script wake adds the exit status, and a script wake adds the end of the script's output. The script runs in the background right away, in the current directory with the session's environment. Wakes survive runtime restarts; ending the session removes them and stops their scripts. See `orc wake --help`.
+A wake's message begins with `[from wake]` and is sent as `orc agent send` sends one, so a working agent reads it at its next step. A timer's message defaults to `continue`; a process or script wake adds the exit status, and a script wake adds the end of the script's output. The script runs in the background right away, in the current directory with the session's environment. Wakes survive runtime restarts; ending the session removes them and stops their scripts. See `orc wake --help`.
 
 Every session starts with `ORC_SESSION_NAME` (its name) and `ORC_RUNTIME_DIR` (its runtime profile), so `orc` run inside a session reaches the same runtime and identifies its caller.
 

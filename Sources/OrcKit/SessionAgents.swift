@@ -9,6 +9,7 @@ public struct SessionAgentCommand {
     public let name: String?
     public let options: [String: String]
     public let kill: Bool
+    public let whenIdle: Bool
     public let json: Bool
 
     public init(_ arguments: [String]) throws {
@@ -22,12 +23,13 @@ public struct SessionAgentCommand {
         case .wait: allowed = ["timeout-seconds"]
         case .list, .status, .stop: allowed = []
         }
-        var positional: [String] = [], options: [String: String] = [:], json = false, kill = false
+        var positional: [String] = [], options: [String: String] = [:], json = false, kill = false, whenIdle = false
         var index = 1
         while index < arguments.count {
             let value = arguments[index]
             if value == "--json" { json = true; index += 1; continue }
             if value == "--kill", action == .stop { kill = true; index += 1; continue }
+            if value == "--when-idle", action == .send { whenIdle = true; index += 1; continue }
             if value.hasPrefix("--") {
                 let key = String(value.dropFirst(2))
                 guard allowed.contains(key) else { throw OrcError("Unknown option \(value) for agent \(action.rawValue).") }
@@ -52,7 +54,7 @@ public struct SessionAgentCommand {
         if let seconds = options["timeout-seconds"], Int(seconds).map({ (1...3600).contains($0) }) != true {
             throw OrcError("--timeout-seconds must be an integer from 1 to 3600.")
         }
-        self.action = action; self.agent = agent; self.name = name; self.options = options; self.kill = kill; self.json = json
+        self.action = action; self.agent = agent; self.name = name; self.options = options; self.kill = kill; self.whenIdle = whenIdle; self.json = json
     }
 
     /// Text from `--prompt-file`/`--file`, or from standard input when it is not a terminal.
@@ -78,7 +80,7 @@ public struct SessionAgentCommand {
     public static let help = """
     orc agent spawn codex|claude|pi NAME [--project SELECTOR] [--prompt-file FILE]
         [--model MODEL] [--effort LEVEL] [--timeout-seconds SECONDS] [--json]
-    orc agent send NAME [--file FILE] [--json]
+    orc agent send NAME [--file FILE] [--when-idle] [--json]
     orc agent list [--json]
     orc agent status NAME [--json]
     orc agent wait NAME [--timeout-seconds SECONDS] [--json]
@@ -87,9 +89,11 @@ public struct SessionAgentCommand {
     An agent is a session, and its name is its identity. Spawn starts the agent in --project (or
     the current directory), waits until it is ready and types the prompt exactly as given; without
     --prompt-file, a prompt piped on standard input is used. Send types a message that begins with
-    a line naming the sender, once the agent is idle; messages to a busy agent wait their turn.
-    Wait returns once the agent has finished working on everything sent to it. Stop interrupts the
-    current turn and drops queued messages; --kill ends the session.
+    a line naming the sender. A working agent reads it at its next step, after the tool call it is
+    running; an idle agent starts a turn with it. With --when-idle, the message waits until the
+    agent is idle and starts a turn of its own. Messages wait while the agent is at a permission
+    prompt or dialog. Wait returns once the agent has finished working on everything sent to it.
+    Stop interrupts the current turn and drops queued messages; --kill ends the session.
     """
 }
 
@@ -114,7 +118,7 @@ public enum SessionAgentService {
             return (result, params["prompt"] == nil || result["delivered"] as? Bool == true)
         case .send:
             let text = try command.text(required: true)!
-            let result = try await LocalRPC.call("agent.send", ["to": command.name!, "text": text, "from": caller ?? NSUserName()])
+            let result = try await LocalRPC.call("agent.send", ["to": command.name!, "text": text, "from": caller ?? NSUserName(), "whenIdle": command.whenIdle])
             return (result, true)
         case .list:
             return (try await LocalRPC.call("agent.list"), true)
@@ -150,7 +154,7 @@ public enum SessionAgentService {
             let delivered = body["delivered"] as? Bool == true
             return line(body) + (body["delivered"] == nil ? "" : delivered ? "\nPrompt delivered." : "\nPrompt queued; the agent is not ready yet.")
         case .send:
-            return line(body) + "\nMessage queued."
+            return line(body) + (body["delivered"] as? Bool == true ? "\nMessage sent." : "\nMessage queued.")
         case .wait:
             return line(body) + (body["done"] as? Bool == true ? "" : "\nTimed out before the agent finished.")
         case .status, .stop:

@@ -127,11 +127,22 @@ idle mark for 1.5 s without new events becomes `idle`; after `agent.stop`, the s
 pending permission prompt. A trust or hook-review dialog on screen reports `permission` whatever the
 hooks say, because a typed Enter would answer it.
 
-Messages wait in the agent's queue and are typed only while it is ready, idle and free of dialogs:
-the text as a bracketed paste, then Enter. The next message waits until a hook shows the agent
-started a turn, or 20 s. `agent.send` prefixes the text with `[from SENDER]`; `agent.spawn` types its
-prompt unchanged. `agent.wait` resolves once the agent has finished a turn after the last delivered
-message and nothing is queued.
+Claude fires `UserPromptSubmit` when it queues text submitted during a turn, not when it reads it.
+Text still queued when the turn ends starts another turn, which fires no hook until its `Stop`. So
+after text was submitted during a Claude turn, a `Stop` leaves the agent `working` while Claude's
+transcript shows queued input (`queue-operation` lines) or a turn started from it; Claude's idle
+title still ends the turn. Claude appends queued text to the transcript shortly after the hook that
+reports it, so the transcript is read no sooner than 1 s after that hook.
+
+Messages wait in the agent's queue until it can take them, and are typed as a bracketed paste, then
+Enter. A working agent is typed every message not sent with `whenIdle`: Codex, Claude and Pi hold
+text submitted mid-turn and read it at their next step, after the tool call they are running. An
+idle agent is typed the oldest message, which starts a turn; the next waits until a hook shows the
+turn started, or 20 s. Nothing is typed while the agent is starting, at a permission prompt or in a
+dialog. A `whenIdle` message and the prompt of `agent.spawn` wait until the agent is idle.
+`agent.send` prefixes the text with `[from SENDER]` and reports whether it was typed (`delivered`);
+`agent.spawn` types its prompt unchanged. `agent.wait` resolves once the agent has finished a turn
+after the last delivered message and nothing is queued.
 
 `orc agent spawn|send|list|status|wait|stop` uses these methods when the runtime advertises
 `orc.agents.v1`; commands run inside a session send its `ORC_SESSION_NAME` as the sender and parent.

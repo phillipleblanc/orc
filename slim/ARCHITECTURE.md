@@ -158,15 +158,21 @@ sequenceDiagram
     participant H as Holder
     participant A as Agent
 
-    L->>F: agent.send(to, text, from)
+    L->>F: agent.send(to, text, from, whenIdle)
     F->>F: add to the agent's queue
-    A->>E: Stop hook appends an event
-    F->>E: read new events: idle
-    F->>H: input: bracketed paste of "[from SENDER]" and the text, then Enter
-    H->>A: typed on the PTY
-    A->>E: UserPromptSubmit
-    F->>E: read new events: working, delivery confirmed
-    Note over F: the next queued message waits for idle
+    alt agent working, message not whenIdle
+        F->>H: input: bracketed paste of "[from SENDER]" and the text, then Enter
+        H->>A: typed on the PTY
+        Note over A: holds the text and reads it at its next step
+    else agent idle (a whenIdle message first waits for Stop)
+        F->>E: read new events: idle
+        F->>H: input: bracketed paste of "[from SENDER]" and the text, then Enter
+        H->>A: typed on the PTY
+        A->>E: UserPromptSubmit
+        F->>E: read new events: working, delivery confirmed
+        Note over F: the next whenIdle message waits for idle
+    end
+    F-->>L: delivered or queued
     A->>E: Stop
     L->>F: agent.wait resolves: done
 ```
