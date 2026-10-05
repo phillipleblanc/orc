@@ -141,6 +141,12 @@ orc phones revoke DEVICE_ID           # Disconnect and revoke that phone
 
 The runtime listens on port 6768 on every interface. Pairing does not use Orca Relay; both devices need a reachable private network path and the Mac must remain awake. Push notifications to the phone are not supported.
 
+### Agent usage
+
+**Usage**, below the sessions, shows how much of each Claude and Codex subscription limit is used: the five-hour session, the week, and weekly limits on one model, each with its share used and the time until it resets. Shares turn orange from 60% and red from 80%. Collapsed, it shows each agent's highest share. An agent that is not installed or not signed in to a subscription is left out.
+
+The runtime reads usage with the agents' own sign-ins: Claude Code's from the Keychain (or `.credentials.json` in its config directory), and Codex's through `codex app-server`, else the ChatGPT endpoint with `~/.codex/auth.json`. Neither sign-in is changed; an expired Claude sign-in recovers the next time `claude` runs. Usage is checked when Orc becomes active and every 15 minutes while it is, and refetched only once it is 5 minutes old; the refresh button fetches it now. After a failure, the last usage stays visible with a warning for 30 minutes, or a day when the provider rate limited the request.
+
 ### Recently closed agents
 
 Agent sessions closed in the last week can be reopened, resuming their conversations with their undelivered messages and wakes. In Orc, they are listed under **Recently Closed** below the sessions: click one to reopen it and attach, hover to see its last reply and screen, or choose **Reopen with New Name…** from its menu. **Reopen Closed Session** (⇧⌘T) reopens the most recent one. `orc attach`'s picker lists them after the running sessions.

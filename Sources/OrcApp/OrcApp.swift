@@ -7,9 +7,10 @@ import OrcKit
     @StateObject private var model = SessionModel()
     @StateObject private var board = SessionBoardModel()
     @StateObject private var sidebarOrder = SessionSidebarModel()
+    @StateObject private var usage = UsageModel()
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
-        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board, usage: usage) }
             .defaultSize(width: 1440, height: 936)
             .windowResizability(.contentMinSize)
             .commands {
@@ -270,6 +271,7 @@ struct SessionWindow: View {
     @ObservedObject var model: SessionModel
     @ObservedObject var sidebarOrder: SessionSidebarModel
     @ObservedObject var board: SessionBoardModel
+    @ObservedObject var usage: UsageModel
     @ObservedObject private var notifications = IdleNotifications.shared
     @ObservedObject private var ghostty = GhosttyEngine.shared
     @Environment(\.openWindow) private var openWindow
@@ -404,6 +406,7 @@ struct SessionWindow: View {
                            hasChildren: row.hasChildren, isChild: row.parentID != nil)
             }
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
+            UsageSection(model: usage)
             HStack {
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()

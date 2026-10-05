@@ -20,10 +20,14 @@ import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { ConversationIndex } from './conversations.ts'
 import { endedSessions, SessionHistory, startAgain } from './history.ts'
+import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
+import { fetchClaudeUsage } from './usage/claude.ts'
+import { fetchCodexUsage } from './usage/codex.ts'
+import { UsageService, type UsageRefresh } from './usage/service.ts'
 import { WakeDirectory } from './wakes.ts'
 import { ConnectionSubscriptions } from './subscriptions.ts'
 import { WebSocketRpcServer } from './websocket-server.ts'
@@ -121,6 +125,14 @@ const chat = new ChatServer((name) => {
   return storage ? durableSocket(storage) : null
 })
 await chat.listen()
+// The agents' subscription usage, for the app's sidebar. It reads the agents' own sign-ins, so only the owner asks.
+const usage = new UsageService({
+  claude: async () => fetchClaudeUsage(await loginEnvironment()),
+  codex: async () => {
+    const env = await loginEnvironment()
+    return fetchCodexUsage(env, resolveExecutable('codex', env))
+  }
+})
 const rpcPath = join(profile, 'rpc.sock')
 await unlink(rpcPath).catch(() => {})
 // Pairing is administered only over the owner-authenticated local socket, never over the WebSocket.
@@ -140,6 +152,10 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
     const name = String(params.name ?? '')
     if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
     return { variants: (await chat.variants()).map((variant) => ({ ...variant, url: chat.url(variant.id, name) })) }
+  },
+  'usage.read': async (params) => {
+    const refresh: UsageRefresh = params.refresh === 'force' || params.refresh === 'none' ? params.refresh : 'stale'
+    return { providers: await usage.read(refresh) }
   },
   'slim.pairing.revoke': async (params) => {
     const revoked = await devices.revoke(String(params.deviceId))
