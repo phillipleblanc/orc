@@ -17,6 +17,14 @@ public enum RuntimeBootstrap {
 struct RuntimeSocket {
     let metadata: RuntimeMetadata
     let fd: Int32
+
+    /// Limits each blocking read and write on the socket to `seconds`.
+    func setTimeout(_ seconds: Int) {
+        var value = timeval(tv_sec: seconds, tv_usec: 0)
+        let size = socklen_t(MemoryLayout<timeval>.size)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, size)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, size)
+    }
 }
 
 struct RuntimeStarter {
@@ -61,7 +69,9 @@ struct RuntimeStarter {
 
         if try existing(timeout: timeout) == nil, !frontendIsStarting() { try launch() }
         while ProcessInfo.processInfo.systemUptime < deadline {
+            // Each probe of a runtime that is still starting waits at most 3 s; the caller's timeout applies once it answers.
             if let connection = try existing(timeout: 3) {
+                connection.setTimeout(timeout)
                 do {
                     if !hasAccess() { try createAccess(connection, timeout: timeout) }
                     try? FileManager.default.removeItem(at: state.appendingPathComponent("launch.json"))
