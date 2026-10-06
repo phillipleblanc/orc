@@ -75,8 +75,8 @@ public enum UsageLevel: Equatable {
     }
 }
 
-/// The time until a reset, coarsely: "now", "<1m", "45m", "2h 13m", "3d 4h".
-public func formatResetDuration(_ interval: TimeInterval) -> String {
+/// A length of time, coarsely: "now", "<1m", "45m", "2h 13m", "3d 4h".
+public func formatDuration(_ interval: TimeInterval) -> String {
     guard interval > 0 else { return "now" }
     let minutes = Int(interval / 60)
     if minutes < 1 { return "<1m" }

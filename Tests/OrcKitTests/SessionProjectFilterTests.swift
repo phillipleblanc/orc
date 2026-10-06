@@ -17,27 +17,6 @@ final class SessionProjectFilterTests: XCTestCase {
         let projects = SessionProjectFilter.projects(in: sessions, workspaces: workspaces)
         XCTAssertEqual(projects.map(\.id), ["orc", "spice", "unlisted"])
         XCTAssertEqual(projects.map(\.name), ["Orc", "Spice.ai", "zebra"])
-        XCTAssertEqual(SessionProjectFilter().sessions(in: sessions), sessions)
-        XCTAssertEqual(SessionProjectFilter(projectID: "spice").sessions(in: sessions).map(\.id), ["a", "b"])
-        XCTAssertEqual(SessionProjectFilter(projectID: "orc").sessions(in: sessions).map(\.id), ["c"])
         XCTAssertTrue(SessionProjectFilter.projects(in: [], workspaces: workspaces).isEmpty)
-    }
-
-    func testSelectionResetsWhenItsLastSessionDisappears() {
-        var filter = SessionProjectFilter(projectID: "spice")
-        filter.reconcile(with: [session("spice", project: "spice", connected: false)])
-        XCTAssertEqual(filter.projectID, "spice")
-        filter.reconcile(with: [session("orc", project: "orc")])
-        XCTAssertNil(filter.projectID)
-        filter.reconcile(with: [])
-        XCTAssertNil(filter.projectID)
-    }
-
-    func testProjectFilteringDoesNotPullInParentsFromAnotherProject() {
-        let sessions = [session("review", project: "spice"), session("review-ui", project: "orc")]
-        let filtered = SessionProjectFilter(projectID: "orc").sessions(in: sessions)
-        let rows = SessionSidebarOrder().rows(in: SessionHierarchy(sessions: filtered))
-        XCTAssertEqual(rows.map(\.id), ["review-ui"])
-        XCTAssertNil(rows.first?.parentID)
     }
 }

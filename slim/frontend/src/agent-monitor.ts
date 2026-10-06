@@ -49,6 +49,8 @@ export class AgentMonitor extends EventEmitter {
   lastAssistantMessage: string | undefined
   /** When the most recent turn finished, in milliseconds. */
   lastIdleAt = 0
+  /** When `state` last changed, in milliseconds; 0 before the first event. */
+  stateSince = 0
   lastEventAt = 0
   dialog: string | null = null
   // What a prompt interrupted, which answering it returns to. Pi reports every dialog as a prompt, including one an
@@ -204,7 +206,10 @@ export class AgentMonitor extends EventEmitter {
     if (state === 'idle' && this.state !== 'idle' && turnEnded) this.lastIdleAt = at
     const changed = state !== this.state
     this.state = state
-    if (changed) this.emit('change', this)
+    if (changed) {
+      this.stateSince = at
+      this.emit('change', this)
+    }
   }
 
   /** Text Claude queued during the turn can start another turn, which no hook reports until it stops. */

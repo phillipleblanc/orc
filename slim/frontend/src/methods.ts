@@ -246,7 +246,9 @@ export function createHandlers(runtime: Runtime): Handlers {
       })
     },
 
-    'agent.list': () => ({ agents: agents.list() }),
+    'agent.list': async () => ({
+      agents: await Promise.all(agents.list().map(async (agent) => ({ ...agent, wakes: await wakes.list(String(agent.name)).catch(() => []) })))
+    }),
 
     'agent.status': (params) => agents.status(String(params.name)),
 

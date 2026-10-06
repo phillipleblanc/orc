@@ -1,19 +1,6 @@
 import Foundation
 
-public struct SessionProjectFilter: Equatable {
-    public var projectID: String?
-
-    public init(projectID: String? = nil) { self.projectID = projectID }
-
-    public func sessions(in sessions: [Session]) -> [Session] {
-        guard let projectID else { return sessions }
-        return sessions.filter { $0.worktreeId == projectID }
-    }
-
-    public mutating func reconcile(with sessions: [Session]) {
-        if let projectID, !sessions.contains(where: { $0.worktreeId == projectID }) { self.projectID = nil }
-    }
-
+public enum SessionProjectFilter {
     /// Projects in the session inventory, including sessions whose connections are temporarily offline.
     public static func projects(in sessions: [Session], workspaces: [Workspace]) -> [Workspace] {
         let workspacesByID = Dictionary(workspaces.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

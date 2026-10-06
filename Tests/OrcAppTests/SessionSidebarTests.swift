@@ -110,29 +110,6 @@ final class SessionSidebarTests: XCTestCase {
         XCTAssertEqual(table.numberOfRows, 3)
     }
 
-    @MainActor func testRowShowsAgentThenOverviewGroupThenLabels() throws {
-        let agent: Session = try decode(["handle": "alpha", "title": "alpha", "worktreeId": "sidebar-fixture", "worktreePath": "/code/project",
-                                "connected": true, "writable": true, "agentIdentity": "pi"])
-        let terminal = try sessions()[2]
-        let organization = SessionBoardModel(file: root.appendingPathComponent("board.json"))
-        organization.update { board in
-            board.reconcile([agent, terminal])
-            board.move("alpha", to: board.addGroup("Priority"))
-            board.addLabel("release", to: "alpha")
-            board.addLabel("flaky test", to: "alpha")
-            board.addLabel("release", to: "beta")
-        }
-        func row(_ session: Session) -> SessionSidebarRow {
-            SessionSidebarRow(session: session, name: session.name, activity: .unknown, muted: false,
-                              group: organization.board.group(of: session.name)?.name,
-                              labels: organization.board.labels(for: session.name).map(\.name), isChild: false, childrenCollapsed: nil)
-        }
-        XCTAssertEqual(row(agent).detail, "pi · Priority · release · flaky test")
-        XCTAssertEqual(row(terminal).detail, "terminal · release")
-        organization.update { $0.toggleLabel($0.labels(for: "alpha")[0].id, for: "alpha") }
-        XCTAssertEqual(row(agent).detail, "pi · Priority · flaky test")
-    }
-
     @MainActor private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
         if let match = view as? T { return match }
         return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first

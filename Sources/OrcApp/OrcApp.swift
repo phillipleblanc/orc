@@ -5,13 +5,13 @@ import OrcKit
 @main struct OrcApplication: App {
     @NSApplicationDelegateAdaptor(OrcApplicationDelegate.self) private var appDelegate
     @StateObject private var model = SessionModel()
-    @StateObject private var board = SessionBoardModel()
     @StateObject private var sidebarOrder = SessionSidebarModel()
     @StateObject private var usage = UsageModel()
     @StateObject private var briefs = BriefModel()
+    @StateObject private var overviewAgents = OverviewAgents()
     @Environment(\.openWindow) private var openWindow
     var body: some Scene {
-        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, board: board, usage: usage, briefs: briefs) }
+        Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, usage: usage, briefs: briefs) }
             .defaultSize(width: 1440, height: 936)
             .windowResizability(.contentMinSize)
             .commands {
@@ -29,7 +29,7 @@ import OrcKit
                         .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(model.closed.isEmpty)
                 }
             }
-        Window("Session Overview", id: "overview") { SessionBoardView(model: model, organization: board) }
+        Window("Session Overview", id: "overview") { SessionOverviewView(model: model, briefs: briefs, usage: usage, agents: overviewAgents) }
             .defaultSize(width: 1120, height: 780)
             .windowResizability(.contentMinSize)
         Settings { SettingsView(model: model) }
@@ -57,7 +57,7 @@ import OrcKit
     }
     private(set) var hierarchy = SessionHierarchy(sessions: [])
     @Published var workspaces: [Workspace] = []
-    @Published private(set) var activities: [String: AgentActivity] = [:]
+    @Published var activities: [String: AgentActivity] = [:]
     @Published private(set) var unreadKeys: Set<String> = []
     @Published var selected: String?
     @Published var error: String?
@@ -271,7 +271,6 @@ enum SessionPlaceholder: Equatable {
 struct SessionWindow: View {
     @ObservedObject var model: SessionModel
     @ObservedObject var sidebarOrder: SessionSidebarModel
-    @ObservedObject var board: SessionBoardModel
     @ObservedObject var usage: UsageModel
     @ObservedObject var briefs: BriefModel
     @ObservedObject private var notifications = IdleNotifications.shared
@@ -439,7 +438,6 @@ struct SessionWindow: View {
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
                           headline: briefs.briefs[session.name]?.brief?.headline,
-                          group: board.board.group(of: session.name)?.name, labels: board.board.labels(for: session.name).map(\.name),
                           isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }

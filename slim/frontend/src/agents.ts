@@ -175,6 +175,8 @@ export class AgentDirectory extends EventEmitter {
       handle: session.handle,
       agent: monitor.kind,
       state: monitor.effectiveState,
+      /** When the agent entered `state`, in milliseconds. */
+      since: monitor.stateSince || Date.parse(session.meta.createdAt),
       ready: monitor.ready,
       ...(monitor.dialog ? { dialog: monitor.dialog } : {}),
       cwd: session.meta.cwd,

@@ -105,6 +105,8 @@ test('answering a prompt returns to what it interrupted: an idle agent stays idl
   t.after(() => monitor.stop())
   assert.equal(monitor.state, 'idle')
   assert.equal(monitor.lastIdleAt, 30_000)
+  // The state changed last when the prompt was answered.
+  assert.equal(monitor.stateSince, 41_000)
 
   // A prompt during a turn returns to the turn once answered.
   await appendFile(file, line('UserPromptSubmit') + line('PermissionRequest'))

@@ -32,9 +32,9 @@ final class AgentStatusTests: XCTestCase {
     func testTheSidebarShowsTheHeadlineAfterTheAgent() throws {
         let session: Session = try decode(["handle": "cdc", "title": "cdc", "worktreeId": "w", "worktreePath": "/code", "connected": true, "writable": true,
                                            "agentIdentity": "pi"])
-        let row = SessionSidebarRow(session: session, name: "cdc", activity: .idle, muted: false, headline: "Checkpoint: fix PR1 Clippy", group: "Priority",
+        let row = SessionSidebarRow(session: session, name: "cdc", activity: .idle, muted: false, headline: "Checkpoint: fix PR1 Clippy",
                                     isChild: false, childrenCollapsed: nil)
-        XCTAssertEqual(row.detail, "pi · Checkpoint: fix PR1 Clippy · Priority")
+        XCTAssertEqual(row.detail, "pi · Checkpoint: fix PR1 Clippy")
     }
 
     @MainActor func testThePanelShowsTheSessionAndAnAgentsBrief() async throws {

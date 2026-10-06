@@ -128,7 +128,7 @@ struct UsageWindowRow: View {
 
     private var level: UsageLevel { UsageLevel(usedPercent: window.usedPercent) }
     private var percent: Int { Int(window.usedPercent.rounded()) }
-    private var reset: String { window.resetsAt.map { formatResetDuration($0.timeIntervalSince(now)) } ?? "" }
+    private var reset: String { window.resetsAt.map { formatDuration($0.timeIntervalSince(now)) } ?? "" }
 
     var body: some View {
         HStack(spacing: 8) {

@@ -28,12 +28,12 @@ final class AgentUsageTests: XCTestCase {
 
     func testUsageLevelsAndResetDurations() {
         XCTAssertEqual([0, 59.9, 60, 79, 80, 100].map(UsageLevel.init(usedPercent:)), [.normal, .normal, .high, .high, .critical, .critical])
-        XCTAssertEqual(formatResetDuration(-5), "now")
-        XCTAssertEqual(formatResetDuration(59), "<1m")
-        XCTAssertEqual(formatResetDuration(45 * 60), "45m")
-        XCTAssertEqual(formatResetDuration(2 * 3600), "2h")
-        XCTAssertEqual(formatResetDuration(2 * 3600 + 13 * 60 + 59), "2h 13m")
-        XCTAssertEqual(formatResetDuration(3 * 86400), "3d")
-        XCTAssertEqual(formatResetDuration(3 * 86400 + 4 * 3600 + 30 * 60), "3d 4h")
+        XCTAssertEqual(formatDuration(-5), "now")
+        XCTAssertEqual(formatDuration(59), "<1m")
+        XCTAssertEqual(formatDuration(45 * 60), "45m")
+        XCTAssertEqual(formatDuration(2 * 3600), "2h")
+        XCTAssertEqual(formatDuration(2 * 3600 + 13 * 60 + 59), "2h 13m")
+        XCTAssertEqual(formatDuration(3 * 86400), "3d")
+        XCTAssertEqual(formatDuration(3 * 86400 + 4 * 3600 + 30 * 60), "3d 4h")
     }
 }
