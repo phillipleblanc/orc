@@ -14,10 +14,11 @@ final class SessionOverviewViewTests: XCTestCase {
         XCTAssertEqual(SessionOverviewView.keyAction(KeyEquivalent("r"), characters: "r", replying: false), Action.reply)
         XCTAssertNil(SessionOverviewView.keyAction(KeyEquivalent("x"), characters: "x", replying: false))
         XCTAssertEqual(SessionOverviewView.keyAction(KeyEquivalent("m"), characters: "m", replying: false), Action.markRead)
+        XCTAssertEqual(SessionOverviewView.keyAction(KeyEquivalent("s"), characters: "s", replying: false), Action.refreshStatus)
         XCTAssertEqual(SessionOverviewView.keyAction(KeyEquivalent("?"), characters: "?", replying: false), Action.shortcuts)
         XCTAssertEqual(SessionOverviewView.keyAction(.escape, characters: "\u{1b}", replying: false), Action.close)
         // Typing a reply, every key goes to its field.
-        for (key, characters) in [(KeyEquivalent("r"), "r"), (KeyEquivalent("j"), "j"), (KeyEquivalent("k"), "k"), (.return, "\r"), (.downArrow, ""), (KeyEquivalent("?"), "?"), (KeyEquivalent("m"), "m")] {
+        for (key, characters) in [(KeyEquivalent("r"), "r"), (KeyEquivalent("j"), "j"), (KeyEquivalent("k"), "k"), (.return, "\r"), (.downArrow, ""), (KeyEquivalent("?"), "?"), (KeyEquivalent("m"), "m"), (KeyEquivalent("s"), "s")] {
             XCTAssertNil(SessionOverviewView.keyAction(key, characters: characters, replying: true))
         }
     }
@@ -51,9 +52,9 @@ final class SessionOverviewViewTests: XCTestCase {
             "orc": AgentSummary(name: "orc", agent: "claude", state: "working", since: now.addingTimeInterval(-3840))
         ]
         let briefs = BriefModel(monitor: false)
-        func brief(_ name: String, _ headline: String, _ current: String, _ next: String, needsYou: String? = nil) -> AgentBrief {
+        func brief(_ name: String, _ headline: String, _ current: String, _ next: String, needsYou: String? = nil, generating: Bool = false) -> AgentBrief {
             AgentBrief(name: name, brief: AgentBrief.Content(headline: headline, goal: "", progress: [], now: current, next: [next], needsYou: needsYou),
-                       generatedAt: now, model: "lab/qwen", error: nil, generating: false)
+                       generatedAt: now, model: "lab/qwen", error: nil, generating: generating)
         }
         briefs.briefs = [
             "coord": brief("coord", "Acknowledged events, idle until audit", "Acknowledged the Xcode license blocker and notified the workers; idle until the next audit.", "Audit worker progress when the wake fires."),
@@ -61,10 +62,10 @@ final class SessionOverviewViewTests: XCTestCase {
                 headline: "Fixing Clippy errors from lint-02", goal: "Ship the Cayenne cache policy fix as one reviewed PR.",
                 progress: ["The policy change and its tests are in place.", "Lint run 02 failed on 3 Clippy errors."],
                 now: "Fixing the Clippy errors from lint-02 and waiting for approval to run cargo fmt.",
-                next: ["Rerun lint.", "Push the fix.", "Ask for review."], needsYou: nil), generatedAt: now, model: "lab/qwen", error: nil, generating: false),
+                next: ["Rerun lint.", "Push the fix.", "Ask for review."], needsYou: nil), generatedAt: now, model: "lab/qwen", error: nil, generating: true),
             "fix-startup-conflicts": brief("fix-startup-conflicts", "Waiting on CUDA builds, lease held", "Waiting for the CUDA builds.", "Check the build logs."),
             "cayenne-caching-cdc": brief("cayenne-caching-cdc", "PR1 lint fix signoff running on Zephyrus", "At a checkpoint; signoff attempt 2 for PR1 runs on Zephyrus with a wake armed.", "Inspect the signoff result when the wake fires.", needsYou: "Approve merging PR3 despite GitHub's stale conflict flag?"),
-            "orc": brief("orc", "Reworking the session overview", "Building the self-sorting overview with lanes and families.", "Render and review the overview."),
+            "orc": brief("orc", "Reworking the session overview", "Building the self-sorting overview with lanes and families.", "Render and review the overview.", generating: true),
             "upgrades": brief("upgrades", "Investigating Pi fast mode during compaction", "Idle after explaining how fast mode survives compaction.", "Wait for the next question.")
         ]
         let usage = UsageModel(monitor: false)

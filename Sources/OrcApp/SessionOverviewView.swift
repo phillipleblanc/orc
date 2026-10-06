@@ -53,6 +53,8 @@ struct SessionOverviewView: View {
     @State private var showingShortcuts = false
     /// When each session was last marked read here, which acknowledges what its brief says it waits on.
     @State private var acknowledged = OverviewAcknowledgements.load()
+    /// Why asking for a session's new status failed.
+    @State private var refreshErrors: [String: String] = [:]
     @FocusState private var boardFocused: Bool
 
     private var lanes: [(lane: OverviewLane, families: [OverviewFamily])] {
@@ -135,14 +137,14 @@ struct SessionOverviewView: View {
             Text(lane.title).font(.headline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 14, alignment: .top)], alignment: .leading, spacing: 14) {
                 ForEach(families) { family in
-                    FamilyCard(family: family, model: model, selected: $selected, replying: $replying, open: open)
+                    FamilyCard(family: family, model: model, selected: $selected, replying: $replying, refreshErrors: refreshErrors, open: open)
                         .id(family.id)
                 }
             }
         }
     }
 
-    enum KeyAction: Equatable { case next, previous, open, reply, markRead, shortcuts, close }
+    enum KeyAction: Equatable { case next, previous, open, reply, refreshStatus, markRead, shortcuts, close }
 
     /// What a key does on the board. While a reply is being written, keys go to its field, which sits inside the board.
     static func keyAction(_ key: KeyEquivalent, characters: String, replying: Bool) -> KeyAction? {
@@ -152,6 +154,7 @@ struct SessionOverviewView: View {
         case (.upArrow, _), (_, "k"): return .previous
         case (.return, _): return .open
         case (_, "r"): return .reply
+        case (_, "s"): return .refreshStatus
         case (_, "m"): return .markRead
         case (_, "?"): return .shortcuts
         case (.escape, _): return .close
@@ -173,6 +176,12 @@ struct SessionOverviewView: View {
         case .reply:
             guard let selected, model.sessions.first(where: { $0.name == selected })?.agentIdentity != nil else { return .ignored }
             replying = selected
+        case .refreshStatus:
+            guard let selected, model.sessions.first(where: { $0.name == selected })?.agentIdentity != nil else { return .ignored }
+            refreshErrors[selected] = nil
+            Task {
+                do { try await briefs.refresh(selected) } catch { refreshErrors[selected] = error.localizedDescription }
+            }
         case .markRead:
             guard let selected, let session = model.sessions.first(where: { $0.name == selected }) else { return .ignored }
             model.markRead(session)
@@ -225,6 +234,7 @@ private struct FamilyCard: View {
     @ObservedObject var model: SessionModel
     @Binding var selected: String?
     @Binding var replying: String?
+    let refreshErrors: [String: String]
     let open: (Session) -> Void
 
     private var isSelected: Bool { family.items.contains { $0.session.name == selected } }
@@ -253,7 +263,7 @@ private struct FamilyCard: View {
         return VStack(alignment: .leading, spacing: 6) {
             OverviewRow(item: item, model: model, now: now, head: head, project: head ? headProject : nil,
                         otherProject: !head && own != headProject ? own : nil, selected: selected == item.session.name,
-                        open: { open(item.session) }, reply: { replying = item.session.name })
+                        refreshError: refreshErrors[item.session.name], open: { open(item.session) }, reply: { replying = item.session.name })
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { open(item.session) }
                 .onTapGesture { selected = selected == item.session.name ? nil : item.session.name }
@@ -276,6 +286,8 @@ private struct OverviewRow: View {
     /// A member's project when it differs from the card's.
     let otherProject: String?
     let selected: Bool
+    /// Why asking for a new status failed.
+    let refreshError: String?
     let open: () -> Void
     let reply: () -> Void
     @State private var hovering = false
@@ -317,9 +329,17 @@ private struct OverviewRow: View {
             if selected, let brief = item.brief, brief.brief != nil {
                 ExpandedBrief(brief: brief, now: now).padding(.leading, 20).padding(.top, 4)
             } else if let headline = item.brief?.brief?.headline {
-                Text(headline).font(.caption).foregroundStyle(.secondary).lineLimit(1).padding(.leading, 20)
+                HStack(spacing: 4) {
+                    Text(headline).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if item.brief?.generating == true { ProgressView().controlSize(.mini).help("Writing a new status…") }
+                }
+                .padding(.leading, 20)
             } else if item.session.agentIdentity != nil {
-                Text("No status yet").font(.caption).foregroundStyle(.tertiary).padding(.leading, 20)
+                Text(item.brief?.generating == true ? "Writing the first status…" : "No status yet").font(.caption).foregroundStyle(.tertiary).padding(.leading, 20)
+            }
+            // The latest attempt's failure, while the row is selected, where S asks for a new status.
+            if let failure = refreshError ?? (selected ? item.brief?.error : nil) {
+                Label(failure, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange).lineLimit(2).padding(.leading, 20)
             }
         }
         .padding(.vertical, 3).padding(.horizontal, 4)
@@ -371,9 +391,15 @@ struct ExpandedBrief: View {
                 }
             }
             if let written = brief.generatedAt {
-                // The minute's tick can predate a brief just written.
-                Text("Status from \(now.timeIntervalSince(written) < 60 ? "just now" : RelativeDateTimeFormatter().localizedString(for: written, relativeTo: now))")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    // The minute's tick can predate a brief just written.
+                    Text("Status from \(now.timeIntervalSince(written) < 60 ? "just now" : RelativeDateTimeFormatter().localizedString(for: written, relativeTo: now))")
+                    if brief.generating {
+                        ProgressView().controlSize(.mini)
+                        Text("writing a new one…")
+                    }
+                }
+                .font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .font(.callout)
@@ -419,6 +445,7 @@ struct OverviewShortcuts: View {
     private static let groups: [(title: String, keys: [(keys: [String], action: String)])] = [
         ("Sessions", [(["↑", "↓", "or", "J", "K"], "Select the next or previous session; it opens to its full status"),
                       (["↩"], "Open the selected session in the main window"), (["R"], "Reply to the selected agent"),
+                      (["S"], "Write a new status for the selected agent"),
                       (["M"], "Mark the selected agent read, then select the next"),
                       (["Esc"], "Close the selected session")]),
         ("Reply", [(["↩"], "Send now, steering a working agent"), (["⌘", "↩"], "Send once the agent is idle"), (["Esc"], "Cancel the reply")]),
