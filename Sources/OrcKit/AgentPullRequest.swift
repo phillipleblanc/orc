@@ -13,6 +13,8 @@ public struct AgentPullRequest: Decodable, Equatable, Identifiable {
     /// When the agent was last told about it.
     public let toldAt: Date?
     public let conflict: Bool
+    /// Its place in the merge queue, from 1, or nil when it is not queued.
+    public let mergeQueuePosition: Int?
     /// Failing checks of its latest commit, apart from the ignored ones, and the ignored ones.
     public let failing: [String]
     public let ignoredFailing: [String]
@@ -26,14 +28,14 @@ public struct AgentPullRequest: Decodable, Equatable, Identifiable {
     public var id: String { "\(repo)#\(number)" }
 
     public init(repo: String, number: Int, url: URL, title: String? = nil, checkedAt: Date? = nil, error: String? = nil, toldAt: Date? = nil,
-                conflict: Bool = false, failing: [String] = [], ignoredFailing: [String] = [], pending: Int = 0, copilot: Int = 0,
+                conflict: Bool = false, mergeQueuePosition: Int? = nil, failing: [String] = [], ignoredFailing: [String] = [], pending: Int = 0, copilot: Int = 0,
                 handedOver: [String] = []) {
         self.repo = repo; self.number = number; self.url = url; self.title = title; self.checkedAt = checkedAt; self.error = error
-        self.toldAt = toldAt; self.conflict = conflict; self.failing = failing; self.ignoredFailing = ignoredFailing; self.pending = pending
+        self.toldAt = toldAt; self.conflict = conflict; self.mergeQueuePosition = mergeQueuePosition; self.failing = failing; self.ignoredFailing = ignoredFailing; self.pending = pending
         self.copilot = copilot; self.handedOver = handedOver
     }
 
-    enum CodingKeys: String, CodingKey { case repo, number, url, title, checkedAt, error, toldAt, conflict, failing, ignoredFailing, pending, copilot, handedOver }
+    enum CodingKeys: String, CodingKey { case repo, number, url, title, checkedAt, error, toldAt, conflict, mergeQueuePosition, failing, ignoredFailing, pending, copilot, handedOver }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let date = { (key: CodingKeys) in try container.decodeIfPresent(Double.self, forKey: key).map { Date(timeIntervalSince1970: $0 / 1000) } }
@@ -45,6 +47,7 @@ public struct AgentPullRequest: Decodable, Equatable, Identifiable {
         error = try container.decodeIfPresent(String.self, forKey: .error)
         toldAt = try date(.toldAt)
         conflict = try container.decodeIfPresent(Bool.self, forKey: .conflict) ?? false
+        mergeQueuePosition = try container.decodeIfPresent(Int.self, forKey: .mergeQueuePosition)
         failing = try container.decodeIfPresent([String].self, forKey: .failing) ?? []
         ignoredFailing = try container.decodeIfPresent([String].self, forKey: .ignoredFailing) ?? []
         pending = try container.decodeIfPresent(Int.self, forKey: .pending) ?? 0
@@ -61,12 +64,14 @@ public struct AgentPullRequest: Decodable, Equatable, Identifiable {
         return parts
     }
 
-    /// Its state in a few words: what stands in its way, or that its checks run or pass. Ignored checks are left out.
+    /// Its state in a few words: what stands in its way, or that its checks run or pass, and whether it is in the merge
+    /// queue. Ignored checks are left out.
     public var summary: String {
         if checkedAt == nil { return error ?? "not checked yet" }
-        let problems = self.problems
-        if !problems.isEmpty { return problems.joined(separator: " · ") }
-        return pending > 0 ? "\(pending) check\(pending == 1 ? "" : "s") running" : "checks pass"
+        var parts = problems
+        if parts.isEmpty { parts.append(pending > 0 ? "\(pending) check\(pending == 1 ? "" : "s") running" : "checks pass") }
+        if mergeQueuePosition != nil { parts.append("in merge queue") }
+        return parts.joined(separator: " · ")
     }
 
     /// The pull requests in a `pr.list` result, by agent name.

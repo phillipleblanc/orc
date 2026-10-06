@@ -63,7 +63,7 @@ struct SettingsView: View {
                 TextField("Ignored checks", text: $ignoredChecks, prompt: Text("Attestation"))
                     .disabled(savedIgnoredChecks == nil)
                     .onSubmit(saveIgnoredChecks)
-                Text("Writing an agent's status links the pull requests it opened. Once the agent is idle, Orc tells it about their failing checks, unresolved Copilot comments and merge conflicts, each once. These checks, separated by commas, are never reported; * matches anything.")
+                Text("Writing an agent's status links the pull requests it opened. Once the agent is idle, Orc tells it about their failing checks, unresolved Copilot comments, merge conflicts and ejections from the merge queue, each once. These checks, separated by commas, are never reported; * matches anything.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let pullRequestError { Text(pullRequestError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }

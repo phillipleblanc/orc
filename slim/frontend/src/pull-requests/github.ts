@@ -25,6 +25,10 @@ export type PullRequestSnapshot = {
   headSha: string
   /** Whether it merges into its base cleanly; GitHub reports UNKNOWN until it has computed it. */
   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+  /** Its place in the base branch's merge queue, from 1, and when it joined; null when it is not queued. */
+  mergeQueue: { position: number; enqueuedAt: string } | null
+  /** Its latest removal from the merge queue, with GitHub's reason: `merged`, `manual`, `failed_checks`, … */
+  queueRemoval: { id: string; at: string; reason: string } | null
   checks: Check[]
   threads: ReviewThread[]
 }
@@ -56,7 +60,8 @@ const CONTEXTS = `pageInfo { hasNextPage endCursor }
     ... on StatusContext { context state targetUrl createdAt }
   }`
 
-const PULL_REQUEST = `number title url state mergeable headRefOid author { login }
+const PULL_REQUEST = `number title url state mergeable headRefOid author { login } mergeQueueEntry { position enqueuedAt }
+  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { id createdAt reason } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: ${PAGE}) { ${CONTEXTS} } } } } }
   reviewThreads(first: ${PAGE}) { nodes { id isResolved path line originalLine comments(first: 1) { nodes { author { login } body url } } } }`
 
@@ -97,6 +102,8 @@ export async function fetchPullRequests(refs: PullRequestRef[], graphql: GraphQL
       author: node.author?.login ?? null,
       headSha: String(node.headRefOid ?? ''),
       mergeable: node.mergeable === 'CONFLICTING' || node.mergeable === 'MERGEABLE' ? node.mergeable : 'UNKNOWN',
+      mergeQueue: typeof node.mergeQueueEntry?.position === 'number' ? { position: node.mergeQueueEntry.position, enqueuedAt: String(node.mergeQueueEntry.enqueuedAt) } : null,
+      queueRemoval: removal(node.timelineItems?.nodes?.[0]),
       checks: latest(contexts),
       threads: (node.reviewThreads?.nodes ?? []).map((thread: any): ReviewThread => {
         const first = thread.comments?.nodes?.[0]
@@ -108,6 +115,10 @@ export async function fetchPullRequests(refs: PullRequestRef[], graphql: GraphQL
     })
   }
   return { viewer: String(data?.viewer?.login ?? ''), pullRequests }
+}
+
+function removal(node: any): PullRequestSnapshot['queueRemoval'] {
+  return node?.id && node.createdAt ? { id: String(node.id), at: String(node.createdAt), reason: String(node.reason ?? '') } : null
 }
 
 /**

@@ -95,6 +95,8 @@ final class SessionOverviewTests: XCTestCase {
         XCTAssertEqual(pullRequests[1].summary, "1 check running")
         XCTAssertEqual(AgentPullRequest(repo: "spiceai/spiceai", number: 14788, url: URL(string: "https://github.com/spiceai/spiceai/pull/14788")!,
                                         checkedAt: now, ignoredFailing: ["Attestation"]).summary, "checks pass")
+        XCTAssertEqual(AgentPullRequest(repo: "spiceai/spiceai", number: 14784, url: URL(string: "https://github.com/spiceai/spiceai/pull/14784")!,
+                                        checkedAt: now, mergeQueuePosition: 5).summary, "checks pass · in merge queue")
 
         // A working agent with a check handed over still needs its person.
         let item = OverviewItem(session: session("fixer", agent: "pi"), activity: .active, agent: agents["fixer"], brief: nil)

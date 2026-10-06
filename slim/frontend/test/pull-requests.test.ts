@@ -21,7 +21,7 @@ const check = (name: string, status: Check['status']): Check => ({ name, status,
 function snapshot(overrides: Partial<PullRequestSnapshot> = {}): PullRequestSnapshot {
   return {
     repo: 'spiceai/spiceai', number: 14785, title: 'Add a cold-start test', url: 'https://github.com/spiceai/spiceai/pull/14785',
-    state: 'OPEN', author: 'phillipleblanc', headSha: 'aaaaaaa1', mergeable: 'MERGEABLE',
+    state: 'OPEN', author: 'phillipleblanc', headSha: 'aaaaaaa1', mergeable: 'MERGEABLE', mergeQueue: null, queueRemoval: null,
     checks: [check('Attestation', 'failure'), check('Rust Lint', 'success')], threads: [], ...overrides
   }
 }
@@ -43,7 +43,8 @@ test('a check that ran again on the same commit counts by its latest run', async
     viewer: { login: 'phillipleblanc' },
     p0: { pullRequest: {
       number: 14784, title: 'Write an append as one load', url: 'https://github.com/spiceai/spiceai/pull/14784', state: 'OPEN', mergeable: 'MERGEABLE',
-      headRefOid: 'abc', author: { login: 'phillipleblanc' }, reviewThreads: { nodes: [] },
+      headRefOid: 'abc', author: { login: 'phillipleblanc' }, reviewThreads: { nodes: [] }, mergeQueueEntry: { position: 5, enqueuedAt: '2026-10-06T07:42:41Z' },
+      timelineItems: { nodes: [{ id: 'RFMQE_1', createdAt: '2026-10-04T18:40:40Z', reason: 'failed_checks' }] },
       commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { pageInfo: { hasNextPage: false }, nodes: [
         run('enforce-pull-with-spice', 'FAILURE', '2026-10-06T03:51:58Z', 1),
         run('Rust Lint', 'SUCCESS', '2026-10-06T03:52:00Z', 2),
@@ -54,6 +55,8 @@ test('a check that ran again on the same commit counts by its latest run', async
     } }
   })
   const { pullRequests } = await fetchPullRequests([{ repo: 'spiceai/spiceai', number: 14784 }], graphql)
+  assert.deepEqual(pullRequests.get('spiceai/spiceai#14784')?.mergeQueue, { position: 5, enqueuedAt: '2026-10-06T07:42:41Z' })
+  assert.deepEqual(pullRequests.get('spiceai/spiceai#14784')?.queueRemoval, { id: 'RFMQE_1', at: '2026-10-04T18:40:40Z', reason: 'failed_checks' })
   assert.deepEqual(pullRequests.get('spiceai/spiceai#14784')?.checks.map((found) => [found.name, found.status]), [
     ['enforce-pull-with-spice', 'success'], ['Rust Lint', 'pending'], ['ci/legacy', 'failure']
   ])
@@ -127,6 +130,31 @@ test('unresolved Copilot threads are reported once, and a merge conflict once pe
   assert.match(message, /resolve the conflicts, address each Copilot comment, reply, and resolve its thread\./)
 })
 
+test('an ejection from the merge queue Orc saw it join is reported once; a merge, a removal by hand or an older ejection is not', () => {
+  const queued = snapshot({ mergeQueue: { position: 3, enqueuedAt: '2026-10-06T07:00:00Z' }, queueRemoval: { id: 'old', at: '2026-10-04T18:00:00Z', reason: 'failed_checks' } })
+  const removed = (id: string, at: string, reason: string) => snapshot({ queueRemoval: { id, at, reason } })
+  // Linked after an earlier ejection: nothing to tell.
+  assert.equal(evaluate(removed('old', '2026-10-04T18:00:00Z', 'failed_checks'), emptyState(), ready).report, null)
+
+  const seen = evaluate(queued, emptyState(), { ...ready, ready: false }).state
+  assert.equal(seen.enqueuedAt, '2026-10-06T07:00:00Z')
+  const ejected = removed('new', '2026-10-06T08:00:00Z', 'failed_checks')
+  // Ejected while the agent works: kept until it is ready.
+  const waiting = evaluate(ejected, seen, { ...ready, ready: false })
+  assert.equal(waiting.report, null)
+  const told = evaluate(ejected, waiting.state, ready)
+  assert.equal(told.report?.ejected, 'failed_checks')
+  assert.match(reportMessage(ejected, told.report!), /- It was removed from the merge queue: its checks failed there\. The merge queue's runs are listed by `gh run list -R spiceai\/spiceai -e merge_group`\./)
+  assert.match(reportMessage(ejected, told.report!), /Please find why it left the merge queue, fix it, and add it to the queue again\./)
+  assert.equal(evaluate(ejected, told.state, ready).report, null)
+
+  for (const reason of ['merged', 'manual']) {
+    const out = evaluate(removed('gone', '2026-10-06T08:00:00Z', reason), seen, ready)
+    assert.equal(out.report, null)
+    assert.equal(out.state.enqueuedAt, null)
+  }
+})
+
 /** A GitHub that answers from a table of pull requests, counting its questions. */
 function fakeGitHub(pullRequests: Map<string, PullRequestSnapshot>) {
   const asked: PullRequestRef[][] = []
@@ -196,7 +224,7 @@ test('the watch links an agent’s pull requests, tells it once it is idle, and 
   assert.equal(sent.length, 1)
 
   const [summary] = (await watch.list('coord/worker'))['coord/worker']
-  assert.deepEqual([summary.failing, summary.ignoredFailing, summary.handedOver, summary.toldAt !== null], [['Rust Lint'], ['Attestation'], [], true])
+  assert.deepEqual([summary.failing, summary.ignoredFailing, summary.handedOver, summary.toldAt !== null, summary.mergeQueuePosition], [['Rust Lint'], ['Attestation'], [], true, null])
 
   // Kept with the session, and dropped once merged.
   const saved = JSON.parse(await readFile(join(agents[1].dir, 'pull-requests.json'), 'utf8'))

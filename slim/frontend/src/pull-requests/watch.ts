@@ -42,6 +42,8 @@ export type PullRequestSummary = {
   error: string | null
   toldAt: number | null
   conflict: boolean
+  /** Its place in the merge queue, from 1, or null when it is not queued. */
+  mergeQueuePosition: number | null
   /** Failing checks of the latest commit that are not ignored. */
   failing: string[]
   /** Failing checks of the latest commit that are ignored. */
@@ -307,6 +309,7 @@ export class PullRequestWatch {
       repo: pr.repo, number: pr.number, url: pr.url, title: pr.snapshot?.title ?? null, addedBy: pr.addedBy,
       checkedAt: pr.checkedAt, error: pr.error, toldAt: pr.toldAt,
       conflict: pr.snapshot?.mergeable === 'CONFLICTING',
+      mergeQueuePosition: pr.snapshot?.mergeQueue?.position ?? null,
       failing: counted.filter((check) => check.status === 'failure').map((check) => check.name),
       ignoredFailing: checks.filter((check) => check.status === 'failure' && ignored(check.name, this.ignore)).map((check) => check.name),
       pending: counted.filter((check) => check.status === 'pending').length,

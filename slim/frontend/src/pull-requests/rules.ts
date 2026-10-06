@@ -19,12 +19,20 @@ export type WatchState = {
   keep: string[]
   /** When each failing check of the latest commit was first seen failing, by `SHA NAME`. */
   firstFailed: Record<string, number>
+  /** When it last joined the merge queue, as GitHub reports it, while Orc saw it there and until it was told of its removal. */
+  enqueuedAt: string | null
 }
 
-export const emptyState = (): WatchState => ({ told: [], failures: {}, handedOver: {}, keep: [], firstFailed: {} })
+export const emptyState = (): WatchState => ({ told: [], failures: {}, handedOver: {}, keep: [], firstFailed: {}, enqueuedAt: null })
 
-/** What to tell the agent about a pull request: new failing checks and Copilot comments, and a merge conflict. */
-export type Report = { sha: string; conflict: boolean; failures: Check[]; threads: ReviewThread[] }
+/** Merge queue removals that are not ejections: a merge, and a removal by hand. */
+const KEPT_OUT = ['merged', 'manual']
+
+/**
+ * What to tell the agent about a pull request: new failing checks and Copilot comments, a merge conflict, and the
+ * reason it was ejected from the merge queue.
+ */
+export type Report = { sha: string; conflict: boolean; failures: Check[]; threads: ReviewThread[]; ejected: string | null }
 
 export type Evaluation = {
   /** What to tell the agent now, if anything. */
@@ -42,7 +50,8 @@ export function ignored(name: string, patterns: string[]): boolean {
 
 /**
  * What is new on a pull request since the agent was last told: failing checks of its latest commit, unresolved
- * Copilot threads, and a merge conflict, each at most once (a check once per commit). A failing check waits until the
+ * Copilot threads, a merge conflict, and an ejection from the merge queue Orc saw it join, each at most once (a check
+ * once per commit). A failing check waits until the
  * commit's other checks finish, or SETTLE_MS. Ignored checks are never reported, and a check reported failing on
  * REPEATS commits in a row is handed to its person rather than reported again. Only an agent that is `ready` is told
  * or has checks handed over; otherwise only what has been seen is kept.
@@ -51,11 +60,12 @@ export function evaluate(pr: PullRequestSnapshot, previous: WatchState, options:
   const sha = pr.headSha
   const state: WatchState = {
     // Findings of earlier commits no longer matter, except threads, which outlive commits.
-    told: previous.told.filter((key) => key.startsWith('thread ') || key.split(' ')[1] === sha),
+    told: previous.told.filter((key) => key.startsWith('thread ') || key.startsWith('ejected ') || key.split(' ')[1] === sha),
     failures: { ...previous.failures },
     handedOver: { ...previous.handedOver },
     keep: [...previous.keep],
-    firstFailed: Object.fromEntries(Object.entries(previous.firstFailed).filter(([key]) => key.startsWith(`${sha} `)))
+    firstFailed: Object.fromEntries(Object.entries(previous.firstFailed).filter(([key]) => key.startsWith(`${sha} `))),
+    enqueuedAt: previous.enqueuedAt ?? null
   }
   if (pr.state !== 'OPEN') return { report: null, handOver: [], state }
   const told = new Set(state.told)
@@ -67,6 +77,10 @@ export function evaluate(pr: PullRequestSnapshot, previous: WatchState, options:
     }
     if (check.status === 'failure') state.firstFailed[`${sha} ${check.name}`] ??= options.now
   }
+  if (pr.mergeQueue) state.enqueuedAt = pr.mergeQueue.enqueuedAt
+  // A removal after the enqueue Orc saw, unless it left the queue by merging or by hand.
+  const removal = !pr.mergeQueue && state.enqueuedAt && pr.queueRemoval && Date.parse(pr.queueRemoval.at) >= Date.parse(state.enqueuedAt) ? pr.queueRemoval : null
+  if (removal && KEPT_OUT.includes(removal.reason)) state.enqueuedAt = null
   if (!options.ready) return { report: null, handOver: [], state }
   const failing = checks.filter((check) => check.status === 'failure' && !told.has(`check ${sha} ${check.name}`) && !state.handedOver[check.name])
   const settled = !checks.some((check) => check.status === 'pending')
@@ -76,19 +90,27 @@ export function evaluate(pr: PullRequestSnapshot, previous: WatchState, options:
   const failures = settled ? failing.filter((check) => !handOver.includes(check.name)) : []
   const threads = pr.threads.filter((thread) => thread.author === COPILOT && !thread.resolved && !told.has(`thread ${thread.id}`))
   const conflict = pr.mergeable === 'CONFLICTING' && !told.has(`conflict ${sha}`)
-  if (!conflict && failures.length === 0 && threads.length === 0) return { report: null, handOver, state }
+  const ejected = removal && !KEPT_OUT.includes(removal.reason) && !told.has(`ejected ${removal.id}`) ? removal : null
+  if (!conflict && failures.length === 0 && threads.length === 0 && !ejected) return { report: null, handOver, state }
   for (const check of failures) {
     state.told.push(`check ${sha} ${check.name}`)
     state.failures[check.name] = [...(state.failures[check.name] ?? []).filter((commit) => commit !== sha), sha]
   }
   for (const thread of threads) state.told.push(`thread ${thread.id}`)
   if (conflict) state.told.push(`conflict ${sha}`)
-  return { report: { sha, conflict, failures, threads }, handOver, state }
+  if (ejected) {
+    state.told.push(`ejected ${ejected.id}`)
+    state.enqueuedAt = null
+  }
+  return { report: { sha, conflict, failures, threads, ejected: ejected?.reason ?? null }, handOver, state }
 }
 
 /** The message that tells the agent. */
 export function reportMessage(pr: PullRequestSnapshot, report: Report): string {
   const lines = [`Pull request ${pr.repo}#${pr.number} (${pr.title}) at ${report.sha.slice(0, 7)}:`]
+  if (report.ejected !== null) {
+    lines.push(`- It was removed from the merge queue: ${report.ejected === 'failed_checks' ? 'its checks failed there' : `GitHub's reason is "${report.ejected.replace(/_/g, ' ')}"`}. The merge queue's runs are listed by \`gh run list -R ${pr.repo} -e merge_group\`.`)
+  }
   if (report.conflict) lines.push('- It has merge conflicts with its base branch.')
   for (const check of report.failures) lines.push(`- Check failed: ${check.name}${check.url ? ` ${check.url}` : ''}`)
   for (const thread of report.threads) {
@@ -97,6 +119,7 @@ export function reportMessage(pr: PullRequestSnapshot, report: Report): string {
     lines.push(`- Unresolved Copilot comment: ${where}"${body.length > 200 ? `${body.slice(0, 200)}…` : body}"${thread.url ? ` ${thread.url}` : ''}`)
   }
   const asks = [
+    report.ejected !== null ? 'find why it left the merge queue, fix it, and add it to the queue again' : '',
     report.conflict ? 'resolve the conflicts' : '',
     report.failures.length ? 'fix the failures this pull request caused' : '',
     report.threads.length ? 'address each Copilot comment, reply, and resolve its thread' : ''
