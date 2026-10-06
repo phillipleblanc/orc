@@ -264,8 +264,8 @@ private struct FamilyCard: View {
     }
 }
 
-/// One session in a short row: its state and time in it, what an agent waits on from its person, and its status
-/// headline. Selected, an agent's row opens to show its status in full.
+/// One session in a short row: its state and time in it, what an agent waits on from its person, its pull requests,
+/// and its status headline. Selected, an agent's row opens to show its status in full.
 private struct OverviewRow: View {
     let item: OverviewItem
     @ObservedObject var model: SessionModel
@@ -307,6 +307,12 @@ private struct OverviewRow: View {
             if let question = item.needsYou {
                 Label(question, systemImage: "exclamationmark.bubble.fill")
                     .font(.caption).foregroundStyle(.orange).lineLimit(selected ? nil : 2).padding(.leading, 20)
+            }
+            ForEach(item.handedOver, id: \.check) { handedOver in
+                HandedOverCheck(name: item.session.name, pullRequest: handedOver.pullRequest, check: handedOver.check).padding(.leading, 20)
+            }
+            ForEach(item.agent?.pullRequests ?? []) { pullRequest in
+                PullRequestLine(pullRequest: pullRequest).padding(.leading, 20)
             }
             if selected, let brief = item.brief, brief.brief != nil {
                 ExpandedBrief(brief: brief, now: now).padding(.leading, 20).padding(.top, 4)

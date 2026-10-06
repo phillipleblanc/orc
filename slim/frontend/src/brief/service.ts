@@ -1,7 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeJsonFile } from '../json-file.ts'
-import type { Brief } from './prompt.ts'
+import { shownText, type Brief } from './prompt.ts'
 import type { Digest } from './transcript.ts'
 
 /** An agent session a brief can be written for. */
@@ -16,7 +16,20 @@ export type BriefSource = {
   mark(): Promise<string | null>
 }
 
-export type BriefRequest = { digest: Digest; about: { name: string; agent: string; state: string }; model: string }
+export type BriefRequest = {
+  digest: Digest
+  about: { name: string; agent: string; state: string }
+  model: string
+  /** The pull requests already linked to the agent, and how to link another, answered for the model. */
+  pullRequests?: { linked: string[]; report: (url: string) => Promise<string> }
+}
+
+/** Pull requests linked to agents, which a brief's model can add to. */
+export type BriefPullRequests = {
+  linked(name: string): Promise<string[]>
+  /** Links a pull request the model reported, if `shown`, what it was given, names it; the answer is for the model. */
+  claim(name: string, url: string, shown: string): Promise<string>
+}
 
 /** A session's brief, as stored and reported. */
 export type BriefRecord = {
@@ -51,14 +64,16 @@ const MAX_RETRY_MS = 60 * 60_000
  * Status briefs of agent sessions: where each agent's work stands, written by a model from its transcript so the
  * agent is never asked. A brief is written when an agent finishes a turn or stops for permission, every
  * WORKING_INTERVAL_MS while it works, and when asked; only when its transcript changed since the last one, and
- * automatically at most every MIN_INTERVAL_MS. One brief is written at a time. Briefs are kept in
- * `<profile>/briefs/NAME.json`, and the model in `<profile>/brief-settings.json`.
+ * automatically at most every MIN_INTERVAL_MS. One brief is written at a time. Writing one, the model can link the
+ * pull requests the agent is responsible for to it, for Orc to watch. Briefs are kept in `<profile>/briefs/NAME.json`,
+ * and the model in `<profile>/brief-settings.json`.
  */
 export class BriefService {
   private readonly directory: string
   private readonly settingsPath: string
   private readonly sessions: () => BriefSource[]
   private readonly write: (request: BriefRequest) => Promise<Brief>
+  private readonly pullRequests: BriefPullRequests | null
   private readonly now: () => number
   private readonly records = new Map<string, BriefRecord>()
   private readonly states = new Map<string, string>()
@@ -69,11 +84,18 @@ export class BriefService {
   private model: string | null = null
   private check: NodeJS.Timeout | null = null
 
-  constructor(options: { profile: string; sessions: () => BriefSource[]; write: (request: BriefRequest) => Promise<Brief>; now?: () => number }) {
+  constructor(options: {
+    profile: string
+    sessions: () => BriefSource[]
+    write: (request: BriefRequest) => Promise<Brief>
+    pullRequests?: BriefPullRequests
+    now?: () => number
+  }) {
     this.directory = join(options.profile, 'briefs')
     this.settingsPath = join(options.profile, 'brief-settings.json')
     this.sessions = options.sessions
     this.write = options.write
+    this.pullRequests = options.pullRequests ?? null
     this.now = options.now ?? Date.now
   }
 
@@ -219,7 +241,12 @@ export class BriefService {
     try {
       const transcript = await source.transcript()
       if (!transcript) throw new Error('The agent has no transcript yet')
-      const brief = await this.write({ digest: transcript.digest, about: { name, agent: source.agent, state: source.state }, model })
+      const pullRequests = this.pullRequests
+      const shown = shownText(transcript.digest)
+      const brief = await this.write({
+        digest: transcript.digest, about: { name, agent: source.agent, state: source.state }, model,
+        ...(pullRequests ? { pullRequests: { linked: await pullRequests.linked(name), report: (url: string) => pullRequests.claim(name, url, shown) } } : {})
+      })
       record = { name, brief, generatedAt: this.now(), model, error: null, mark: transcript.mark, failures: 0, retryAt: null, generating: false }
     } catch (error) {
       // The last brief stays, with the error, and an automatic attempt follows after a backoff.

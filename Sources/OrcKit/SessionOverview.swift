@@ -25,11 +25,15 @@ public struct AgentSummary: Decodable, Equatable {
     /// When the agent entered `state`.
     public let since: Date?
     public let wakes: [Wake]
+    /// The pull requests Orc watches for it.
+    public let pullRequests: [AgentPullRequest]
 
-    public init(name: String, agent: String, state: String, parent: String? = nil, queued: Int = 0, since: Date? = nil, wakes: [Wake] = []) {
+    public init(name: String, agent: String, state: String, parent: String? = nil, queued: Int = 0, since: Date? = nil, wakes: [Wake] = [],
+                pullRequests: [AgentPullRequest] = []) {
         self.name = name; self.agent = agent; self.state = state; self.parent = parent; self.queued = queued; self.since = since; self.wakes = wakes
+        self.pullRequests = pullRequests
     }
-    enum CodingKeys: String, CodingKey { case name, agent, state, parent, queued, since, wakes }
+    enum CodingKeys: String, CodingKey { case name, agent, state, parent, queued, since, wakes, pullRequests }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
@@ -39,6 +43,7 @@ public struct AgentSummary: Decodable, Equatable {
         queued = try container.decodeIfPresent(Int.self, forKey: .queued) ?? 0
         since = try container.decodeIfPresent(Double.self, forKey: .since).map { Date(timeIntervalSince1970: $0 / 1000) }
         wakes = try container.decodeIfPresent([Wake].self, forKey: .wakes) ?? []
+        pullRequests = try container.decodeIfPresent([AgentPullRequest].self, forKey: .pullRequests) ?? []
     }
 
     /// The agents in an `agent.list` result, by name.
@@ -90,7 +95,13 @@ public struct OverviewItem: Identifiable, Equatable {
         return question
     }
 
+    /// Checks of its pull requests that failed again after the agent was told, for its person to decide on.
+    public var handedOver: [(pullRequest: AgentPullRequest, check: String)] {
+        (agent?.pullRequests ?? []).flatMap { pullRequest in pullRequest.handedOver.map { (pullRequest, $0) } }
+    }
+
     public var lane: OverviewLane {
+        if !handedOver.isEmpty { return .needsYou }
         switch activity {
         case .needsAttention, .unread: return .needsYou
         case .active: return .working

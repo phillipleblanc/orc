@@ -18,6 +18,10 @@ struct SettingsView: View {
     /// The model as the runtime has it, once read; a choice that differs is saved.
     @State private var savedStatusModel: String?
     @State private var statusError: String?
+    /// The checks never reported to agents, separated by commas, and as the runtime has them once read.
+    @State private var ignoredChecks = ""
+    @State private var savedIgnoredChecks: String?
+    @State private var pullRequestError: String?
 
     var body: some View {
         Form {
@@ -45,11 +49,21 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if let statusError { Text(statusError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
+            Section("Pull Requests") {
+                TextField("Ignored checks", text: $ignoredChecks, prompt: Text("Attestation"))
+                    .disabled(savedIgnoredChecks == nil)
+                    .onSubmit(saveIgnoredChecks)
+                Text("Writing an agent's status links the pull requests it opened. Once the agent is idle, Orc tells it about their failing checks, unresolved Copilot comments and merge conflicts, each once. These checks, separated by commas, are never reported; * matches anything.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let pullRequestError { Text(pullRequestError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480)
         .onAppear(perform: load)
         .task { await loadStatus() }
+        .task { await loadIgnoredChecks() }
+        .onDisappear(perform: saveIgnoredChecks)
         .onChange(of: statusModel) { _, value in
             guard let saved = savedStatusModel, value != saved else { return }
             Task {
@@ -114,6 +128,31 @@ struct SettingsView: View {
             statusError = nil
         } catch {
             statusError = "Could not read the status model: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadIgnoredChecks() async {
+        do {
+            let checks = try await PullRequestWatch.ignoredChecks().joined(separator: ", ")
+            ignoredChecks = checks
+            savedIgnoredChecks = checks
+        } catch {
+            pullRequestError = "Could not read the ignored checks: \(error.localizedDescription)"
+        }
+    }
+
+    private func saveIgnoredChecks() {
+        guard let saved = savedIgnoredChecks, ignoredChecks != saved else { return }
+        let checks = ignoredChecks.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        Task {
+            do {
+                try await PullRequestWatch.setIgnoredChecks(checks)
+                savedIgnoredChecks = checks.joined(separator: ", ")
+                ignoredChecks = checks.joined(separator: ", ")
+                pullRequestError = nil
+            } catch {
+                pullRequestError = error.localizedDescription
+            }
         }
     }
 

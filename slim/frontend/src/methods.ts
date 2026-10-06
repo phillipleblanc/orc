@@ -13,6 +13,7 @@ import type { Projects } from './projects.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
+import type { PullRequestWatch } from './pull-requests/watch.ts'
 import type { WakeDirectory } from './wakes.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
@@ -25,6 +26,7 @@ export type Runtime = {
   projects: Projects
   agents: AgentDirectory
   wakes: WakeDirectory
+  pullRequests: PullRequestWatch
   history: SessionHistory
   catalog: Catalog
   subscriptions: ConnectionSubscriptions
@@ -49,7 +51,7 @@ function terminalStatus(state: AgentState | undefined): string | null {
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents, wakes, history, catalog, subscriptions } = runtime
+  const { store, projects, agents, wakes, pullRequests, history, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -246,9 +248,14 @@ export function createHandlers(runtime: Runtime): Handlers {
       })
     },
 
-    'agent.list': async () => ({
-      agents: await Promise.all(agents.list().map(async (agent) => ({ ...agent, wakes: await wakes.list(String(agent.name)).catch(() => []) })))
-    }),
+    'agent.list': async () => {
+      const linked = await pullRequests.list()
+      return {
+        agents: await Promise.all(agents.list().map(async (agent) => ({
+          ...agent, wakes: await wakes.list(String(agent.name)).catch(() => []), pullRequests: linked[String(agent.name)] ?? []
+        })))
+      }
+    },
 
     'agent.status': (params) => agents.status(String(params.name)),
 

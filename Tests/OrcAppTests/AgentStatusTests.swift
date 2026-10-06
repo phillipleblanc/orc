@@ -47,6 +47,11 @@ final class AgentStatusTests: XCTestCase {
         let briefs = BriefModel(monitor: false)
         briefs.briefs = ["cayenne-caching-cdc": AgentBrief(name: "cayenne-caching-cdc", brief: content, generatedAt: Date().addingTimeInterval(-240),
                                                            model: "cuda-gpu-dev/qwen-flash-next", error: nil, generating: false)]
+        briefs.pullRequests = ["cayenne-caching-cdc": [
+            AgentPullRequest(repo: "spiceai/spiceai", number: 14785, url: URL(string: "https://github.com/spiceai/spiceai/pull/14785")!,
+                             title: "Route CDC refresh through the ChangeSink", checkedAt: Date(), toldAt: Date().addingTimeInterval(-600), conflict: true,
+                             failing: ["Rust Lint"], ignoredFailing: ["Attestation"], copilot: 1, handedOver: ["Flaky Benchmark"])
+        ]]
         for name in ["cayenne-caching-cdc", "scratch"] {
             let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 360, height: 640))
             effect.material = .hudWindow

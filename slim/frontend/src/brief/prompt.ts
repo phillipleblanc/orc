@@ -31,15 +31,33 @@ const INSTRUCTIONS = `Answer with only this JSON object, no Markdown:
 
 Go by where the log ends; it is newer than the summary. Be concrete: name PRs, files, commands and numbers from the log. Plain text in every field.`
 
-/** The request for a brief: the agent, its state, its summary and its log since. */
-export function briefPrompt(digest: Digest, about: { name: string; agent: string; state: string }): string {
+/** The tool that links a pull request to the agent, so Orc watches it. */
+export const REPORT_PULL_REQUEST = 'report_pull_request'
+
+/**
+ * The request for a brief: the agent, its state, its summary and its log since. With `linked`, the pull requests
+ * already linked to the agent, the model is asked to report the others it is responsible for.
+ */
+export function briefPrompt(digest: Digest, about: { name: string; agent: string; state: string }, linked?: string[]): string {
   const log = digest.items.map((entry) => `${LABELS[entry.role]}: ${entry.text}`).join('\n')
   return [
     `Session "${about.name}", a ${about.agent} agent, is ${about.state} now.`,
     digest.summary ? `<summary>\n${digest.summary}\n</summary>` : digest.firstPrompt ? `<first_request>\n${digest.firstPrompt}\n</first_request>` : '',
     `<log${digest.truncated ? ' note="older entries left out"' : ''}>\n${log || '(nothing since)'}\n</log>`,
+    linked ? `Orc already watches these pull requests for this agent: ${linked.map(pullRequestLink).join(', ') || 'none'}. Call ${REPORT_PULL_REQUEST} only for a pull request that is not in that list and that the summary or log shows this agent opened or pushes commits to; usually there is none, and then you call nothing.` : '',
     INSTRUCTIONS
   ].filter(Boolean).join('\n\n')
+}
+
+/** A pull request's link from `owner/name#number`; models match links in the log better than the short form. */
+function pullRequestLink(key: string): string {
+  const [repo, number] = key.split('#')
+  return `https://github.com/${repo}/pull/${number}`
+}
+
+/** What the model was shown of the agent's work, to check a pull request it reports against. */
+export function shownText(digest: Digest): string {
+  return [digest.summary, digest.firstPrompt, ...digest.items.map((entry) => entry.text)].filter(Boolean).join('\n')
 }
 
 function sentence(value: unknown): string {

@@ -2,14 +2,16 @@ import AppKit
 import SwiftUI
 import OrcKit
 
-/// Agent sessions' status briefs, which the runtime writes from their transcripts; checked every few seconds.
+/// Agent sessions' status briefs, which the runtime writes from their transcripts, and the pull requests it watches for
+/// them; checked every few seconds.
 @MainActor final class BriefModel: ObservableObject {
     @Published var briefs: [String: AgentBrief] = [:]
+    @Published var pullRequests: [String: [AgentPullRequest]] = [:]
     /// Whether briefs have been read from the runtime at least once.
     @Published var loaded = false
     private var monitor: Task<Void, Never>?
 
-    /// Without `monitor`, briefs are only what is assigned to `briefs`.
+    /// Without `monitor`, briefs and pull requests are only what is assigned to them.
     init(monitor: Bool = true) {
         guard monitor else { return }
         self.monitor = Task { [weak self] in
@@ -25,6 +27,9 @@ import OrcKit
         guard let result = try? await LocalRPC.call("brief.list"), let briefs = try? AgentBrief.list(from: result) else { return }
         if briefs != self.briefs { self.briefs = briefs }
         if !loaded { loaded = true }
+        if let result = try? await LocalRPC.call("pr.list"), let pullRequests = try? AgentPullRequest.list(from: result), pullRequests != self.pullRequests {
+            self.pullRequests = pullRequests
+        }
     }
 
     /// Asks the runtime to write a session's brief now.
@@ -167,8 +172,8 @@ struct BriefView: View {
     }
 }
 
-/// The floating panel's content: the session's name and its brief.
-/// The floating panel's content: the session's name and state, an agent's brief, the session's project and its notes.
+/// The floating panel's content: the session's name and state, an agent's brief and pull requests, the session's project
+/// and its notes.
 struct StatusPanelView: View {
     @ObservedObject var model: SessionModel
     @ObservedObject var briefs: BriefModel
@@ -187,6 +192,8 @@ struct StatusPanelView: View {
                         if session.agentIdentity != nil {
                             // Ages tick by the minute.
                             TimelineView(.everyMinute) { _ in BriefView(briefs: briefs, name: name) }
+                            Divider()
+                            PullRequestsSection(name: name, pullRequests: briefs.pullRequests[name] ?? [])
                             Divider()
                         }
                         VStack(alignment: .leading, spacing: 6) {

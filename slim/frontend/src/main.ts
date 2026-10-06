@@ -28,6 +28,7 @@ import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
+import { PullRequestWatch } from './pull-requests/watch.ts'
 import { fetchClaudeUsage } from './usage/claude.ts'
 import { fetchCodexUsage } from './usage/codex.ts'
 import { UsageService, type UsageRefresh } from './usage/service.ts'
@@ -86,13 +87,27 @@ new DurableUpgrades(store, agents, async (session) => {
   if (!ended) throw new Error('its ended session record is missing')
   await startAgain({ store, agents, projects }, ended, name)
 }, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
+// Agents' pull requests, which their briefs' model links to them, watched on GitHub for what the agents must fix.
+const pullRequests = new PullRequestWatch({
+  profile,
+  agents: () => store.list().filter((session) => agents.isAgent(session)).map((session) => ({ name: session.meta.name, dir: session.dir, parent: session.meta.parent })),
+  status: (name) => {
+    const session = store.get(name)
+    const monitor = session && agents.monitor(session)
+    if (!monitor) return null
+    const status = agents.status(name)
+    return { state: String(status.state), since: Number(status.since), queued: Number(status.queued), delivering: status.delivering === true }
+  },
+  send: (name, text) => agents.send(name, text, { from: 'orc', whenIdle: true })
+})
+await pullRequests.start()
 // Status briefs of agent sessions, written by the model chosen in Orc's Settings from the agents' transcripts.
-const briefs = new BriefService({ profile, sessions: briefSources(store, agents), write: writeBrief })
+const briefs = new BriefService({ profile, sessions: briefSources(store, agents), write: (request) => writeBrief(request), pullRequests })
 agents.on('change', (session) => briefs.observe(session.meta.name))
 await briefs.start()
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, history, catalog, subscriptions }
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, pullRequests, history, catalog, subscriptions }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {
@@ -169,6 +184,20 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
     await briefs.configure(model)
     return briefs.settings
   },
+  'pr.list': async (params) => ({ agents: await pullRequests.list(typeof params.name === 'string' ? params.name : undefined) }),
+  'pr.watch': async (params) => ({ message: await rpcError(() => pullRequests.watch(String(params.name ?? ''), String(params.url ?? ''))) }),
+  'pr.unwatch': async (params) => ({ removed: await pullRequests.unwatch(String(params.name ?? ''), String(params.url ?? '')) }),
+  'pr.resolve': async (params) => {
+    if (params.choice !== 'ignore' && params.choice !== 'keep') throw new RpcError('invalid_argument', 'choice must be ignore or keep')
+    await rpcError(() => pullRequests.resolve(String(params.name ?? ''), String(params.url ?? ''), String(params.check ?? ''), params.choice as 'ignore' | 'keep'))
+    return {}
+  },
+  'pr.settings': () => pullRequests.settings,
+  'pr.configure': async (params) => {
+    if (!Array.isArray(params.ignoredChecks)) throw new RpcError('invalid_argument', 'ignoredChecks must be a list of check names')
+    await pullRequests.configure(params.ignoredChecks.map(String))
+    return pullRequests.settings
+  },
   'usage.read': async (params) => {
     const refresh: UsageRefresh = params.refresh === 'force' || params.refresh === 'none' ? params.refresh : 'stale'
     return { providers: await usage.read(refresh) }
@@ -219,6 +248,15 @@ async function shutdown(): Promise<void> {
 }
 process.on('SIGTERM', () => void shutdown())
 process.on('SIGINT', () => void shutdown())
+
+/** Runs a request whose failures are its caller's to fix. */
+async function rpcError<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request()
+  } catch (error) {
+    throw new RpcError('invalid_argument', (error as Error).message)
+  }
+}
 
 /** One frontend per profile. A lock left by a dead process is taken over. */
 async function acquireLock(path: string): Promise<void> {

@@ -162,6 +162,29 @@ import COrcSupport
                 : (try await LocalRPC.call("brief.list")["briefs"] as? [[String: Any]] ?? []).first { $0["name"] as? String == options[0] }
             guard let record else { throw OrcError("\(options[0]) is not a running agent session. Run `orc agent list` for their names.") }
             if json { try emit(record) } else { print(try AgentBrief(record: record).text()) }
+        case "pr":
+            if let action = options.first, action == "watch" || action == "unwatch" {
+                guard options.count == 3 else { throw OrcError("Usage: orc pr \(action) NAME URL [--json]") }
+                let result = try await LocalRPC.call("pr.\(action)", ["name": options[1], "url": options[2]])
+                if json { try emit(result) }
+                else if action == "watch" { print(result["message"] as? String ?? "") }
+                else { print(result["removed"] as? Bool == true ? "\(safe(options[1])) no longer watches \(safe(options[2]))." : "\(safe(options[1])) does not watch \(safe(options[2])).") }
+            } else {
+                guard options.count <= 1, !(options.first?.hasPrefix("--") ?? false) else { throw OrcError("Usage: orc pr [NAME] [--json]") }
+                let result = try await LocalRPC.call("pr.list", options.isEmpty ? [:] : ["name": options[0]])
+                let agents = try AgentPullRequest.list(from: result)
+                if let name = options.first, agents[name] == nil { throw OrcError("\(name) is not a running agent session. Run `orc agent list` for their names.") }
+                if json { try emit(result); return }
+                let watched = agents.filter { !$0.value.isEmpty }.sorted { $0.key < $1.key }
+                if watched.isEmpty { print("No pull requests are watched\(options.first.map { " for \(safe($0))" } ?? "").") }
+                for (name, pullRequests) in watched {
+                    print(safe(name))
+                    for pullRequest in pullRequests {
+                        print("  \(pullRequest.repo)#\(pullRequest.number)\t\(pullRequest.summary)\t\(pullRequest.url.absoluteString)")
+                        for check in pullRequest.handedOver { print("    \(safe(check)) failed again after the agent was told twice; choose in Orc whether to ignore it") }
+                    }
+                }
+            }
         case "close":
             guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc close NAME [--json]") }
             let result = try await LocalRPC.call("terminal.close", ["terminal": options[0]])
@@ -317,6 +340,8 @@ import COrcSupport
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
     orc close NAME [--json]                  End a session; a closed agent session can be reopened
     orc brief NAME [--refresh] [--json]      Where an agent's work stands: goal, progress, now, next
+    orc pr [NAME] [--json]                   Pull requests Orc watches for agents
+    orc pr watch|unwatch NAME URL [--json]   Link a pull request to an agent, or unlink it
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]

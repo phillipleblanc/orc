@@ -39,9 +39,15 @@ final class SessionOverviewViewTests: XCTestCase {
             "coord": AgentSummary(name: "coord", agent: "codex", state: "idle", since: now.addingTimeInterval(-1800),
                                   wakes: [AgentSummary.Wake(kind: "timer", dueAt: now.addingTimeInterval(1200))]),
             "finish-cayenne-policy": AgentSummary(name: "finish-cayenne-policy", agent: "claude", state: "permission", parent: "coord", since: now.addingTimeInterval(-120)),
-            "fix-startup-conflicts": AgentSummary(name: "fix-startup-conflicts", agent: "pi", state: "working", parent: "coord", queued: 1, since: now.addingTimeInterval(-720)),
+            "fix-startup-conflicts": AgentSummary(name: "fix-startup-conflicts", agent: "pi", state: "working", parent: "coord", queued: 1, since: now.addingTimeInterval(-720),
+                                                  pullRequests: [AgentPullRequest(repo: "spiceai/spiceai", number: 14785, url: URL(string: "https://github.com/spiceai/spiceai/pull/14785")!,
+                                                                                  title: "Add a cold-start test", checkedAt: now, failing: ["Rust Lint"], ignoredFailing: ["Attestation"],
+                                                                                  pending: 3, copilot: 2)]),
             "cayenne-caching-cdc": AgentSummary(name: "cayenne-caching-cdc", agent: "pi", state: "idle", since: now.addingTimeInterval(-900)),
-            "upgrades": AgentSummary(name: "upgrades", agent: "durable", state: "idle", since: now.addingTimeInterval(-7200)),
+            "upgrades": AgentSummary(name: "upgrades", agent: "durable", state: "idle", since: now.addingTimeInterval(-7200),
+                                     pullRequests: [AgentPullRequest(repo: "spiceai/spiceai", number: 14788, url: URL(string: "https://github.com/spiceai/spiceai/pull/14788")!,
+                                                                     checkedAt: now, handedOver: ["Flaky Benchmark"]),
+                                                    AgentPullRequest(repo: "spicehq/spiceai", number: 1673, url: URL(string: "https://github.com/spicehq/spiceai/pull/1673")!, checkedAt: now)]),
             "orc": AgentSummary(name: "orc", agent: "claude", state: "working", since: now.addingTimeInterval(-3840))
         ]
         let briefs = BriefModel(monitor: false)

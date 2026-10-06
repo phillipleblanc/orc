@@ -77,4 +77,28 @@ final class SessionOverviewTests: XCTestCase {
         XCTAssertEqual(marked(5).lane, .idle)
         XCTAssertEqual(marked(15).lane, .needsYou)
     }
+
+    func testAnAgentsPullRequestsAreDecodedAndACheckHandedToItsPersonNeedsThem() throws {
+        let agents = try AgentSummary.list(from: ["agents": [
+            ["name": "fixer", "agent": "pi", "state": "working", "queued": 0, "pullRequests": [
+                ["repo": "spiceai/spiceai", "number": 14785, "url": "https://github.com/spiceai/spiceai/pull/14785", "title": "Cold start",
+                 "addedBy": "brief", "checkedAt": 1_800_000_000_000, "error": NSNull(), "toldAt": NSNull(), "conflict": true,
+                 "failing": ["Rust Lint"], "ignoredFailing": ["Attestation"], "pending": 2, "copilot": 3, "handedOver": ["Flaky"]],
+                ["repo": "spicehq/spiceai", "number": 1673, "url": "https://github.com/spicehq/spiceai/pull/1673", "checkedAt": 1_800_000_000_000,
+                 "conflict": false, "failing": [], "ignoredFailing": [], "pending": 1, "copilot": 0, "handedOver": []]]]
+        ]])
+        let pullRequests = try XCTUnwrap(agents["fixer"]?.pullRequests)
+        XCTAssertEqual(pullRequests.map(\.id), ["spiceai/spiceai#14785", "spicehq/spiceai#1673"])
+        XCTAssertEqual(pullRequests[0].checkedAt, now)
+        XCTAssertNil(pullRequests[0].toldAt)
+        XCTAssertEqual(pullRequests[0].summary, "conflict · Rust Lint failed · 3 Copilot comments")
+        XCTAssertEqual(pullRequests[1].summary, "1 check running")
+        XCTAssertEqual(AgentPullRequest(repo: "spiceai/spiceai", number: 14788, url: URL(string: "https://github.com/spiceai/spiceai/pull/14788")!,
+                                        checkedAt: now, ignoredFailing: ["Attestation"]).summary, "checks pass")
+
+        // A working agent with a check handed over still needs its person.
+        let item = OverviewItem(session: session("fixer", agent: "pi"), activity: .active, agent: agents["fixer"], brief: nil)
+        XCTAssertEqual(item.handedOver.map(\.check), ["Flaky"])
+        XCTAssertEqual(item.lane, .needsYou)
+    }
 }

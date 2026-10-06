@@ -62,7 +62,7 @@ export async function startAgain(runtime: Runtime, ended: EndedSession, name = e
     session = await agents.launch({
       agent: meta.agent, name, cwd: meta.cwd, project: project && `id:${project.id}`, parent: meta.parent,
       args: callerArguments(meta.agent, meta.argv), resume: (await agentRecord(meta)).conversation,
-      files: [join(dir, 'queue.json'), join(dir, 'wakes.json')]
+      files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json')]
     })
   } else if (meta.argv.length === 2 && meta.argv[1] === '-l') {
     session = await store.create({
