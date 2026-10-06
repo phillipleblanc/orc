@@ -153,9 +153,12 @@ The sidebar shows each agent's status headline after its agent. **Status** (‚å•‚
 ```sh
 orc brief cayenne-caching-cdc            # The latest status
 orc brief cayenne-caching-cdc --refresh  # Write a new one now and print it
+orc brief --eval                         # Check the status model on sample statuses
 ```
 
-Statuses are kept in the runtime profile under `briefs/`, and the model in `brief-settings.json`.
+Choosing a status model checks it first: Orc asks it for four sample statuses, from transcripts of an agent that opened a pull request, one that pushed to another, one asking you a question, and one at work, and grades each answer by fixed rules (a well-formed status with three next steps, the question noticed, the right pull requests reported and no others). Settings shows what it got wrong, with **Check Again**; `orc brief --eval [PROVIDER/MODEL]` runs the same checks from the terminal.
+
+Statuses are kept in the runtime profile under `briefs/`, the model in `brief-settings.json`, and each model's checks in `brief-evals.json`.
 
 ### Agents' pull requests
 

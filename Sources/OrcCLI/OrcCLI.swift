@@ -154,6 +154,16 @@ import COrcSupport
                 if isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 { try await run(["attach", reopened.handle]) }
             }
         case "brief":
+            if flag("--eval") {
+                guard options.count <= 1, !(options.first?.hasPrefix("--") ?? false) else { throw OrcError("Usage: orc brief --eval [PROVIDER/MODEL] [--json]") }
+                var params: [String: Any] = ["wait": true]
+                if let model = options.first { params["model"] = model }
+                // Each case is a brief or two, which takes a model a minute or more.
+                let result = try await LocalRPC.call("brief.evaluate", params, timeout: 1800)
+                guard let record = result["evaluation"] as? [String: Any] else { throw OrcError("The runtime returned no evaluation.") }
+                if json { try emit(record) } else { print(try BriefEvaluation(record: record).text) }
+                break
+            }
             let refresh = flag("--refresh")
             guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc brief NAME [--refresh] [--json]") }
             // Writing a brief takes a model a minute or more on a long transcript.
@@ -340,6 +350,7 @@ import COrcSupport
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
     orc close NAME [--json]                  End a session; a closed agent session can be reopened
     orc brief NAME [--refresh] [--json]      Where an agent's work stands: goal, progress, now, next
+    orc brief --eval [MODEL] [--json]        Check how well a status model writes statuses (default: the chosen one)
     orc pr [NAME] [--json]                   Pull requests Orc watches for agents
     orc pr watch|unwatch NAME URL [--json]   Link a pull request to an agent, or unlink it
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)

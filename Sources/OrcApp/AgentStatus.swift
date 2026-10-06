@@ -38,18 +38,32 @@ import OrcKit
         briefs[name] = try AgentBrief(record: record)
     }
 
-    /// The model briefs are written with, and the models Pi can use.
-    static func settings() async throws -> (model: String?, models: [(model: String, name: String)]) {
+    /// The model briefs are written with, the models Pi can use, and how the chosen model did on the brief evals.
+    struct Settings {
+        var model: String?
+        var models: [(model: String, name: String)]
+        var evaluation: BriefEvaluation?
+        var evaluating: Bool
+    }
+
+    static func settings() async throws -> Settings {
         let result = try await LocalRPC.call("brief.settings")
         let models = (result["models"] as? [[String: Any]] ?? []).compactMap { entry -> (model: String, name: String)? in
             guard let model = entry["model"] as? String else { return nil }
             return (model, entry["name"] as? String ?? model)
         }
-        return (result["model"] as? String, models)
+        let evaluation = (result["evaluation"] as? [String: Any]).flatMap { try? BriefEvaluation(record: $0) }
+        return Settings(model: result["model"] as? String, models: models, evaluation: evaluation, evaluating: result["evaluating"] as? Bool ?? false)
     }
 
+    /// Chooses the model; the runtime then evaluates a newly chosen one.
     static func configure(model: String?) async throws {
         _ = try await LocalRPC.call("brief.configure", ["model": model ?? NSNull()])
+    }
+
+    /// Starts evaluating the chosen model again.
+    static func evaluate() async throws {
+        _ = try await LocalRPC.call("brief.evaluate")
     }
 }
 

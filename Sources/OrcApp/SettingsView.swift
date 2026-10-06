@@ -18,6 +18,9 @@ struct SettingsView: View {
     /// The model as the runtime has it, once read; a choice that differs is saved.
     @State private var savedStatusModel: String?
     @State private var statusError: String?
+    /// How the chosen status model did on the brief evals, and whether they run now.
+    @State private var evaluation: BriefEvaluation?
+    @State private var evaluating = false
     /// The checks never reported to agents, separated by commas, and as the runtime has them once read.
     @State private var ignoredChecks = ""
     @State private var savedIgnoredChecks: String?
@@ -44,8 +47,15 @@ struct SettingsView: View {
                     ForEach(statusModels, id: \.model) { Text("\($0.name) (\($0.model))").tag($0.model) }
                 }
                 .disabled(savedStatusModel == nil)
+                if !statusModel.isEmpty, statusModel == savedStatusModel {
+                    ModelEvaluationView(evaluation: evaluation?.model == statusModel ? evaluation : nil, evaluating: evaluating) {
+                        Task {
+                            do { try await BriefModel.evaluate(); evaluating = true } catch { statusError = error.localizedDescription }
+                        }
+                    }
+                }
                 Toggle("Show status when returning to an agent", isOn: $showStatusOnReturn)
-                Text("Orc writes where each agent's work stands from its transcript with this model, one of Pi's: after the agent's turns and every 15 minutes while it works, without messaging the agent. Coming back to an agent after 15 minutes away shows its status in a floating panel; ⌥⌘S shows it any time.")
+                Text("Orc writes where each agent's work stands from its transcript with this model, one of Pi's: after the agent's turns and every 15 minutes while it works, without messaging the agent. Coming back to an agent after 15 minutes away shows its status in a floating panel; ⌥⌘S shows it any time. Choosing a model checks it on a few sample statuses and warns when it gets them wrong.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let statusError { Text(statusError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
@@ -62,6 +72,15 @@ struct SettingsView: View {
         .frame(width: 480)
         .onAppear(perform: load)
         .task { await loadStatus() }
+        // While an evaluation runs, its outcome is checked every few seconds.
+        .task(id: evaluating) {
+            while evaluating, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let settings = try? await BriefModel.settings() else { continue }
+                evaluation = settings.evaluation
+                evaluating = settings.evaluating
+            }
+        }
         .task { await loadIgnoredChecks() }
         .onDisappear(perform: saveIgnoredChecks)
         .onChange(of: statusModel) { _, value in
@@ -71,6 +90,10 @@ struct SettingsView: View {
                     try await BriefModel.configure(model: value.isEmpty ? nil : value)
                     savedStatusModel = value
                     statusError = nil
+                    if let settings = try? await BriefModel.settings() {
+                        evaluation = settings.evaluation
+                        evaluating = settings.evaluating
+                    }
                 } catch {
                     statusError = error.localizedDescription
                     statusModel = saved
@@ -125,6 +148,8 @@ struct SettingsView: View {
             }
             savedStatusModel = settings.model ?? ""
             statusModel = settings.model ?? ""
+            evaluation = settings.evaluation
+            evaluating = settings.evaluating
             statusError = nil
         } catch {
             statusError = "Could not read the status model: \(error.localizedDescription)"
@@ -164,5 +189,42 @@ struct SettingsView: View {
         case .durable: "Durable (experimental)"
         case .terminal: "Terminal"
         }
+    }
+}
+
+/// How the chosen status model did on Orc's brief evals: a warning with what it got wrong, or that it passed.
+struct ModelEvaluationView: View {
+    let evaluation: BriefEvaluation?
+    let evaluating: Bool
+    let run: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if evaluating {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking that this model writes statuses well…").foregroundStyle(.secondary)
+                }
+            } else if let evaluation {
+                if evaluation.passed == evaluation.total {
+                    Label("Passed all \(evaluation.total) status checks", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                } else {
+                    Label("Failed \(evaluation.total - evaluation.passed) of \(evaluation.total) status checks. Its statuses may be wrong, and it may link the wrong pull requests or miss them.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    ForEach(evaluation.results.filter { !$0.passed }, id: \.id) { result in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(result.title).fontWeight(.medium)
+                            ForEach(result.failures, id: \.self) { Text("It \($0).").foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+                Button("Check Again", action: run).controlSize(.small)
+            } else {
+                Button("Check This Model", action: run).controlSize(.small)
+            }
+        }
+        .font(.callout)
+        .textSelection(.enabled)
     }
 }

@@ -33,4 +33,21 @@ final class AgentBriefTests: XCTestCase {
         let empty = AgentBrief(name: "fresh", brief: nil, generatedAt: nil, model: nil, error: "the lab is down", generating: false)
         XCTAssertEqual(empty.text(), "fresh\nNo status yet.\nLast attempt failed: the lab is down")
     }
+
+    func testDecodesAModelsEvaluationAndPrintsItForTheCLI() throws {
+        let evaluation = try BriefEvaluation(record: [
+            "model": "lab/small", "ranAt": 1_791_000_000_000, "passed": 1, "total": 2, "results": [
+                ["id": "opened-pull-request", "title": "Reports the pull request the agent opened, not ones it read", "passed": false,
+                 "failures": ["did not report spiceai/spiceai#14785, which the agent is responsible for"], "ms": 12_400],
+                ["id": "working-no-pull-requests", "title": "Describes work in progress and reports no pull requests", "passed": true, "failures": [], "ms": 8_000]
+            ]
+        ])
+        XCTAssertEqual(evaluation.ranAt, Date(timeIntervalSince1970: 1_791_000_000))
+        XCTAssertEqual(evaluation.text, """
+        lab/small: passed 1 of 2 status checks
+        ✗ Reports the pull request the agent opened, not ones it read (12.4s)
+            did not report spiceai/spiceai#14785, which the agent is responsible for
+        ✓ Describes work in progress and reports no pull requests (8.0s)
+        """)
+    }
 }

@@ -74,3 +74,52 @@ public struct AgentBrief: Decodable, Equatable {
         return lines.joined(separator: "\n")
     }
 }
+
+/// How a status model did on Orc's brief evals: fixed cases graded by rules, run when the model is chosen.
+public struct BriefEvaluation: Decodable, Equatable {
+    public struct Result: Decodable, Equatable {
+        public let id: String
+        public let title: String
+        public let passed: Bool
+        /// What the model got wrong.
+        public let failures: [String]
+        public let ms: Double
+
+        public init(id: String, title: String, passed: Bool, failures: [String], ms: Double) {
+            self.id = id; self.title = title; self.passed = passed; self.failures = failures; self.ms = ms
+        }
+    }
+
+    public let model: String
+    public let ranAt: Date
+    public let passed: Int
+    public let total: Int
+    public let results: [Result]
+
+    public init(model: String, ranAt: Date, passed: Int, total: Int, results: [Result]) {
+        self.model = model; self.ranAt = ranAt; self.passed = passed; self.total = total; self.results = results
+    }
+    enum CodingKeys: String, CodingKey { case model, ranAt, passed, total, results }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decode(String.self, forKey: .model)
+        ranAt = Date(timeIntervalSince1970: try container.decode(Double.self, forKey: .ranAt) / 1000)
+        passed = try container.decode(Int.self, forKey: .passed)
+        total = try container.decode(Int.self, forKey: .total)
+        results = try container.decode([Result].self, forKey: .results)
+    }
+
+    public init(record: [String: Any]) throws {
+        self = try JSONDecoder().decode(BriefEvaluation.self, from: JSONSerialization.data(withJSONObject: record))
+    }
+
+    /// The report as plain text, for `orc brief --eval`.
+    public var text: String {
+        var lines = ["\(model): passed \(passed) of \(total) status checks"]
+        for result in results {
+            lines.append("\(result.passed ? "✓" : "✗") \(result.title) (\(String(format: "%.1f", result.ms / 1000))s)")
+            lines += result.failures.map { "    \($0)" }
+        }
+        return lines.joined(separator: "\n")
+    }
+}

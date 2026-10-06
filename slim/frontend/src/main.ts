@@ -10,6 +10,7 @@ import { ChatServer } from './durable/chat-server.ts'
 import { durableSocket } from './durable/paths.ts'
 import { DurableUpgrades } from './durable/upgrades.ts'
 import { loadOrCreateKeypair } from './e2ee.ts'
+import { BriefEvaluations } from './brief/evals.ts'
 import { BriefService } from './brief/service.ts'
 import { briefSources } from './brief/sources.ts'
 import { briefModels, writeBrief } from './brief/writer.ts'
@@ -105,6 +106,8 @@ await pullRequests.start()
 const briefs = new BriefService({ profile, sessions: briefSources(store, agents), write: (request) => writeBrief(request), pullRequests })
 agents.on('change', (session) => briefs.observe(session.meta.name))
 await briefs.start()
+// Evals of a status model, run when one is chosen, so Orc can warn when it cannot write statuses well.
+const evaluations = new BriefEvaluations({ profile, write: (request) => writeBrief(request) })
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
 const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, pullRequests, history, catalog, subscriptions }
@@ -177,12 +180,26 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   },
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
-  'brief.settings': async () => ({ ...briefs.settings, models: await briefModels() }),
+  'brief.settings': async () => {
+    const { model } = briefs.settings
+    return { model, models: await briefModels(), ...(model ? await evaluations.status(model) : { evaluation: null, evaluating: false }) }
+  },
   'brief.configure': async (params) => {
     const model = typeof params.model === 'string' && params.model ? params.model : null
     if (model && !(await briefModels()).some((candidate) => candidate.model === model)) throw new RpcError('invalid_argument', `${model} is not one of Pi's models`)
+    const previous = briefs.settings.model
     await briefs.configure(model)
-    return briefs.settings
+    // A newly chosen model is evaluated; Settings shows the outcome.
+    if (model && model !== previous) void evaluations.run(model).catch(() => {})
+    return { model, ...(model ? await evaluations.status(model) : { evaluation: null, evaluating: false }) }
+  },
+  'brief.evaluate': async (params) => {
+    const model = typeof params.model === 'string' && params.model ? params.model : briefs.settings.model
+    if (!model) throw new RpcError('invalid_argument', 'No status model is chosen. Choose one in Orc’s Settings, or name one.')
+    if (!(await briefModels()).some((candidate) => candidate.model === model)) throw new RpcError('invalid_argument', `${model} is not one of Pi's models`)
+    if (params.wait === true) return { model, evaluation: await evaluations.run(model), evaluating: false }
+    void evaluations.run(model).catch(() => {})
+    return { model, ...(await evaluations.status(model)) }
   },
   'pr.list': async (params) => ({ agents: await pullRequests.list(typeof params.name === 'string' ? params.name : undefined) }),
   'pr.watch': async (params) => ({ message: await rpcError(() => pullRequests.watch(String(params.name ?? ''), String(params.url ?? ''))) }),
