@@ -63,8 +63,10 @@ test('a timer wake is delivered to its agent from wake once due', async (t) => {
   assert.equal(orc.delivered.length, 0)
   await until(async () => orc.delivered.length === 1, 5000, 'the timer to fire')
   assert.deepEqual(orc.delivered, [{ name: 'lead', text: 'check CI', from: 'wake' }])
-  const saved = JSON.parse(await readFile(join(profile, 'sessions/lead/wakes.json'), 'utf8'))
-  assert.deepEqual(saved.map((entry: { message: string }) => entry.message), ['continue'])
+  // The fired wake is removed from the saved list just after its delivery.
+  const saved = async () => JSON.parse(await readFile(join(profile, 'sessions/lead/wakes.json'), 'utf8')).map((entry: { message: string }) => entry.message)
+  await until(async () => (await saved()).length === 1, 2000, 'the fired wake to leave the saved list')
+  assert.deepEqual(await saved(), ['continue'])
 })
 
 test('wakes are for agent sessions and check their conditions when created', async (t) => {
