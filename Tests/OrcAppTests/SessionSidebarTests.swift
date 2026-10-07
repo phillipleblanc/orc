@@ -108,6 +108,10 @@ final class SessionSidebarTests: XCTestCase {
         host.rootView = list()
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertEqual(table.numberOfRows, 3)
+        // The sidebar's own disclosure control on the header expands it again.
+        table.expandItem(try XCTUnwrap(table.item(atRow: 0)))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(collapsed, [])
     }
 
     @MainActor private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {

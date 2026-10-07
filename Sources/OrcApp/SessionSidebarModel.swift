@@ -2,8 +2,8 @@ import Foundation
 import SwiftUI
 import OrcKit
 
-/// Sessions in a section per project; clicking a project's header collapses it. Sessions can be dragged
-/// within their project.
+/// Sessions in a section per project, which collapses with the sidebar's own control on its header. Sessions can be
+/// dragged within their project.
 struct SessionSidebarList<RowContent: View>: View {
     @ObservedObject var organization: SessionSidebarModel
     let sections: [SessionSidebarSection]
@@ -15,55 +15,41 @@ struct SessionSidebarList<RowContent: View>: View {
         let names = Dictionary(grouping: sections, by: \.project.name)
         List(selection: $selection) {
             ForEach(sections) { section in
-                let collapsed = collapsedProjects.contains(section.id)
-                Section {
-                    if !collapsed {
-                        ForEach(section.rows) { row in
-                            rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
-                        }
-                        .onMove { source, destination in
-                            organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
-                        }
+                Section(isExpanded: Binding(get: { !collapsedProjects.contains(section.id) },
+                                            set: { if $0 { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) } })) {
+                    ForEach(section.rows) { row in
+                        rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
+                    }
+                    .onMove { source, destination in
+                        organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
                     }
                 } header: {
                     SessionSidebarHeader(title: (names[section.project.name]?.count ?? 0) > 1
                                              ? "\(section.project.name) · \(section.project.path)" : section.project.name,
-                                         path: section.project.path, count: section.count, collapsed: collapsed) {
-                        if collapsed { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) }
-                    }
+                                         path: section.project.path, count: section.count)
                 }
-                .collapsible(false)
             }
         }
         .listStyle(.sidebar)
     }
 }
 
-/// A project's header: a disclosure chevron, the project and its number of sessions.
+/// A project's header: the project and its number of sessions.
 struct SessionSidebarHeader: View {
     let title: String
     let path: String
     let count: Int
-    let collapsed: Bool
-    let toggle: () -> Void
 
     var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.right").rotationEffect(.degrees(collapsed ? 0 : 90))
-                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.tertiary).frame(width: 12)
-                Text(title).lineLimit(1).truncationMode(.middle)
-                Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
-            }
-            .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            .contentShape(Rectangle())
+        HStack(spacing: 6) {
+            Text(title).lineLimit(1).truncationMode(.middle)
+            Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
+        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
         .help(path)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(count) session\(count == 1 ? "" : "s")")
-        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
-        .accessibilityHint(collapsed ? "Shows this project's sessions" : "Hides this project's sessions")
     }
 }
 
