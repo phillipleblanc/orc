@@ -90,7 +90,16 @@ After the child exits, the holder serves its final output and exit status until 
   xterm's write loop.
 - **Replayed output never answers terminal queries.** Output before the holder's head at attach time
   was already answered by an earlier frontend. Answering it again would type stray replies into the
-  program.
+  program. A session this frontend just created is the exception: its program may have asked something
+  before the frontend attached, and nothing has answered it.
+- **Programs report their status with OSC 7501.** The Program Status Protocol (revision 0.2): reports
+  `ESC ] 7501 ; state=…:id=…:kind=…:progress=…:app=…:title=…:msg=… ST` are validated as the
+  protocol requires and kept per session (`program-status.ts`), in `checkpoint.json` with the screen
+  they belong to; `ESC ] 7501 ; ? ST` is answered with the same sequence. A program exiting or a shell
+  prompt starting (OSC 133 A) drops `working` and `blocked` records, and a full reset (RIS) drops all.
+  `terminal.list` reports a session's records and their most urgent state, and for a session without
+  an agent `terminal.agentStatus` reports that state as the agent's: `blocked` and `error` as
+  `permission`, `done` and `idle` as `idle`. Phones are not sent program status.
 - **Snapshots and output are ordered.** A subscriber receives its snapshot inside the feed, then every
   later output chunk, so nothing is missed or repeated.
 

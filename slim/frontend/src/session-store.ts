@@ -123,7 +123,8 @@ export class SessionStore extends EventEmitter {
       await writeFile(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), { mode: 0o600 })
       for (const file of options.files ?? []) await copyFile(file, join(dir, basename(file))).catch(() => {})
       await this.startHolder(dir, options)
-      const session = await TerminalSession.open(dir, meta, this.sessionOptions())
+      // Its program may already have asked the terminal something; no frontend has answered it yet.
+      const session = await TerminalSession.open(dir, meta, { ...this.sessionOptions(), fresh: true })
       this.track(session)
       return session
     } catch (error) {

@@ -62,7 +62,8 @@ struct SessionOverviewView: View {
         let sessions = model.sessions.filter { session in
             guard !query.isEmpty else { return true }
             let brief = briefs.briefs[session.name]?.brief
-            return [session.name, session.worktreePath, session.agentIdentity ?? "terminal", brief?.headline ?? "", brief?.goal ?? "", brief?.now ?? ""]
+            return [session.name, session.worktreePath, session.agentIdentity ?? session.programStatus?.app ?? "terminal", brief?.headline ?? "", brief?.goal ?? "", brief?.now ?? "",
+                    session.programStatus?.text ?? ""]
                 .contains { $0.lowercased().contains(query) }
         }
         let activities = Dictionary(model.sessions.map { ($0.handle, model.activity(for: $0)) }, uniquingKeysWith: { first, _ in first })
@@ -334,6 +335,8 @@ private struct OverviewRow: View {
                     if item.brief?.generating == true { ProgressView().controlSize(.mini).help("Writing a new status…") }
                 }
                 .padding(.leading, 20)
+            } else if let text = item.session.programStatus?.text {
+                Text(text).font(.caption).foregroundStyle(.secondary).lineLimit(selected ? nil : 1).padding(.leading, 20)
             } else if item.session.agentIdentity != nil {
                 Text(item.brief?.generating == true ? "Writing the first status…" : "No status yet").font(.caption).foregroundStyle(.tertiary).padding(.leading, 20)
             }
@@ -350,7 +353,7 @@ private struct OverviewRow: View {
 
     /// The agent, its state and how long it has been in it, its queue, its next wake, and a project unlike the card's.
     private var detail: String {
-        var parts = [item.session.agentIdentity ?? "terminal"]
+        var parts = [item.session.agentIdentity ?? item.session.programStatus?.app ?? "terminal"]
         let state: String? = switch item.activity {
         case .active: "working"
         case .idle: "idle"

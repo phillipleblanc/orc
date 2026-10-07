@@ -35,6 +35,11 @@ final class AgentStatusTests: XCTestCase {
         let row = SessionSidebarRow(session: session, name: "cdc", activity: .idle, muted: false, headline: "Checkpoint: fix PR1 Clippy",
                                     isChild: false, childrenCollapsed: nil)
         XCTAssertEqual(row.detail, "pi · Checkpoint: fix PR1 Clippy")
+        // A terminal whose program reports its status reads as that program and what it says.
+        var program: Session = try decode(["handle": "sync", "title": "sync", "worktreeId": "w", "worktreePath": "/code", "connected": true, "writable": true])
+        program.programStatus = ProgramStatus(state: "blocked", records: [.init(state: "blocked", kind: "question", app: "rsync", msg: "Overwrite photos?")])
+        XCTAssertEqual(SessionSidebarRow(session: program, name: "sync", activity: .needsAttention, muted: false, isChild: false, childrenCollapsed: nil).detail,
+                       "rsync · Overwrite photos?")
     }
 
     @MainActor func testThePanelShowsTheSessionAndAnAgentsBrief() async throws {
@@ -44,6 +49,10 @@ final class AgentStatusTests: XCTestCase {
             try decode(["handle": name, "title": name, "worktreeId": "w", "worktreePath": "/Users/phillip/code/spiceai-project", "connected": true,
                         "writable": true, "agentIdentity": agent as Any? ?? NSNull()])
         }
+        model.sessions[1].programStatus = ProgramStatus(state: "blocked", records: [
+            .init(state: "working", app: "deploy", msg: "Deploying v2.4.1"),
+            .init(id: "us-east", state: "working", progress: 40, app: "deploy", title: "US East", msg: "Pushing image"),
+            .init(id: "eu-west", state: "blocked", kind: "permission", app: "deploy", title: "EU West", msg: "Approve deploy to eu-west (production)?")])
         let briefs = BriefModel(monitor: false)
         briefs.briefs = ["cayenne-caching-cdc": AgentBrief(name: "cayenne-caching-cdc", brief: content, generatedAt: Date().addingTimeInterval(-240),
                                                            model: "cuda-gpu-dev/qwen-flash-next", error: nil, generating: false)]

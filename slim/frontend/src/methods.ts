@@ -13,6 +13,7 @@ import type { Projects } from './projects.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
+import { overallState, type ProgramState } from './program-status.ts'
 import type { PullRequestWatch } from './pull-requests/watch.ts'
 import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
 import type { WakeDirectory } from './wakes.ts'
@@ -53,6 +54,11 @@ function terminalStatus(state: AgentState | undefined): string | null {
   return state === 'working' ? 'working' : state === 'permission' ? 'permission' : state === 'idle' ? 'idle' : null
 }
 
+/** A program's reported state (OSC 7501) in that vocabulary: blocked and failed programs wait on their person. */
+function programStatus(state: ProgramState | null): string | null {
+  return state === 'working' ? 'working' : state === 'blocked' || state === 'error' ? 'permission' : state === 'done' || state === 'idle' ? 'idle' : null
+}
+
 export function createHandlers(runtime: Runtime): Handlers {
   const { store, projects, agents, wakes, pullRequests, sizes, history, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
@@ -76,6 +82,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       writable: target.connected,
       agentIdentity: target.meta.agent ?? null,
       incarnationId: target.meta.incarnationId,
+      ...(target.programStatus.size ? { programStatus: { state: overallState(target.programStatus.list()), records: target.programStatus.list() } } : {}),
       tabId: target.meta.id,
       leafId: target.meta.id,
       executionHostId: 'local',
@@ -232,6 +239,10 @@ export function createHandlers(runtime: Runtime): Handlers {
       const target = session(params.terminal)
       const monitor = agents.monitor(target)
       const running = Boolean(monitor && monitor.state !== 'ended' && target.connected)
+      if (!running && target.connected && target.programStatus.size) {
+        // A program reporting its status (OSC 7501) stands in for an agent.
+        return { agentStatus: { handle: target.handle, isRunningAgent: true, status: programStatus(overallState(target.programStatus.list())) } }
+      }
       return { agentStatus: { handle: target.handle, isRunningAgent: running, status: running ? terminalStatus(monitor!.effectiveState) : null } }
     },
 

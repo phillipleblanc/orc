@@ -122,5 +122,7 @@ struct SessionSidebarRow: View {
         .padding(.vertical, 3)
     }
 
-    var detail: String { ([session.agentIdentity ?? "terminal"] + [headline].compactMap { $0 }).joined(separator: " · ") }
+    var detail: String {
+        ([session.agentIdentity ?? session.programStatus?.app ?? "terminal"] + [headline ?? session.programStatus?.text].compactMap { $0 }).joined(separator: " · ")
+    }
 }

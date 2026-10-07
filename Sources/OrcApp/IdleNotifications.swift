@@ -73,8 +73,14 @@ import OrcKit
         guard await isAuthorized() else { return }
         let content = UNMutableNotificationContent()
         content.title = session.name
-        content.subtitle = "Agent is idle"
-        content.body = "Finished working in \(URL(fileURLWithPath: session.worktreePath).lastPathComponent)."
+        let project = URL(fileURLWithPath: session.worktreePath).lastPathComponent
+        if session.agentIdentity == nil, let program = session.programStatus {
+            content.subtitle = "\(program.app ?? "Program") is done"
+            content.body = program.lead?.msg ?? program.lead?.title ?? "Finished in \(project)."
+        } else {
+            content.subtitle = "Agent is idle"
+            content.body = "Finished working in \(project)."
+        }
         content.sound = .default
         content.threadIdentifier = "orc-session-" + session.handle
         content.userInfo = ["sessionHandle": session.handle]

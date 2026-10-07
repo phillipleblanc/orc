@@ -12,6 +12,7 @@ import {
   type Terminal
 } from './emulator.ts'
 import { captureState, encodeState, loadState, STATE_FORMAT, type EmulatorState } from './emulator-state.ts'
+import { ProgramStatus, QUERY_REPLY, type ProgramRecord } from './program-status.ts'
 import { TerminalFeed } from './terminal-feed.ts'
 
 export type SessionMeta = {
@@ -32,7 +33,8 @@ export type SessionMeta = {
  * `state` restores exactly into the same xterm build. `serialized` is an approximate screen for any
  * other build, so a frontend upgrade degrades one restore instead of failing it.
  */
-export type Checkpoint = SerializedScreen & { version: 2; offset: number; savedAt: string; state: EmulatorState }
+/** `programStatus` holds the OSC 7501 records as of `offset`. */
+export type Checkpoint = SerializedScreen & { version: 2; offset: number; savedAt: string; state: EmulatorState; programStatus?: ProgramRecord[] }
 
 /** A screen image for a client terminal, positioned at `offset` in the output stream. */
 export type ClientSnapshot = {
@@ -96,6 +98,8 @@ export class TerminalSession extends EventEmitter {
   replayedBytes = 0
   /** How this session's emulator was rebuilt when it was opened. */
   restoredFrom: 'none' | 'state' | 'serialized' = 'none'
+  /** What the programs in this terminal report about themselves (OSC 7501); emits `program-status` when it changes. */
+  readonly programStatus = new ProgramStatus()
   checkpointsDeferred = 0
 
   private constructor(dir: string, meta: SessionMeta, holder: HolderClient, info: HolderInfo, cols: number, rows: number, policy: CheckpointPolicy) {
@@ -112,9 +116,25 @@ export class TerminalSession extends EventEmitter {
     this.feed = new TerminalFeed(term)
     this.serializer = serializer
     term.onTitleChange((title) => this.emit('title', title))
+    term.parser.registerOscHandler(7501, (data) => {
+      // Answered like the emulator's other replies: only for output the program is producing now.
+      if (data === '?') term.input(QUERY_REPLY, false)
+      else if (this.programStatus.apply(data)) this.emit('program-status')
+      return true
+    })
+    // A shell prompt starting (shell integration's OSC 133 A) ends what ran before it; others handle the sequence too.
+    term.parser.registerOscHandler(133, (data) => {
+      if (/^A(;|$)/.test(data) && this.programStatus.ended()) this.emit('program-status')
+      return false
+    })
+    term.parser.registerEscHandler({ final: 'c' }, () => {
+      if (this.programStatus.reset()) this.emit('program-status')
+      return false
+    })
   }
 
-  static async open(dir: string, meta: SessionMeta, options: { policy?: Partial<CheckpointPolicy>; answerQueries?: boolean } = {}): Promise<TerminalSession> {
+  /** `fresh` for a holder this frontend just started: all of its output is live, even what came before attaching. */
+  static async open(dir: string, meta: SessionMeta, options: { policy?: Partial<CheckpointPolicy>; answerQueries?: boolean; fresh?: boolean } = {}): Promise<TerminalSession> {
     const holder = await HolderClient.connect(join(dir, 'sock'))
     try {
       const info = await holder.hello()
@@ -122,6 +142,7 @@ export class TerminalSession extends EventEmitter {
       const session = new TerminalSession(dir, meta, holder, info, checkpoint?.cols ?? info.cols, checkpoint?.rows ?? info.rows,
         { ...DEFAULT_POLICY, ...options.policy })
       if (checkpoint) {
+        session.programStatus.restore(checkpoint.programStatus)
         if (checkpoint.state?.format === STATE_FORMAT) {
           loadState(session.term, checkpoint.state)
           session.restoredFrom = 'state'
@@ -134,12 +155,16 @@ export class TerminalSession extends EventEmitter {
       if (options.answerQueries !== false) {
         session.term.onData((reply) => { if (session.parsingLive) holder.input(reply) })
       }
+      if (options.fresh) {
+        session.liveFrom = 0
+        session.parsingLive = true
+      }
       session.wire(holder)
       // Replay frames can be dispatched before this continuation runs; receive() handles their
       // offsets and any gap, and they stay non-live until liveFrom is known.
       const attached = await holder.attach(session.appliedOffset)
       session.holderInfo = attached
-      session.liveFrom = attached.headOffset
+      session.liveFrom = options.fresh ? 0 : attached.headOffset
       if (session.appliedOffset >= session.liveFrom) session.parsingLive = true
       session.replayedBytes = attached.headOffset - attached.from
       if (attached.exited) session.exit = { exitCode: attached.exitCode, exitSignal: attached.exitSignal, headOffset: attached.headOffset }
@@ -296,7 +321,7 @@ export class TerminalSession extends EventEmitter {
         const captured = await this.barrier(() => {
           const started = performance.now()
           const state = captureState(this.term)
-          const result = state && { state, ...serializeScreen(this.term, this.serializer, FALLBACK_SCROLLBACK_ROWS), offset: this.appliedOffset }
+          const result = state && { state, ...serializeScreen(this.term, this.serializer, FALLBACK_SCROLLBACK_ROWS), offset: this.appliedOffset, programStatus: this.programStatus.toJSON() }
           captureMs = performance.now() - started
           return result
         })
@@ -352,6 +377,7 @@ export class TerminalSession extends EventEmitter {
   private receiveExit(exit: HolderExit): void {
     void this.feed.run(() => {
       this.exit = exit
+      if (this.programStatus.ended()) this.emit('program-status')
       for (const subscriber of this.subscribers) subscriber.exited(exit)
       this.emit('exit', exit)
     })

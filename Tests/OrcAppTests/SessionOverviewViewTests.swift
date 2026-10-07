@@ -33,8 +33,10 @@ final class SessionOverviewViewTests: XCTestCase {
             try decode(["handle": name, "title": name, "worktreeId": "w", "worktreePath": "/Users/phillip/code/spiceai-project", "connected": true,
                         "writable": true, "agentIdentity": agent as Any? ?? NSNull()])
         }
+        // A terminal whose program reports its status with OSC 7501.
+        model.sessions[6].programStatus = ProgramStatus(state: "working", records: [.init(state: "working", progress: 40, app: "rsync", msg: "Syncing photos")])
         model.activities = ["coord": .idle, "finish-cayenne-policy": .needsAttention, "fix-startup-conflicts": .active, "cayenne-caching-cdc": .idle,
-                            "upgrades": .idle, "orc": .active, "scratch": .noAgent]
+                            "upgrades": .idle, "orc": .active, "scratch": .active]
         let agents = OverviewAgents()
         agents.agents = [
             "coord": AgentSummary(name: "coord", agent: "codex", state: "idle", since: now.addingTimeInterval(-1800),

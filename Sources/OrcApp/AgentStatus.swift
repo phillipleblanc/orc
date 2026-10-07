@@ -210,6 +210,10 @@ struct StatusPanelView: View {
                             PullRequestsSection(name: name, pullRequests: briefs.pullRequests[name] ?? [])
                             Divider()
                         }
+                        if let program = session.programStatus {
+                            ProgramStatusSection(status: program)
+                            Divider()
+                        }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Project").font(.caption).foregroundStyle(.secondary)
                             Text(session.worktreePath).font(.callout).textSelection(.enabled)
@@ -326,5 +330,41 @@ struct StatusPanelView: View {
     private final class Panel: NSPanel {
         var onClose: () -> Void = {}
         override func cancelOperation(_ sender: Any?) { onClose() }
+    }
+}
+
+/// What a terminal's programs report about themselves (OSC 7501): each record's state and message, the root first.
+struct ProgramStatusSection: View {
+    let status: ProgramStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Program Status").font(.caption).foregroundStyle(.secondary)
+            ForEach(status.records, id: \.id) { record in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Circle().fill(color(record.state)).frame(width: 7, height: 7)
+                        Text(record.title ?? (record.id.isEmpty ? record.app ?? "Program" : record.id)).font(.callout.weight(.semibold)).lineLimit(1)
+                        Text(record.stateText).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let msg = record.msg { Text(msg).font(.callout).foregroundStyle(.secondary).padding(.leading, 13) }
+                    if record.state == "working", let progress = record.progress {
+                        ProgressView(value: Double(progress), total: 100).controlSize(.small).padding(.leading, 13)
+                    }
+                }
+                .padding(.leading, CGFloat(record.id.isEmpty ? 0 : min(4, record.id.split(separator: "/").count) * 12))
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    private func color(_ state: String) -> Color {
+        switch state {
+        case "working": return .yellow
+        case "blocked": return .orange
+        case "error": return .red
+        case "done": return .green
+        default: return .secondary
+        }
     }
 }

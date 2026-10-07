@@ -49,14 +49,14 @@ struct AgentActivityIndicator: View {
     }
 }
 
-/// A session's status icon: its agent's activity, or a terminal for a session without an agent.
+/// A session's status icon: its agent's activity, or its program's when that reports its status, or a terminal.
 struct SessionStatusIcon: View {
     let session: Session
     let activity: AgentActivity
     var muted = false
 
     var body: some View {
-        if session.agentIdentity != nil {
+        if session.agentIdentity != nil || session.programStatus != nil {
             AgentActivityIndicator(activity: activity, muted: muted)
         } else {
             Image(systemName: "terminal").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)

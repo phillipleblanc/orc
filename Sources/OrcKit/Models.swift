@@ -17,6 +17,8 @@ public struct Session: Codable, Identifiable, Hashable {
     public let writable: Bool
     public let agentIdentity: String?
     public let incarnationId: String?
+    /// What its programs report about themselves (OSC 7501), when they do.
+    public var programStatus: ProgramStatus? = nil
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
 
     /// The runtime's rule for session names, which are also directory and file names.
