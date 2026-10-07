@@ -116,6 +116,14 @@ public struct SessionService {
     public func close(handle: String) async throws {
         _ = try await LocalRPC.call("terminal.close", ["terminal": handle])
     }
+    /// Ends a session and starts it again under its name; an agent continues its conversation. Returns the new handle.
+    public func restart(handle: String) async throws -> String {
+        let result = try await LocalRPC.call("terminal.restart", ["terminal": handle], timeout: 60)
+        guard let restarted = (result["restart"] as? [String: Any])?["handle"] as? String else {
+            throw OrcError("The runtime did not return the restarted session. Check `orc list` before retrying.")
+        }
+        return restarted
+    }
     func validatedName(_ name: String) throws -> String {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Session.isValidName(name) else {

@@ -249,6 +249,17 @@ extension SessionModel {
         await refresh()
         if let session = sessions.first(where: { $0.handle == opened.handle }) { requestAttachment(to: session) }
     }
+    /// Ends the session and starts it again under its name, so its agent starts on its current version and continues
+    /// its conversation. The restarted session stays selected if it was.
+    func restart(_ session: Session) async throws {
+        let handle = try await service.restart(handle: session.handle)
+        let wasSelected = selected == session.id
+        await refresh()
+        if wasSelected, let restarted = sessions.first(where: { $0.handle == handle }) {
+            selected = restarted.id
+            requestAttachment(to: restarted)
+        }
+    }
     /// Ends the session; an agent session joins the recently closed sessions.
     func close(_ session: Session) async throws {
         try await service.close(handle: session.handle)
@@ -291,6 +302,9 @@ struct SessionWindow: View {
     @State private var renamingSession: Session?
     @State private var closingSession: Session?
     @State private var closeError: String?
+    /// A working agent's session waiting on confirmation to restart.
+    @State private var restartingSession: Session?
+    @State private var restartError: String?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
@@ -378,6 +392,16 @@ struct SessionWindow: View {
             Text(session.agentIdentity == nil ? "The terminal and everything running in it stop."
                                               : "The agent stops. You can reopen it from Recently Closed.")
         }
+        .alert("Restart “\(restartingSession?.name ?? "")”?", isPresented: Binding(get: { restartingSession != nil }, set: { if !$0 { restartingSession = nil } }),
+               presenting: restartingSession) { session in
+            Button("Restart Session") { restart(session) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The agent is working. Restarting stops its current turn; it then continues its conversation.")
+        }
+        .alert("Could Not Restart Session", isPresented: Binding(get: { restartError != nil }, set: { if !$0 { restartError = nil } })) {
+            Button("OK") {}
+        } message: { Text(restartError ?? "") }
         .alert("Could Not Close Session", isPresented: Binding(get: { closeError != nil }, set: { if !$0 { closeError = nil } })) {
             Button("OK") {}
         } message: { Text(closeError ?? "") }
@@ -455,8 +479,18 @@ struct SessionWindow: View {
                     model.setMuted(!muted, for: session)
                 }
             }
+            Button("Restart Session", systemImage: "arrow.clockwise") {
+                if model.activity(for: session) == .active { restartingSession = session } else { restart(session) }
+            }
+            .help("End the session and start it again, so its agent starts on its current version and continues its conversation")
             Divider()
             Button("Close Session…", systemImage: "xmark.circle", role: .destructive) { closingSession = session }
+        }
+    }
+    private func restart(_ session: Session) {
+        Task {
+            do { try await model.restart(session) }
+            catch { restartError = "Could not restart \(session.name): \(error.localizedDescription)" }
         }
     }
     /// The selected session's terminal, or a placeholder in its place.

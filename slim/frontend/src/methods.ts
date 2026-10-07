@@ -3,7 +3,7 @@ import type { AgentMonitor, AgentState } from './agent-monitor.ts'
 import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
-import type { SessionHistory } from './history.ts'
+import { restartSession, type SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
 import type { StreamingHandler } from './websocket-server.ts'
 import { rowText } from './emulator.ts'
@@ -220,6 +220,11 @@ export function createHandlers(runtime: Runtime): Handlers {
       const target = session(params.terminal)
       await store.end(target)
       return { close: { handle: target.handle } }
+    },
+
+    'terminal.restart': async (params) => {
+      const restarted = await restartSession({ store, agents, projects }, session(params.terminal))
+      return { restart: { handle: restarted.handle, title: restarted.meta.name } }
     },
 
     'terminal.agentStatus': (params) => {

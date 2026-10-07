@@ -24,7 +24,7 @@ import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { ConversationIndex } from './conversations.ts'
-import { endedSessions, SessionHistory, startAgain } from './history.ts'
+import { restartSession, SessionHistory } from './history.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
@@ -82,13 +82,8 @@ const wakes = new WakeDirectory(store, agents, profile)
 const history = new SessionHistory({ store, agents, projects }, new ConversationIndex(profile))
 const discovered = await store.discover()
 // Durable agents left on older code by an update restart on this frontend's code.
-new DurableUpgrades(store, agents, async (session) => {
-  const name = session.meta.name
-  await store.end(session)
-  const ended = (await endedSessions(store)).find((candidate) => candidate.meta.id === session.meta.id)
-  if (!ended) throw new Error('its ended session record is missing')
-  await startAgain({ store, agents, projects }, ended, name)
-}, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
+new DurableUpgrades(store, agents, async (session) => { await restartSession({ store, agents, projects }, session) },
+  (line) => process.stderr.write(`orc-frontend: ${line}\n`))
 // Agents' pull requests, which their briefs' model links to them, watched on GitHub for what the agents must fix.
 const pullRequests = new PullRequestWatch({
   profile,

@@ -64,7 +64,7 @@ export async function startAgain(runtime: Runtime, ended: EndedSession, name = e
       args: callerArguments(meta.agent, meta.argv), resume: (await agentRecord(meta)).conversation,
       files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json')]
     })
-  } else if (meta.argv.length === 2 && meta.argv[1] === '-l') {
+  } else if (loginShell(meta)) {
     session = await store.create({
       name, cwd: meta.cwd, argv: meta.argv, cols: 120, rows: 40,
       env: sessionEnvironment(await loginEnvironment(), name, { ORC_RUNTIME_DIR: store.profile }),
@@ -75,6 +75,26 @@ export async function startAgain(runtime: Runtime, ended: EndedSession, name = e
   }
   await writeFile(join(dir, 'reopened.json'), JSON.stringify({ reopenedAt: new Date().toISOString(), name }), { mode: 0o600 }).catch(() => {})
   return session
+}
+
+function loginShell(meta: SessionMeta): boolean {
+  return meta.argv.length === 2 && meta.argv[1] === '-l'
+}
+
+/**
+ * Ends a running agent session or login shell and starts it again under its name, as `startAgain` does: the agent's
+ * program is launched anew, so an update to it applies, and it continues its conversation. Another session is left
+ * running, since it could not be started again.
+ */
+export async function restartSession(runtime: Runtime, session: TerminalSession): Promise<TerminalSession> {
+  const { name } = session.meta
+  if (!isAgentMeta(session.meta) && !loginShell(session.meta)) throw new RpcError('invalid_argument', `${name} runs a command Orc cannot start again`)
+  await runtime.store.end(session)
+  const ended = (await endedSessions(runtime.store)).find((candidate) => candidate.meta.id === session.meta.id)
+  if (!ended) throw new Error(`${name}'s ended session record is missing`)
+  const started = await startAgain(runtime, ended, name)
+  if (!started) throw new Error(`${name} could not be started again`)
+  return started
 }
 
 /**
