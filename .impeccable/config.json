@@ -1,0 +1,28 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "slim/frontend/src/chat/durable-2/index.html",
+          "slim/frontend/src/chat/durable-2/style.css"
+        ],
+        "createdAt": "2026-10-07T11:55:51.510Z",
+        "reason": "Agent: animated shimmer on the running tool's label and the Working line, a live-status cue the user asked for, not decorative gradient text"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "slim/frontend/src/chat/durable-1/style.css",
+          "slim/frontend/src/chat/durable-2/style.css"
+        ],
+        "createdAt": "2026-10-07T11:55:51.544Z",
+        "reason": "Agent: the flagged rule is the Markdown blockquote's quote bar, not a card accent"
+      }
+    ]
+  }
+}
