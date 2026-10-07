@@ -1,8 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createConnection } from 'node:net'
-import { extname, join, resolve, sep } from 'node:path'
+import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 
@@ -12,8 +12,8 @@ const VENDOR: Record<string, string> = {
   'marked.js': fileURLToPath(import.meta.resolve('marked')),
   'purify.js': fileURLToPath(import.meta.resolve('dompurify'))
 }
-// The libraries bundled by scripts/build-chat-vendor.mjs, served under `/chat/vendor/diffs/`. Views do without them
-// when they are not built.
+// The libraries bundled by scripts/build-chat-vendor.mjs, served under `/chat/vendor/diffs/`. The Workbench does
+// without them when they are not built.
 const BUNDLE_DIR = fileURLToPath(new URL('../../build/chat-vendor/', import.meta.url))
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -22,11 +22,9 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf'
 }
 
-export type ChatVariant = { id: string; title: string; description: string }
-
 /**
- * Chat views of durable agents, for Orc's web views and a browser on this computer. Serves the views
- * under `/chat/` on 127.0.0.1, and relays `/chat/socket?session=NAME&token=TOKEN` WebSockets to the
+ * The Workbench, the chat view of durable agents, for Orc's web views and a browser on this computer. Serves
+ * it under `/chat/` on 127.0.0.1, and relays `/chat/socket?session=NAME&token=TOKEN` WebSockets to the
  * named agent's worker socket, one JSON message per frame. The token changes with every frontend and
  * is handed out over the owner-only RPC socket.
  */
@@ -67,21 +65,9 @@ export class ChatServer {
     return new Promise((resolveClose) => this.http.close(() => resolveClose()))
   }
 
-  /** The views, from each `chat/durable-*` directory's index.html `<title>` and description. */
-  async variants(): Promise<ChatVariant[]> {
-    const names = (await readdir(CHAT_DIR).catch(() => [] as string[])).filter((name) => /^durable-\d+$/.test(name)).sort((a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]))
-    return Promise.all(names.map(async (id) => {
-      const html = await readFile(join(CHAT_DIR, id, 'index.html'), 'utf8').catch(() => '')
-      return {
-        id,
-        title: /<title>([^<]*)<\/title>/.exec(html)?.[1] ?? id,
-        description: /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? ''
-      }
-    }))
-  }
-
-  url(variant: string, session: string): string {
-    return `http://127.0.0.1:${this.port}/chat/${variant}/?session=${encodeURIComponent(session)}&token=${this.token}`
+  /** The Workbench's address for a durable agent session. */
+  url(session: string): string {
+    return `http://127.0.0.1:${this.port}/chat/workbench/?session=${encodeURIComponent(session)}&token=${this.token}`
   }
 
   private authorized(token: string | null): boolean {

@@ -1,4 +1,4 @@
-// Bundles the browser libraries the chat views load from `/chat/vendor/diffs/` into build/chat-vendor/:
+// Bundles the browser libraries the Workbench loads from `/chat/vendor/diffs/` into build/chat-vendor/:
 // Pierre's code and diff renderers, with each highlighting language in a chunk loaded when first used.
 import { build } from 'esbuild'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -40,4 +40,4 @@ for (const location of [...bundled].sort()) {
   }
 }
 await writeFile(join(output, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n---\n\n'))
-console.log(`Bundled the chat views' libraries into ${output}`)
+console.log(`Bundled the Workbench's libraries into ${output}`)

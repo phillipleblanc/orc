@@ -55,10 +55,10 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   assert.match(screen, /⏺ bash echo via-orc/)
 
   // The chat view gets a snapshot, then every commit, and its submissions reach the conversation.
-  const { variants } = await frontend.rpc('durable.chat', { name: 'dur' })
-  assert.ok(variants.length > 0)
-  const url: string = variants[0].url
-  assert.equal((await fetch(url)).status, 200)
+  const { url } = await frontend.rpc('durable.chat', { name: 'dur' })
+  const page = await fetch(url)
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /<title>Workbench<\/title>/)
   assert.equal((await fetch(new URL('/chat/vendor/marked.js', url))).status, 200)
   assert.equal((await fetch(new URL('/chat/..%2Fdurable%2Fworker.ts', url))).status, 404)
   assert.equal((await fetch(new URL('/chat/vendor/diffs/..%2F..%2Fpackage.json', url))).status, 404)
@@ -95,7 +95,7 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   // The worker outlives a frontend restart; a new frontend serves its chat view again.
   await frontend.kill('SIGKILL')
   frontend = await Frontend.start(profile)
-  const again = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).variants[0].url)
+  const again = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).url)
   t.after(() => again.socket.close())
   await again.request('subscribe')
   await until(async () => again.messages.find((message) => message.type === 'snapshot')?.snapshot.entries.length > 0, 5000, 'the snapshot after a restart')
@@ -108,7 +108,7 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   await frontend.rpc('history.reopen', { entry: closed.entry })
   await frontend.rpc('agent.send', { to: 'dur', text: 'after reopening' })
   assert.equal((await frontend.rpc('agent.wait', { name: 'dur', timeoutMs: 20_000 })).lastAssistantMessage, 'echo: after reopening')
-  const reopened = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).variants[0].url)
+  const reopened = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).url)
   t.after(() => reopened.socket.close())
   await reopened.request('subscribe')
   const history = await until(async () => reopened.messages.find((message) => message.type === 'snapshot'), 5000, 'the reopened snapshot')
@@ -183,7 +183,7 @@ test('a durable agent on older code restarts in place once it is idle, keeping i
   assert.equal((await frontend.rpc('agent.status', { name: 'dur' })).handle, spawned.handle)
   await frontend.rpc('agent.send', { to: 'dur', text: 'after the restart' })
   assert.equal((await frontend.rpc('agent.wait', { name: 'dur', timeoutMs: 20_000 })).lastAssistantMessage, 'echo: after the restart')
-  const chat = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).variants[0].url)
+  const chat = await chatSocket((await frontend.rpc('durable.chat', { name: 'dur' })).url)
   t.after(() => chat.socket.close())
   await chat.request('subscribe')
   const snapshot = await until(async () => chat.messages.find((message) => message.type === 'snapshot'), 5000, 'the snapshot')

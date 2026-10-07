@@ -1,14 +1,11 @@
-// The inspector rail: status, this turn's activity, usage, and the agent's directory and context.
-import { contextTokens, describeTool, escapeHtml, formatCost, formatDuration, formatTokens, totalUsage } from '/chat/shared/format.js'
-import { SPINNER, copyText, h, icon, preciseDuration, prefs, shortPath } from './ui.js'
-
-const TOOL_ICONS = { bash: 'terminal', read: 'read', write: 'write', edit: 'edit' }
+// The inspector rail: status, usage, and the agent's directory and context.
+import { contextTokens, escapeHtml, formatCost, formatDuration, formatTokens, totalUsage } from '/chat/shared/format.js'
+import { SPINNER, copyText, h, prefs, shortPath } from './ui.js'
 
 export class Rail {
-  constructor(agent, { root, onReveal, onNewContext, toast }) {
+  constructor(agent, { root, onNewContext, toast }) {
     this.agent = agent
     this.root = root
-    this.onReveal = onReveal
     this.toast = toast
     this.models = null
     this.signatures = {}
@@ -18,10 +15,6 @@ export class Rail {
       section.open = prefs.get(key, true)
       section.addEventListener('toggle', () => prefs.set(key, section.open ? undefined : false))
     }
-    this.el.activity.addEventListener('click', (event) => {
-      const row = event.target.closest('[data-call]')
-      if (row) this.onReveal(row.dataset.call)
-    })
     this.el.compact.addEventListener('click', () => this.compact())
     this.el.newContext.addEventListener('click', onNewContext)
     this.el.copyCwd.addEventListener('click', () => copyText(this.agent.info?.cwd ?? '').then((copied) => this.toast(copied ? 'Copied the working directory' : 'Could not copy', copied ? 'info' : 'error')))
@@ -57,38 +50,10 @@ export class Rail {
     this.tick(status)
   }
 
-  /** Live timers: the run's elapsed time and running tool calls. */
+  /** The run's elapsed time. */
   tick(status) {
     const timer = status.since ? formatDuration(Date.now() - status.since) : ''
     if (this.el.statusTimer.textContent !== timer) this.el.statusTimer.textContent = timer
-    for (const row of this.el.activity.querySelectorAll('[data-running]')) {
-      const time = formatDuration(Date.now() - Number(row.dataset.running))
-      const cell = row.querySelector('.tl-time')
-      if (cell.textContent !== time) cell.textContent = time
-    }
-  }
-
-  // ─── Activity ──────────────────────────────────────────────────────────
-
-  renderActivity(calls) {
-    const signature = calls.map((call) => `${call.callId}:${call.status}:${call.end ?? ''}:${call.start ?? ''}`).join(',')
-    if (!this.changed('activity', signature)) return
-    this.el.activityCount.textContent = calls.length ? `${calls.length} call${calls.length === 1 ? '' : 's'}` : ''
-    if (!calls.length) {
-      this.el.activity.replaceChildren(h('p', { class: 'sec-empty' }, 'No tool calls this turn'))
-      return
-    }
-    this.el.activity.replaceChildren(h('ol', { class: 'timeline' }, calls.map((call) => {
-      const about = describeTool(call.name, call.args)
-      const running = call.status === 'running'
-      const time = running ? formatDuration(Date.now() - call.start) : call.start && call.end ? preciseDuration(call.end - call.start, formatDuration) : ''
-      return h('li', { class: 'tl-item', 'data-status': call.status },
-        h('button', { type: 'button', class: 'tl-row', 'data-call': call.callId, 'data-running': running && call.start ? String(call.start) : null, title: `${about.verb} ${about.target}` },
-          h('span', { class: 'tl-node', html: running ? SPINNER : icon(TOOL_ICONS[call.name] ?? 'tool') }),
-          h('span', { class: 'tl-verb' }, about.verb),
-          h('code', { class: 'tl-target' }, shortPath(about.target).split('\n')[0]),
-          h('span', { class: 'tl-time' }, time)))
-    })))
   }
 
   // ─── Usage ─────────────────────────────────────────────────────────────

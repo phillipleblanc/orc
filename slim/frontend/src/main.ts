@@ -175,7 +175,7 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   'durable.chat': async (params) => {
     const name = String(params.name ?? '')
     if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
-    return { variants: (await chat.variants()).map((variant) => ({ ...variant, url: chat.url(variant.id, name) })) }
+    return { url: chat.url(name) }
   },
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),

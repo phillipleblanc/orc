@@ -535,63 +535,12 @@ export class Transcript {
     }
   }
 
-  /** Opens whatever folds and groups hold an item, so it is in the document. */
-  openTo(id) {
-    const walk = (rows, path) => {
-      for (const row of rows) {
-        if (row.kind === 'item' && row.item.id === id) return path
-        if (row.kind === 'turn' && row.prompt.id === id) return path
-        const children = row.kind === 'turn' || row.kind === 'fold' ? row.rows : row.kind === 'group' ? row.items.map((item) => ({ kind: 'item', item })) : null
-        const found = children && walk(children, row.kind === 'turn' ? path : [...path, row.id])
-        if (found) return found
-      }
-      return null
-    }
-    const path = walk(this.rows, [])
-    if (!path) return false
-    for (const rowId of path) this.open.add(rowId)
-    this.render()
-    return true
-  }
-
-  /** Scrolls a tool call into view, opens it and highlights it. */
-  reveal(callId) {
-    this.openTo(`t${callId}`)
-    const record = this.tools.get(callId)
-    if (!record?.el.isConnected) return
-    this.releaseAnchor()
-    record.touched = true
-    if (!record.open) this.setExpanded(record, true)
-    record.el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    record.el.classList.remove('flash')
-    void record.el.offsetWidth
-    record.el.classList.add('flash')
-    record.row.focus({ preventScroll: true })
-  }
-
   /** Scrolls a turn's prompt to the top of the view. */
   showTurn(id) {
     const record = this.rowRecords.get(id)
     if (!record) return
     this.releaseAnchor()
     this.scroller.scrollTo({ top: record.el.offsetTop - ANCHOR_GAP, behavior: 'smooth' })
-  }
-
-  /** The tool calls since the latest prompt, settled and live, in order. */
-  activity() {
-    const calls = []
-    for (let index = this.items.length - 1; index >= 0; index--) {
-      const item = this.items[index]
-      if (item.kind === 'user' && !item.steer) break
-      if (item.kind === 'tool') calls.unshift(item)
-    }
-    return calls.map((item) => {
-      const record = this.tools.get(item.callId)
-      // A call in a closed group is not painted, so its record's status can be old.
-      const status = toolState(this.agent, item).status
-      const { start, end } = record ? this.timing(record) : {}
-      return { callId: item.callId, name: item.name, args: item.args, status, start, end }
-    })
   }
 }
 

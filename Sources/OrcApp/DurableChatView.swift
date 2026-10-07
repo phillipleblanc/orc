@@ -2,33 +2,21 @@ import SwiftUI
 import WebKit
 import OrcKit
 
-/// One of the runtime's chat views of a durable agent.
-struct DurableChatVariant: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let description: String
-    let url: URL
-}
-
-/// The chat views the runtime offers for the selected durable agent. Their addresses change when the
-/// runtime restarts, so they are fetched again whenever a view loses its connection.
+/// The address of the selected durable agent's Workbench. It changes when the runtime restarts, so it is
+/// fetched again whenever the Workbench loses its connection.
 @MainActor final class DurableChatModel: ObservableObject {
-    static let terminal = "terminal"
     @Published private(set) var session: String?
-    @Published private(set) var variants: [DurableChatVariant] = []
+    @Published private(set) var url: URL?
     @Published private(set) var error: String?
 
     func load(_ session: String) async {
-        if self.session != session { variants = [] }
+        if self.session != session { url = nil }
         self.session = session
         do {
             let result = try await LocalRPC.call("durable.chat", ["name": session])
             guard self.session == session else { return }
-            variants = (result["variants"] as? [[String: Any]] ?? []).compactMap { value in
-                guard let id = value["id"] as? String, let address = value["url"] as? String, let url = URL(string: address) else { return nil }
-                return DurableChatVariant(id: id, title: value["title"] as? String ?? id, description: value["description"] as? String ?? "", url: url)
-            }
-            error = variants.isEmpty ? "The runtime offers no chat views. Rebuild Orc to bundle them." : nil
+            url = (result["url"] as? String).flatMap(URL.init(string:))
+            error = url == nil ? "The runtime did not give the Workbench's address." : nil
         } catch {
             guard self.session == session else { return }
             self.error = error.localizedDescription
@@ -36,19 +24,18 @@ struct DurableChatVariant: Identifiable, Hashable {
     }
 }
 
-/// A durable agent's chat view, or a note in its place while it cannot load.
+/// A durable agent's Workbench, or a note in its place while it cannot load.
 struct DurableChatHost: View {
     let session: Session
-    let variant: String
     @ObservedObject var model: DurableChatModel
 
     var body: some View {
         Group {
-            if let chosen = model.session == session.name ? (model.variants.first { $0.id == variant } ?? model.variants.first) : nil {
-                DurableChatWebView(url: chosen.url) { Task { await reload() } }
-                    .id(chosen.url)
+            if model.session == session.name, let url = model.url {
+                DurableChatWebView(url: url) { Task { await reload() } }
+                    .id(url)
             } else if let error = model.error, model.session == session.name {
-                ContentUnavailableView("Chat View Unavailable", systemImage: "bubble.left.and.exclamationmark.bubble.right",
+                ContentUnavailableView("Workbench Unavailable", systemImage: "bubble.left.and.exclamationmark.bubble.right",
                                        description: Text(error))
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)

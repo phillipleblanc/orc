@@ -48,10 +48,6 @@ const minimap = new Minimap({
 const rail = new Rail(agent, {
   root: $('rail'),
   toast,
-  onReveal(callId) {
-    if (narrow.matches) setRail(false)
-    transcript.reveal(callId)
-  },
   onNewContext: () => confirmNewContext()
 })
 
@@ -120,7 +116,6 @@ function renderChrome() {
   renderTopbar(status)
   picker.render()
   rail.render(status)
-  rail.renderActivity(transcript.activity())
   renderQueue()
   composer.sync()
   composer.release()
