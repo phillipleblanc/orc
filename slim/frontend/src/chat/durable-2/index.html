@@ -34,6 +34,7 @@
           <span id="banner-text">Connection lost. Reconnecting…</span>
         </div>
 
+        <nav class="minimap" id="minimap" aria-label="Turns" hidden></nav>
         <div class="scroller" id="scroller">
           <div class="doc">
             <div class="placeholder" id="connecting">
@@ -46,7 +47,6 @@
               <p id="empty-detail">Describe a task below. Tool calls, output and diffs appear here as the agent works.</p>
             </div>
             <div class="log" id="log"></div>
-            <div class="log live" id="live"></div>
           </div>
         </div>
 
@@ -132,6 +132,18 @@
             </div>
           </div>
         </details>
+      </aside>
+      <aside class="changes-panel" id="changes" aria-label="Changes" tabindex="-1" hidden>
+        <header class="changes-panel-head">
+          <div class="changes-panel-title">
+            <span class="changes-panel-name" id="changes-title"></span>
+            <span class="changes-panel-counts" id="changes-counts"></span>
+          </div>
+          <button class="icon-btn" id="changes-close" type="button" aria-label="Close changes" title="Close (Esc)">
+            <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.75 4.75 6.5 6.5m0-6.5-6.5 6.5"/></svg>
+          </button>
+        </header>
+        <div class="changes-panel-body" id="changes-body"></div>
       </aside>
       <div class="scrim" id="scrim" hidden></div>
     </div>

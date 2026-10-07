@@ -61,6 +61,7 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   assert.equal((await fetch(url)).status, 200)
   assert.equal((await fetch(new URL('/chat/vendor/marked.js', url))).status, 200)
   assert.equal((await fetch(new URL('/chat/..%2Fdurable%2Fworker.ts', url))).status, 404)
+  assert.equal((await fetch(new URL('/chat/vendor/diffs/..%2F..%2Fpackage.json', url))).status, 404)
   const chat = await chatSocket(url)
   t.after(() => chat.socket.close())
   await chat.request('subscribe')

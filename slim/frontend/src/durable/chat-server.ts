@@ -12,6 +12,9 @@ const VENDOR: Record<string, string> = {
   'marked.js': fileURLToPath(import.meta.resolve('marked')),
   'purify.js': fileURLToPath(import.meta.resolve('dompurify'))
 }
+// The libraries bundled by scripts/build-chat-vendor.mjs, served under `/chat/vendor/diffs/`. Views do without them
+// when they are not built.
+const BUNDLE_DIR = fileURLToPath(new URL('../../build/chat-vendor/', import.meta.url))
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8',
@@ -91,9 +94,11 @@ export class ChatServer {
     const url = new URL(request.url ?? '/', 'http://localhost')
     if (request.method !== 'GET' || !url.pathname.startsWith('/chat/')) return end(response, 404)
     const relative = decodeURIComponent(url.pathname.slice('/chat/'.length))
-    const file = relative.startsWith('vendor/') ? VENDOR[relative.slice('vendor/'.length)]
-      : resolve(CHAT_DIR, relative.endsWith('/') || relative === '' ? `${relative}index.html` : relative)
-    if (!file || (!relative.startsWith('vendor/') && !file.startsWith(CHAT_DIR.endsWith(sep) ? CHAT_DIR : CHAT_DIR + sep))) return end(response, 404)
+    const within = (dir: string, path: string) => path.startsWith(dir.endsWith(sep) ? dir : dir + sep)
+    const bundled = relative.startsWith('vendor/diffs/') ? resolve(BUNDLE_DIR, relative.slice('vendor/diffs/'.length)) : null
+    const file = bundled ?? (relative.startsWith('vendor/') ? VENDOR[relative.slice('vendor/'.length)]
+      : resolve(CHAT_DIR, relative.endsWith('/') || relative === '' ? `${relative}index.html` : relative))
+    if (!file || (bundled ? !within(BUNDLE_DIR, file) : !relative.startsWith('vendor/') && !within(CHAT_DIR, file))) return end(response, 404)
     try {
       const body = await readFile(file)
       response.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' })

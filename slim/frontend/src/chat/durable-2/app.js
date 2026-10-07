@@ -1,7 +1,9 @@
 // Workbench: a durable agent's transcript as a document, beside an inspector rail.
 import { DurableAgent } from '/chat/shared/agent.js'
 import { describeTool, escapeHtml, formatDuration } from '/chat/shared/format.js'
+import { ChangesPanel } from './changes-panel.js'
 import { Composer } from './composer.js'
+import { Minimap } from './minimap.js'
 import { ModelPicker } from './model-picker.js'
 import { Rail } from './rail.js'
 import { Transcript } from './transcript.js'
@@ -17,16 +19,30 @@ const narrow = matchMedia('(max-width: 900px)')
 const agent = new DurableAgent()
 const app = $('app')
 
+const changes = new ChangesPanel(agent, { root: $('changes'), title: $('changes-title'), counts: $('changes-counts'), body: $('changes-body'), close: $('changes-close') })
+changes.onToggle = (open) => {
+  app.dataset.panel = open ? 'changes' : ''
+  if (open) $('changes').focus({ preventScroll: true })
+}
+
 const transcript = new Transcript(agent, {
   scroller: $('scroller'),
   log: $('log'),
-  live: $('live'),
   empty: $('empty'),
   onAway(away) {
     $('jump').hidden = !away
     if (!away) delete $('jump').dataset.unread
   },
-  onUnread: () => { $('jump').dataset.unread = '' }
+  onUnread: () => { $('jump').dataset.unread = '' },
+  onOpenChanges: (row, turn) => changes.open(row, turn),
+  onTurns: (turns) => minimap.render(turns)
+})
+
+const minimap = new Minimap({
+  root: $('minimap'),
+  scroller: $('scroller'),
+  elementOf: (id) => transcript.rowRecords.get(id)?.el,
+  onSelect: (id) => transcript.showTurn(id)
 })
 
 const rail = new Rail(agent, {
@@ -280,6 +296,10 @@ $('new-context').addEventListener('close', () => {
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
   if ($('new-context').open) return
+  if (changes.isOpen) {
+    changes.close()
+    return
+  }
   if (picker.isOpen) {
     picker.close()
     $('model-button').focus()

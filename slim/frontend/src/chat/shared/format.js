@@ -68,26 +68,36 @@ export function diffHtml(diff) {
 
 /**
  * The transcript as display items, in order: `user` (text, from, timestamp), `thinking`, `text`, `tool` (callId,
- * name, args, result entry), and markers `compaction` and `reset`.
+ * name, args, result entry), and markers `compaction` and `reset`. Each has `at`, its message's time; the last item of
+ * an answer that ended its run has `ends` (an `end` item when the answer showed nothing), and a message the running
+ * agent was sent has `steer`.
  */
 export function transcriptItems(agent) {
   const items = []
   for (const entry of agent.entries) {
     const message = entry.model?.[0]
+    const at = message?.timestamp ?? null
     switch (entry.kind) {
       case 'pi.user':
-        items.push({ kind: 'user', id: `u${entry.id}`, timestamp: message?.timestamp ?? null, ...splitSender(textOf(message)) })
+        // A message sent while the agent worked is appended by its run.
+        items.push({ kind: 'user', id: `u${entry.id}`, timestamp: at, at, steer: Boolean(entry.byTaskId), ...splitSender(textOf(message)) })
         break
-      case 'pi.assistant':
-        items.push(...blockItems(agent, message, `a${entry.id}`))
-        if (message?.stopReason === 'error' && message.errorMessage) items.push({ kind: 'error', id: `e${entry.id}`, text: message.errorMessage })
-        if (message?.stopReason === 'aborted') items.push({ kind: 'notice', id: `x${entry.id}`, text: 'Stopped' })
+      case 'pi.assistant': {
+        const answer = blockItems(agent, message, `a${entry.id}`)
+        if (message?.stopReason === 'error' && message.errorMessage) answer.push({ kind: 'error', id: `e${entry.id}`, text: message.errorMessage, at })
+        if (message?.stopReason === 'aborted') answer.push({ kind: 'notice', id: `x${entry.id}`, text: 'Stopped', at })
+        if (message?.stopReason && message.stopReason !== 'toolUse') {
+          if (!answer.length) answer.push({ kind: 'end', id: `z${entry.id}`, at })
+          answer.at(-1).ends = true
+        }
+        items.push(...answer)
         break
+      }
       case 'pi.compaction':
-        items.push({ kind: 'compaction', id: `c${entry.id}`, text: textOf(message) })
+        items.push({ kind: 'compaction', id: `c${entry.id}`, text: textOf(message), at })
         break
       case 'pi.reset':
-        items.push({ kind: 'reset', id: `r${entry.id}`, text: textOf(message) })
+        items.push({ kind: 'reset', id: `r${entry.id}`, text: textOf(message), at })
         break
     }
   }
@@ -100,18 +110,19 @@ export function liveItems(agent) {
   for (const [callId, tool] of agent.tools) {
     if (tool.status === 'done' || items.some((item) => item.callId === callId)) continue
     if (agent.entries.some((entry) => entry.model?.[0]?.content?.some?.((block) => block.type === 'toolCall' && block.id === callId))) continue
-    items.push({ kind: 'tool', id: `t${callId}`, callId, name: tool.name, args: tool.args ?? {}, result: null })
+    items.push({ kind: 'tool', id: `t${callId}`, callId, name: tool.name, args: tool.args ?? {}, result: null, at: tool.startedAt ?? null })
   }
   return items
 }
 
 function blockItems(agent, message, prefix) {
   const items = []
+  const at = message?.timestamp ?? null
   ;(message?.content ?? []).forEach((block, index) => {
     if (!block) return
-    if (block.type === 'thinking' && block.thinking?.trim()) items.push({ kind: 'thinking', id: `${prefix}-${index}`, text: block.thinking, redacted: block.redacted })
-    else if (block.type === 'text' && block.text) items.push({ kind: 'text', id: `${prefix}-${index}`, text: block.text })
-    else if (block.type === 'toolCall') items.push({ kind: 'tool', id: `t${block.id}`, callId: block.id, name: block.name, args: block.arguments ?? {}, result: agent.resultFor(block.id) ?? null })
+    if (block.type === 'thinking' && block.thinking?.trim()) items.push({ kind: 'thinking', id: `${prefix}-${index}`, text: block.thinking, redacted: block.redacted, at })
+    else if (block.type === 'text' && block.text) items.push({ kind: 'text', id: `${prefix}-${index}`, text: block.text, at })
+    else if (block.type === 'toolCall') items.push({ kind: 'tool', id: `t${block.id}`, callId: block.id, name: block.name, args: block.arguments ?? {}, result: agent.resultFor(block.id) ?? null, at })
   })
   return items
 }

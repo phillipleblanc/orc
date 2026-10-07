@@ -208,8 +208,12 @@ The worker serves the conversation on `<profile>/durable/<id>.sock` as newline-d
 top of `worker.ts`): a snapshot followed by pi-durable's agent events, and `submit`, `abort`,
 `withdraw`, `compact`, `reset`, `configure` and `models`. The frontend serves chat views of durable
 agents on `127.0.0.1`, on a port chosen at startup. Each `src/chat/durable-N/` directory is one view,
-listed by its `<title>` and description; `src/chat/shared/` holds their client and formatting, and
-`/chat/vendor/` serves `marked` and DOMPurify. `/chat/socket?session=NAME&token=TOKEN` relays a
+listed by its `<title>` and description; `src/chat/shared/` holds their client, formatting and the
+turn model (`timeline.js`: a finished turn's work folded behind one row, tool calls grouped into
+sentences, the files each turn changed). `/chat/vendor/` serves `marked` and DOMPurify, and
+`/chat/vendor/diffs/` Pierre's code and diff renderers once `node scripts/build-chat-vendor.mjs` has
+bundled them into `build/chat-vendor/` (Orc's build does); without the bundle, views show code and
+diffs plainly. `/chat/socket?session=NAME&token=TOKEN` relays a
 WebSocket to the agent's worker socket; the token changes with every frontend. `durable.chat`, served
 only on the owner-only RPC socket, returns each view's URL for a session. Orc.app shows the chosen view
 in place of the terminal.
@@ -317,6 +321,7 @@ Workspace creation, files, notifications, relay connections and floating workspa
 ```sh
 (cd holder && swift build -c release)
 cd frontend && npm ci
+node scripts/build-chat-vendor.mjs
 npm run typecheck
 npm test
 ```

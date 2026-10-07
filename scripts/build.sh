@@ -18,6 +18,8 @@ bash scripts/bootstrap-node.sh "${ORC_BOOTSTRAP_FLAGS[@]}"
 bash scripts/build-icon.sh
 npm --prefix WebMarkdown ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
 npm --prefix WebMarkdown run build
+npm --prefix slim/frontend ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
+node slim/frontend/scripts/build-chat-vendor.mjs
 swift build -c release
 swift build -c release --package-path slim/holder
 ORC_BIN="$(swift build -c release --show-bin-path)"
@@ -49,6 +51,7 @@ cp "$ORC_HOLDER_BIN/orc-holder" "$ORC_RUNTIME/orc-holder"
 cp slim/orc-runtime "$ORC_RUNTIME/orc-runtime"
 cp slim/frontend/package.json slim/frontend/package-lock.json "$ORC_RUNTIME/frontend/"
 rsync -a slim/frontend/src/ "$ORC_RUNTIME/frontend/src/"
+rsync -a --delete slim/frontend/build/ "$ORC_RUNTIME/frontend/build/"
 npm --prefix "$ORC_RUNTIME/frontend" ci --omit=dev --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
 codesign --force --sign - "$ORC_RUNTIME/orc-holder"
 codesign --verify --strict "$ORC_RUNTIME/node"
