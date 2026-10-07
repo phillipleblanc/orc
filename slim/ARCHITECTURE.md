@@ -204,7 +204,7 @@ sequenceDiagram
     P->>F: terminal.send(text, enter)
     F->>H: input: text, then Enter 500 ms later
     P->>F: terminal.unsubscribe
-    Note over F,H: 300 ms after the last phone leaves, the earlier size returns
+    Note over F,H: desktop sizes wait while a phone views; 300 ms after the last phone leaves, the latest desktop size returns
 ```
 
 A mobile device token reaches only the methods the Orca app uses. The app's chat view, served to phones
@@ -271,4 +271,5 @@ flowchart TB
 | A message cannot be confirmed within 20 s | The next queued message may be delivered; the agent reports an unconfirmed delivery. |
 | An agent was started without Orc's hooks | It reports no agent state. |
 | The frontend restarts while a phone is connected | The phone reconnects to the same port and resubscribes; its tab snapshots start a new publication epoch. |
-| A phone stops viewing a terminal | The PTY takes the next viewing phone's size, or its size from before the first phone. A resize from elsewhere in the meantime stands. |
+| A phone stops viewing a terminal | The PTY takes the next viewing phone's size, or the latest size a desktop asked for while phones viewed it, or its size from before the first phone. |
+| A desktop resizes while a phone views a terminal | The phone's size stays; the desktop's applies once the last phone leaves. |

@@ -14,6 +14,7 @@ import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
 import type { PullRequestWatch } from './pull-requests/watch.ts'
+import type { TerminalSizes } from './terminal-sizes.ts'
 import type { WakeDirectory } from './wakes.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
@@ -27,6 +28,8 @@ export type Runtime = {
   agents: AgentDirectory
   wakes: WakeDirectory
   pullRequests: PullRequestWatch
+  /** Who sizes each session's PTY: phones viewing it ahead of desktops. */
+  sizes: TerminalSizes
   history: SessionHistory
   catalog: Catalog
   subscriptions: ConnectionSubscriptions
@@ -51,7 +54,7 @@ function terminalStatus(state: AgentState | undefined): string | null {
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents, wakes, pullRequests, history, catalog, subscriptions } = runtime
+  const { store, projects, agents, wakes, pullRequests, sizes, history, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -199,7 +202,10 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'terminal.send': async (params) => {
       const target = session(params.terminal)
-      if (params.claimViewport && params.viewport) await target.resize(Number(params.viewport.cols), Number(params.viewport.rows))
+      if (params.claimViewport && params.viewport) {
+        const size = { cols: Number(params.viewport.cols), rows: Number(params.viewport.rows) }
+        await (params.client?.type === 'mobile' ? target.resize(size.cols, size.rows) : sizes.desktopClaim(target, size, 'desktop typing'))
+      }
       const text = typeof params.text === 'string' ? params.text : ''
       if (!target.connected) return { send: { handle: target.handle, accepted: false, bytesWritten: 0 } }
       if (text) target.input(text)
@@ -300,7 +306,7 @@ export function createHandlers(runtime: Runtime): Handlers {
     'slim.stats': () => ({ checkpoints: checkpointSamples }),
 
     'slim.resize': async (params) => {
-      await session(params.terminal).resize(Number(params.cols), Number(params.rows))
+      await sizes.desktopClaim(session(params.terminal), { cols: Number(params.cols), rows: Number(params.rows) }, 'slim.resize')
       return {}
     },
 

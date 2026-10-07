@@ -1,5 +1,6 @@
 import type { SessionStore } from './session-store.ts'
 import type { Subscriber, TerminalSession } from './terminal-session.ts'
+import type { TerminalSizes } from './terminal-sizes.ts'
 import type { StreamingHandler } from './websocket-server.ts'
 import { encodeFrame, jsonPayload, Opcode, textPayloads, type TerminalFrame } from './terminal-frames.ts'
 
@@ -12,7 +13,7 @@ type Stream = { session: TerminalSession; subscriber: Subscriber; stopFrames: ()
  * binary Subscribe frame on stream 0; each subscription then receives a snapshot followed by its
  * output, and can claim the PTY size, request a snapshot with scrollback, send input, or unsubscribe.
  */
-export function terminalMultiplex(store: SessionStore): StreamingHandler {
+export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): StreamingHandler {
   return (_params, context, emit) => new Promise<void>((resolve) => {
     const streams = new Map<number, Stream>()
     const send = (opcode: number, streamId: number, seq: number, payload?: Uint8Array) => context.sendBinary(encodeFrame(opcode, streamId, seq, payload))
@@ -65,7 +66,7 @@ export function terminalMultiplex(store: SessionStore): StreamingHandler {
             break
           case Opcode.ClaimViewport: {
             const size = parseSize(slot.payload)
-            if (size) void stream.session.resize(size.cols, size.rows).catch(() => {})
+            if (size) void sizes.desktopClaim(stream.session, size, 'the desktop terminal').catch(() => {})
             break
           }
           case Opcode.SnapshotRequest: {

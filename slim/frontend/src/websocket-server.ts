@@ -30,6 +30,8 @@ export type WebSocketOptions = {
   /** Methods served to mobile-scope devices only; each must also be in `mobileMethods`. */
   mobileHandlers: Handlers
   mobileStreaming: Record<string, StreamingHandler>
+  /** A line for the runtime's log, for each request a phone makes about a terminal's view. */
+  log?: (line: string) => void
 }
 
 const HANDSHAKE_TIMEOUT_MS = 10_000
@@ -152,6 +154,7 @@ export class WebSocketRpcServer {
       const mobile = device.scope === 'mobile'
       if (mobile && !this.options.mobileMethods.has(request.method)) throw new RpcError('forbidden', `${request.method} is not available to mobile devices`)
       const params = (request.params ?? {}) as Record<string, any>
+      if (mobile && request.method.startsWith('terminal.') && !['terminal.send', 'terminal.list'].includes(request.method)) this.options.log?.(phoneRequest(request.method, params))
       const streaming = this.options.streaming[request.method] ?? (mobile ? this.options.mobileStreaming[request.method] : undefined)
       if (streaming) {
         await streaming(params, context(), (event) => sendJSON({ id, ok: true, streaming: true, result: event, _meta: meta }))
@@ -169,6 +172,15 @@ export class WebSocketRpcServer {
       sendJSON({ id, ok: false, error: { code, message: (error as Error).message }, _meta: meta })
     }
   }
+}
+
+/** A phone's terminal request, without its client id, which may be its device token. */
+function phoneRequest(method: string, params: Record<string, any>): string {
+  const viewport = params.viewport && typeof params.viewport === 'object' ? ` viewport ${params.viewport.cols}x${params.viewport.rows}` : ''
+  return [`phone ${method} ${String(params.terminal ?? params.subscriptionId ?? '')}`, viewport,
+    typeof params.mode === 'string' ? ` mode ${params.mode}` : '', params.client?.type ? ` client ${params.client.type}` : '',
+    params.capabilities?.mobileInputLeaseOnly ? ' input lease only' : '', params.claim === true ? ' claim' : '',
+    params.requestId !== undefined ? ' by request id' : ''].join('')
 }
 
 function parseJSON(bytes: Buffer): Record<string, any> | null {

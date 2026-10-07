@@ -20,6 +20,7 @@ import { createHandlers, createSessionStreams } from './methods.ts'
 import { MOBILE_METHODS } from './mobile-methods.ts'
 import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
+import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { ConversationIndex } from './conversations.ts'
@@ -110,7 +111,9 @@ await briefs.start()
 const evaluations = new BriefEvaluations({ profile, write: (request) => writeBrief(request) })
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, pullRequests, history, catalog, subscriptions }
+const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
+const sizes = new TerminalSizes(log)
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, pullRequests, sizes, history, catalog, subscriptions }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {
@@ -120,11 +123,11 @@ const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) 
   }
   return null
 })
-const mobileTerminal = mobileTerminalMethods(store, subscriptions)
+const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
 const clientEvents = clientEventMethods(catalog, subscriptions)
 const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
 const streaming = {
-  'terminal.multiplex': terminalMultiplex(store),
+  'terminal.multiplex': terminalMultiplex(store, sizes),
   ...createSessionStreams(runtime),
   ...mobileTerminal.streaming,
   ...clientEvents.streaming
@@ -134,7 +137,8 @@ const websocket = new WebSocketRpcServer({
   mobileMethods: MOBILE_METHODS,
   // Only the Orca mobile app has a chat view.
   mobileHandlers: nativeChat.handlers,
-  mobileStreaming: nativeChat.streaming
+  mobileStreaming: nativeChat.streaming,
+  log
 })
 try {
   await websocket.listen()

@@ -298,8 +298,9 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
   `working`, `permission` and `idle` map to `working`, `blocked` and `done`. Pi reports agent type
   `omp`, the transcript format the app can render.
 - **Terminal view:** `terminal.subscribe` with a mobile viewport resizes the PTY to it (20–240 columns,
-  8–120 rows). The most recent phone's size applies; when the last phone leaves, the size from before
-  the first phone returns after 300 ms, unless something else resized the PTY. Output frames end on
+  8–120 rows). A phone viewing a session wins over desktops: the most recent phone's size applies, and
+  a desktop's size (its window resizing, or its typing claiming the size) waits. 300 ms after the last
+  phone leaves, the latest desktop size returns, or the size from before the first phone. Output frames end on
   UTF-8 character boundaries because the app decodes each frame on its own.
 - **Chat view:** `nativeChat.*` decodes Claude, Codex and Pi transcripts into Orca's message shape
   and follows the file as it grows. Text blocks are clipped to 64,000 characters and tool bodies to

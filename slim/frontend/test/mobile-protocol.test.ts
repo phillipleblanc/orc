@@ -187,7 +187,7 @@ test('the Orca mobile app sees workspaces, tabs and phone-fitted terminals, and 
   assert.ok(tabs.envelopes.every((envelope) => envelope.streaming === true))
 })
 
-test('the PTY follows the phones viewing it, and a desktop resize is not undone', async (t) => {
+test('the PTY follows the phones viewing it ahead of the desktop, whose size returns when they leave', async (t) => {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))
   const frontend = await Frontend.start(profile)
@@ -210,10 +210,11 @@ test('the PTY follows the phones viewing it, and a desktop resize is not undone'
   await sleep(600)
   assert.equal((await size()).cols, 40)
 
-  // The desktop resizes while a phone watches; the phone leaving does not undo it.
+  // The desktop asks for its size while a phone watches: the phone's stays, and the desktop's applies once it leaves.
   await rpc('slim.resize', { terminal: terminal.handle, cols: 120, rows: 30 })
-  await until(async () => (await size()).cols === 120, 5000, 'the desktop resize')
+  await sleep(300)
+  assert.deepEqual([(await size()).cols, (await size()).rows], [40, 20])
   phones[0].close()
-  await sleep(600)
-  assert.deepEqual([(await size()).cols, (await size()).rows], [120, 30])
+  await until(async () => (await size()).cols === 120, 5000, 'the desktop size after the phone left')
+  assert.equal((await size()).rows, 30)
 })
