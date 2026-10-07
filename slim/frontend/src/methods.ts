@@ -14,7 +14,7 @@ import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
 import type { PullRequestWatch } from './pull-requests/watch.ts'
-import type { TerminalSizes } from './terminal-sizes.ts'
+import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
 import type { WakeDirectory } from './wakes.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
@@ -157,8 +157,6 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'session.tabs.activate': () => ({}),
 
-    'terminal.setDisplayMode': () => ({}),
-
     'orchestration.workerTerminalUserInput': () => ({ changed: 0 }),
 
     'worktree.list': () => {
@@ -200,8 +198,10 @@ export function createHandlers(runtime: Runtime): Handlers {
       return { rename: { handle: target.handle, title: target.meta.name } }
     },
 
-    'terminal.send': async (params) => {
+    'terminal.send': async (params, context) => {
       const target = session(params.terminal)
+      // Typing from a phone that views the session at the desktop's size fits it to the phone again.
+      if (params.client?.type === 'mobile' && params.client.id) await sizes.phoneTyped(target, phoneViewer(context.connectionId, target.handle, String(params.client.id)))
       if (params.claimViewport && params.viewport) {
         const size = { cols: Number(params.viewport.cols), rows: Number(params.viewport.rows) }
         await (params.client?.type === 'mobile' ? target.resize(size.cols, size.rows) : sizes.desktopClaim(target, size, 'desktop typing'))

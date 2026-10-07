@@ -300,7 +300,10 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
 - **Terminal view:** `terminal.subscribe` with a mobile viewport resizes the PTY to it (20–240 columns,
   8–120 rows). A phone viewing a session wins over desktops: the most recent phone's size applies, and
   a desktop's size (its window resizing, or its typing claiming the size) waits. 300 ms after the last
-  phone leaves, the latest desktop size returns, or the size from before the first phone. Output frames end on
+  phone leaves, the latest desktop size returns, or the size from before the first phone. The terminal
+  menu's **Switch to Desktop** (`terminal.setDisplayMode`) shows the session at the desktop's size, which
+  desktops then set freely, until **Switch to Phone**, typing from the phone, or the last phone leaving.
+  Output frames end on
   UTF-8 character boundaries because the app decodes each frame on its own.
 - **Chat view:** `nativeChat.*` decodes Claude, Codex and Pi transcripts into Orca's message shape
   and follows the file as it grows. Text blocks are clipped to 64,000 characters and tool bodies to

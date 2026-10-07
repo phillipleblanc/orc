@@ -218,3 +218,45 @@ test('the PTY follows the phones viewing it ahead of the desktop, whose size ret
   await until(async () => (await size()).cols === 120, 5000, 'the desktop size after the phone left')
   assert.equal((await size()).rows, 30)
 })
+
+test('a phone can switch the session it views to the desktop size until it switches back, types or leaves', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const rpc = frontend.rpc.bind(frontend)
+  const { terminal } = await rpc('terminal.create', { name: 'modes', argv: ['/bin/sh', '-c', 'exec cat'], cols: 100, rows: 40 })
+  const size = async () => { const { info } = await rpc('slim.screen', { terminal: terminal.handle }); return `${info.cols}x${info.rows}` }
+  const phone = await connectWithGrant(rpc, 'mobile')
+  t.after(() => phone.close())
+  const modes: string[] = []
+  phone.onFrame = (frame) => {
+    if (frame.opcode === Opcode.SnapshotStart || frame.opcode === Opcode.Resized) modes.push(JSON.parse(frame.payload.toString()).displayMode)
+  }
+  const client = { id: 'device-token', type: 'mobile' }
+  const subscribe = () => phone.stream('terminal.subscribe', { terminal: terminal.handle, client, viewport: { cols: 45, rows: 20 }, capabilities: { terminalBinaryStream: 1 } })
+  await subscribe().next((event) => event.type === 'subscribed')
+  await until(async () => (await size()) === '45x20', 5000, 'the phone size')
+
+  // Switch to Desktop: the desktop's size returns and the phone learns the mode; the desktop resizes it freely.
+  assert.deepEqual((await phone.request('terminal.setDisplayMode', { terminal: terminal.handle, mode: 'desktop', client })).mode, 'desktop')
+  await until(async () => (await size()) === '100x40', 5000, 'the desktop size')
+  await until(async () => modes.at(-1) === 'desktop', 5000, 'the desktop mode on the stream')
+  await rpc('slim.resize', { terminal: terminal.handle, cols: 110, rows: 35 })
+  await until(async () => (await size()) === '110x35', 5000, 'a desktop resize at the desktop size')
+
+  // Typing from the phone fits the session to it again.
+  await phone.request('terminal.send', { terminal: terminal.handle, text: 'x', enter: false, client })
+  await until(async () => (await size()) === '45x20', 5000, 'the phone size after typing')
+  await until(async () => modes.at(-1) === 'auto', 5000, 'the phone mode on the stream')
+
+  // At the desktop size when the phone leaves, the session stays there, and the next view fits the phone.
+  await phone.request('terminal.setDisplayMode', { terminal: terminal.handle, mode: 'desktop', client })
+  await until(async () => (await size()) === '110x35', 5000, 'the desktop size again')
+  await phone.request('terminal.unsubscribe', { subscriptionId: `${terminal.handle}:${client.id}`, client: { id: client.id } })
+  await sleep(500)
+  assert.equal(await size(), '110x35')
+  await subscribe().next((event) => event.type === 'subscribed')
+  await until(async () => (await size()) === '45x20', 5000, 'the phone size on the next view')
+  assert.equal(modes.at(-1), 'auto')
+})

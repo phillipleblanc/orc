@@ -3,7 +3,7 @@ import { RpcError, type Handlers } from './rpc-server.ts'
 import type { SessionStore } from './session-store.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
 import { encodeFrame, jsonPayload, Opcode, textPayloads } from './terminal-frames.ts'
-import type { TerminalSizes } from './terminal-sizes.ts'
+import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
 import type { Subscriber } from './terminal-session.ts'
 import type { StreamingHandler } from './websocket-server.ts'
 
@@ -28,7 +28,6 @@ export function phoneViewport(viewport: unknown): { cols: number; rows: number }
  */
 export function mobileTerminalMethods(store: SessionStore, subscriptions: ConnectionSubscriptions, sizes: TerminalSizes): { handlers: Handlers; streaming: Record<string, StreamingHandler> } {
   const nextStreamId = new Map<string, number>()
-  const viewerOf = (connectionId: string, terminal: string, clientId: string) => `${connectionId}|${terminal}:${clientId}`
   return {
     handlers: {
       'terminal.unsubscribe': (params, context) => {
@@ -41,10 +40,19 @@ export function mobileTerminalMethods(store: SessionStore, subscriptions: Connec
         const viewport = phoneViewport(params.viewport)
         if (!viewport) throw new RpcError('invalid_argument', 'viewport is required')
         // Only a phone already viewing the terminal refits it; others resubscribe with their viewport.
-        const viewer = viewerOf(context.connectionId, session.handle, String(params.client?.id ?? context.connectionId))
+        const viewer = phoneViewer(context.connectionId, session.handle, String(params.client?.id ?? context.connectionId))
         if (!sizes.viewing(session, viewer)) return { updated: false, applied: false, seq: session.appliedOffset }
         await sizes.phoneFit(session, viewer, viewport)
-        return { updated: true, applied: true, seq: session.appliedOffset }
+        return { updated: true, applied: sizes.displayMode(session) === 'auto', seq: session.appliedOffset }
+      },
+      // The terminal menu's Switch to Desktop and Switch to Phone.
+      'terminal.setDisplayMode': async (params, context) => {
+        const session = typeof params.terminal === 'string' ? store.get(params.terminal) : undefined
+        if (!session) throw new RpcError('not_found', `no terminal ${String(params.terminal)}`)
+        if (params.mode !== 'auto' && params.mode !== 'desktop') throw new RpcError('invalid_argument', 'mode must be auto or desktop')
+        const viewer = params.client?.id ? phoneViewer(context.connectionId, session.handle, String(params.client.id)) : undefined
+        await sizes.setDisplayMode(session, params.mode, viewer, phoneViewport(params.viewport) ?? undefined)
+        return { mode: sizes.displayMode(session), seq: session.appliedOffset }
       }
     },
     streaming: {
@@ -64,7 +72,7 @@ export function mobileTerminalMethods(store: SessionStore, subscriptions: Connec
             return () => session.off('exit', finish)
           })
         }
-        const viewer = viewerOf(context.connectionId, session.handle, clientId)
+        const viewer = phoneViewer(context.connectionId, session.handle, clientId)
         const streamId = nextStreamId.get(context.connectionId) ?? FIRST_STREAM_ID
         nextStreamId.set(context.connectionId, streamId + 1)
         context.onClose(() => nextStreamId.delete(context.connectionId))
@@ -78,10 +86,10 @@ export function mobileTerminalMethods(store: SessionStore, subscriptions: Connec
             snapshot: (screen) => {
               if (!subscribed) {
                 subscribed = true
-                emit({ type: 'subscribed', streamId, lines: [], truncated: false, cols: screen.cols, rows: screen.rows, displayMode: 'auto', seq: screen.offset })
+                emit({ type: 'subscribed', streamId, lines: [], truncated: false, cols: screen.cols, rows: screen.rows, displayMode: sizes.displayMode(session), seq: screen.offset })
               }
               send(Opcode.SnapshotStart, screen.offset, jsonPayload({
-                kind: 'scrollback', cols: screen.cols, rows: screen.rows, displayMode: 'auto', seq: screen.offset, truncated: false, truncatedByByteBudget: false
+                kind: 'scrollback', cols: screen.cols, rows: screen.rows, displayMode: sizes.displayMode(session), seq: screen.offset, truncated: false, truncatedByByteBudget: false
               }))
               for (const chunk of textPayloads(screen.data, FRAME_TEXT_LIMIT)) send(Opcode.SnapshotChunk, screen.offset, chunk)
               send(Opcode.SnapshotEnd, screen.offset)
@@ -91,9 +99,17 @@ export function mobileTerminalMethods(store: SessionStore, subscriptions: Connec
               if (text) for (const chunk of textPayloads(text, FRAME_TEXT_LIMIT)) send(Opcode.Output, offset, chunk)
             },
             resized: (cols, rows) => send(Opcode.Resized, session.appliedOffset,
-              jsonPayload({ cols, rows, displayMode: 'auto', reason: 'resize', seq: session.appliedOffset })),
+              jsonPayload({ cols, rows, displayMode: sizes.displayMode(session), reason: 'resize', seq: session.appliedOffset })),
             exited: () => finish()
           }
+          // The menu's label follows the mode, which changes without a resize when the sizes match.
+          const modeChanged = (changed: unknown) => {
+            if (changed !== session || !subscribed) return
+            send(Opcode.Resized, session.appliedOffset, jsonPayload({
+              cols: session.cols, rows: session.rows, displayMode: sizes.displayMode(session), reason: 'mode-change', seq: session.appliedOffset
+            }))
+          }
+          sizes.on('mode', modeChanged)
           void (async () => {
             if (viewport) {
               await sizes.phoneFit(session, viewer, viewport).catch(() => {})
@@ -103,6 +119,7 @@ export function mobileTerminalMethods(store: SessionStore, subscriptions: Connec
           })()
           return () => {
             active = false
+            sizes.off('mode', modeChanged)
             session.unsubscribe(subscriber)
             sizes.phoneLeft(session, viewer)
           }

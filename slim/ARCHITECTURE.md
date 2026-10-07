@@ -273,3 +273,4 @@ flowchart TB
 | The frontend restarts while a phone is connected | The phone reconnects to the same port and resubscribes; its tab snapshots start a new publication epoch. |
 | A phone stops viewing a terminal | The PTY takes the next viewing phone's size, or the latest size a desktop asked for while phones viewed it, or its size from before the first phone. |
 | A desktop resizes while a phone views a terminal | The phone's size stays; the desktop's applies once the last phone leaves. |
+| A phone switches a terminal it views to the desktop size | The desktop's size returns and desktops resize it freely, until the phone switches back or types, or the last phone leaves; the next view fits the phone. |
