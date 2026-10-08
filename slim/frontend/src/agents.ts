@@ -51,6 +51,11 @@ export type SpawnOptions = {
 const CONFIRM_MS = 20_000
 // Pasted text must be accepted before the separate Enter that submits it.
 const PASTE_SETTLE_MS = 150
+// Claude probes the terminal at startup, after SessionStart, and then returns it to line editing until its prompt
+// shows on the alternate screen; text typed in between is echoed and then discarded. Its prompt takes input once the
+// alternate screen and bracketed paste are both on. Past this wait, text is typed regardless.
+const PROMPT_WAIT_MS = 15_000
+const PROMPT_POLL_MS = 25
 const DEFAULT_TIMEOUT_MS = 90_000
 
 /**
@@ -281,7 +286,8 @@ export class AgentDirectory extends EventEmitter {
         await this.save(record)
         continue
       }
-      const bracketed = await record.session.bracketedPaste()
+      const bracketed = await this.promptUp(record)
+      if (bracketed === null) return
       record.session.input(bracketed ? `\x1b[200~${body}\x1b[201~` : body)
       await new Promise((resolve) => setTimeout(resolve, PASTE_SETTLE_MS))
       record.session.input('\r')
@@ -298,6 +304,17 @@ export class AgentDirectory extends EventEmitter {
         }, CONFIRM_MS)
       }
       await this.save(record)
+    }
+  }
+
+  /** Waits until the agent's prompt takes input; resolves whether it accepts bracketed paste, or null when the session ended. */
+  private async promptUp(record: AgentRecord): Promise<boolean | null> {
+    const deadline = Date.now() + PROMPT_WAIT_MS
+    for (;;) {
+      if (!record.session.connected || record.monitor.exited) return null
+      const modes = await record.session.inputModes()
+      if (record.monitor.kind !== 'claude' || (modes.bracketedPaste && modes.alternateScreen) || Date.now() >= deadline) return modes.bracketedPaste
+      await new Promise((resolve) => setTimeout(resolve, PROMPT_POLL_MS))
     }
   }
 

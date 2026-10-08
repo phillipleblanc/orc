@@ -147,7 +147,10 @@ Enter. A working agent is typed every message not sent with `whenIdle`: Codex, C
 text submitted mid-turn and read it at their next step, after the tool call they are running. An
 idle agent is typed the oldest message, which starts a turn; the next waits until a hook shows the
 turn started, or 20 s. Nothing is typed while the agent is starting, at a permission prompt or in a
-dialog. A `whenIdle` message and the prompt of `agent.spawn` wait until the agent is idle.
+dialog. Claude reports `SessionStart` before it probes the terminal, then returns the terminal to
+line editing until its prompt shows; text typed in between is echoed and then discarded, so Claude is
+typed to only while it shows the alternate screen with bracketed paste on (or after waiting 15 s for
+that). A `whenIdle` message and the prompt of `agent.spawn` wait until the agent is idle.
 `agent.send` prefixes the text with `[from SENDER]` and reports whether it was typed (`delivered`);
 `agent.spawn` types its prompt unchanged. `agent.wait` resolves once the agent has finished a turn
 after the last delivered message and nothing is queued.

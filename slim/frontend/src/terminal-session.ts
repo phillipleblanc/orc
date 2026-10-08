@@ -304,8 +304,9 @@ export class TerminalSession extends EventEmitter {
   }
 
   /** Whether the program asked for pasted text to be bracketed, so newlines in it are not submitted. */
-  bracketedPaste(): Promise<boolean> {
-    return this.barrier(() => this.term.modes.bracketedPasteMode)
+  /** Whether the program accepts bracketed paste and is showing the alternate screen, as of the output so far. */
+  inputModes(): Promise<{ bracketedPaste: boolean; alternateScreen: boolean }> {
+    return this.barrier(() => ({ bracketedPaste: this.term.modes.bracketedPasteMode, alternateScreen: this.term.buffer.active.type === 'alternate' }))
   }
 
   state(scrollbackRows?: number) {

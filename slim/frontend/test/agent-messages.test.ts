@@ -4,9 +4,9 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { AgentDirectory } from '../src/agents.ts'
-import { destroyProfile, makeProfile, until } from './harness.ts'
+import { destroyProfile, makeProfile, sleep, until } from './harness.ts'
 
-/** The parts of a Pi agent's session the directory uses; what is typed into it is recorded. */
+/** The parts of an agent's session the directory uses; what is typed into it is recorded. */
 class StandInSession extends EventEmitter {
   readonly meta: Record<string, unknown>
   readonly dir: string
@@ -15,16 +15,21 @@ class StandInSession extends EventEmitter {
   connected = true
   exit: object | null = null
   title = ''
+  modes = { bracketedPaste: true, alternateScreen: true }
 
-  constructor(name: string, dir: string, events: string) {
+  constructor(name: string, dir: string, events: string, agent: string) {
     super()
-    this.meta = { name, agent: 'pi', events, cwd: dir, createdAt: 0 }
+    this.meta = { name, agent, events, cwd: dir, createdAt: 0 }
     this.dir = dir
     this.handle = `term_${name}`
   }
 
-  async bracketedPaste(): Promise<boolean> {
-    return true
+  async inputModes(): Promise<{ bracketedPaste: boolean; alternateScreen: boolean }> {
+    return { ...this.modes }
+  }
+
+  async screenText(): Promise<string[]> {
+    return []
   }
 
   input(text: string): void {
@@ -38,25 +43,25 @@ class StandInSession extends EventEmitter {
   }
 }
 
-const line = (name: string) => JSON.stringify({ agent: 'pi', event: name, time: 1, payload: {} }) + '\n'
+const line = (name: string, agent = 'pi') => JSON.stringify({ agent, event: name, time: 1, payload: {} }) + '\n'
 
-/** An agent directory over one stand-in Pi session, whose events file starts with `initial`. */
-async function agentRuntime(t: { after: (fn: () => unknown) => void }, initial: string[] = [], saved?: object) {
+/** An agent directory over one stand-in session (Pi unless `agent` says otherwise), whose events file starts with `initial`. */
+async function agentRuntime(t: { after: (fn: () => unknown) => void }, initial: string[] = [], saved?: object, agent = 'pi') {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))
   const dir = join(profile, 'sessions', 'worker')
   await mkdir(dir, { recursive: true })
   if (saved) await writeFile(join(dir, 'queue.json'), JSON.stringify(saved))
   const events = join(profile, 'events.jsonl')
-  await writeFile(events, initial.map(line).join(''))
-  const session = new StandInSession('worker', dir, events)
+  await writeFile(events, initial.map((name) => line(name, agent)).join(''))
+  const session = new StandInSession('worker', dir, events, agent)
   const store = Object.assign(new EventEmitter(), { get: (name: string) => (name === 'worker' ? session : undefined) })
   const agents = new AgentDirectory(store as any, {} as any, profile)
   t.after(() => store.emit('ended', session))
   store.emit('added', session)
   await until(async () => agents.list().length === 1, 2000, 'the agent to be attached')
   const event = async (name: string) => {
-    await appendFile(events, line(name))
+    await appendFile(events, line(name, agent))
     await agents.monitor(session as any)!.refresh()
   }
   const status = () => agents.status('worker') as { state: string; queued: number; delivering: boolean }
@@ -104,4 +109,21 @@ test('a queued message saved without whenIdle waits for idle', async (t) => {
   await event('Stop')
   await until(async () => session.messages().length === 2, 2000, 'the saved message once idle')
   assert.equal(session.messages()[1], 'from before')
+})
+
+test('Claude is typed to only once its prompt is up, not while it probes the terminal at startup', async (t) => {
+  const { agents, session, event } = await agentRuntime(t, [], undefined, 'claude')
+  // Claude reports SessionStart, probes the terminal with bracketed paste on, then returns it to line editing until
+  // its prompt shows on the alternate screen; text typed before then is echoed and discarded.
+  session.modes = { bracketedPaste: false, alternateScreen: false }
+  await event('SessionStart')
+  const sent = agents.send('worker', 'the brief', { from: 'lead' })
+  session.modes = { bracketedPaste: true, alternateScreen: false }
+  await sleep(200)
+  session.modes = { bracketedPaste: false, alternateScreen: false }
+  await sleep(200)
+  assert.deepEqual(session.typed, [])
+  session.modes = { bracketedPaste: true, alternateScreen: true }
+  assert.equal((await sent).delivered, true)
+  assert.deepEqual(session.messages(), ['[from lead]\nthe brief'])
 })
