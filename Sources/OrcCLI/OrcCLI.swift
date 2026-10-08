@@ -195,6 +195,16 @@ import COrcSupport
                     }
                 }
             }
+        case "notify":
+            let message = options.joined(separator: " ")
+            guard options.first != "--help", !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw OrcError("Usage: orc notify MESSAGE [--json]")
+            }
+            var params: [String: Any] = ["message": message]
+            if let name = ProcessInfo.processInfo.environment["ORC_SESSION_NAME"], !name.isEmpty { params["name"] = name }
+            let result = try await LocalRPC.call("notify.post", params)
+            if json { try emit(result) }
+            else if result["appOpen"] as? Bool == false { print("Orc is not open; it shows the notification when it opens.") }
         case "close":
             guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc close NAME [--json]") }
             let result = try await LocalRPC.call("terminal.close", ["terminal": options[0]])
@@ -354,6 +364,7 @@ import COrcSupport
     orc pr [NAME] [--json]                   Pull requests Orc watches for agents
     orc pr watch|unwatch NAME URL [--json]   Link a pull request to an agent, or unlink it
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
+    orc notify MESSAGE [--json]              Show MESSAGE as an Orc notification, even for a muted session
     orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
                    [--rotate] [--link | --json]
     orc phones [--json]                      List phone grants and network addresses

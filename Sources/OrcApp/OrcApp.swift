@@ -176,7 +176,8 @@ import OrcKit
         catch { reviewError = "Could not save muted sessions: \(error.localizedDescription)" }
     }
     private func updateDockBadge() {
-        let count = mutes.unmuted(sessions).filter { activity(for: $0) == .unread }.count
+        // A muted session counts only while it shows a notification.
+        let count = sessions.filter { activity(for: $0) == .notified || !isMuted($0) && activity(for: $0) == .unread }.count
         guard badgeCount != count else { return }
         badgeCount = count
         let previous = badgeTask
@@ -206,6 +207,15 @@ import OrcKit
             updateDockBadge()
             for session in mutes.unmuted(completed) {
                 Task { await IdleNotifications.shared.postIdle(session) }
+            }
+            for notification in (try? await service.takeNotifications()) ?? [] {
+                let session = sessions.first { $0.handle == notification.handle }
+                if let session {
+                    let previous = reviewState
+                    reviewState.markNotified(session)
+                    if reviewState != previous { updateReviewState() }
+                }
+                Task { await IdleNotifications.shared.postMessage(notification, from: session) }
             }
             await refreshClosed()
             if !result.truncated, closedLoaded {

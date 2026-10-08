@@ -65,7 +65,7 @@ Orc sends a macOS notification when an agent it has observed working becomes idl
 
 Orc's Dock badge counts sessions showing the unread bell state. Viewing a session's attached terminal clears its alert and reduces the count; the badge disappears when none remain. Enable **Badge application icon** for Orc in System Settings → Notifications. Orc requests badge permission when it starts, including for installations that had already allowed banners and sounds.
 
-To silence an agent session, right-click it in the session list and choose **Mute Notifications**. A muted session posts no idle notifications, is left out of the Dock badge, and shows a muted bell instead of its activity light. Muting follows the session when it is renamed in Orc, reopened or restored; it is forgotten once no running or recently closed session has the name.
+To silence an agent session, right-click it in the session list and choose **Mute Notifications**. A muted session posts no idle notifications, is left out of the Dock badge, and shows a muted bell instead of its activity light, except after it runs `orc notify` (below). Muting follows the session when it is renamed in Orc, reopened or restored; it is forgotten once no running or recently closed session has the name.
 
 When Ghostty is installed, or you have a Ghostty configuration file, Orc's terminals use your Ghostty settings: theme, font, colors, padding and keybinds, from the same configuration files Ghostty reads. A theme with light and dark variants follows the system appearance. A `background-opacity` below 1 makes the terminal translucent, with your `background-blur`; the rest of the window stays opaque. Without Ghostty, terminals use Orc's defaults (Menlo 13, GitHub Dark). Either way, Orc keeps `confirm-close-surface = false` and `shell-integration = none`, which its terminals depend on. Ghostty's reload-configuration keybind reloads the settings in Orc too; otherwise they are read when Orc starts.
 
@@ -115,6 +115,14 @@ orc wake cancel 1a2b3c4d
 ```
 
 A wake's message begins with `[from wake]` and is sent as `orc agent send` sends one, so a working agent reads it at its next step. A timer's message defaults to `continue`; a process or script wake adds the exit status, and a script wake adds the end of the script's output. The script runs in the background right away, in the current directory with the session's environment. Wakes survive runtime restarts; ending the session removes them and stops their scripts. See `orc wake --help`.
+
+A session can notify you itself, for example a loop that checks something and has found what it was waiting for:
+
+```sh
+orc notify "PR 14784 merged"
+```
+
+Orc shows the message as a notification titled with the session's name; clicking it opens the session. The session's status icon turns to the blue bell, over its working or idle state, and it counts in the Dock badge until you view the session; a prompt waiting for an answer still shows its orange mark. All of this happens even when the session is muted, since muting silences turn ends and `orc notify` is for when there is something to report. Run outside a session, the notification is titled Orc. While Orc is closed, the runtime keeps the newest 20 and Orc shows them when it opens; `orc notify` says when Orc is not open.
 
 Every session starts with `ORC_SESSION_NAME` (its name) and `ORC_RUNTIME_DIR` (its runtime profile), so `orc` run inside a session reaches the same runtime and identifies its caller.
 

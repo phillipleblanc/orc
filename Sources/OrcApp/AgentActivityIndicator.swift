@@ -1,7 +1,7 @@
 import SwiftUI
 import OrcKit
 
-/// An agent's activity, or a muted bell for a session whose notifications are muted.
+/// An agent's activity, or a muted bell for a session whose notifications are muted, unless it sent a notification.
 struct AgentActivityIndicator: View {
     let activity: AgentActivity
     var muted = false
@@ -11,7 +11,7 @@ struct AgentActivityIndicator: View {
 
     var body: some View {
         Group {
-            if muted {
+            if muted && activity != .notified {
                 Image(systemName: "bell.slash.fill").foregroundStyle(.secondary)
             } else {
                 indicator
@@ -34,7 +34,7 @@ struct AgentActivityIndicator: View {
                 }
             case .idle:
                 Circle().fill(.green).padding(2)
-            case .unread:
+            case .unread, .notified:
                 Image(systemName: "bell.fill").foregroundStyle(.blue)
             case .needsAttention:
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
@@ -49,14 +49,15 @@ struct AgentActivityIndicator: View {
     }
 }
 
-/// A session's status icon: its agent's activity, or its program's when that reports its status, or a terminal.
+/// A session's status icon: its agent's activity, or its program's when that reports its status, or a terminal; any
+/// session that sent a notification shows the bell.
 struct SessionStatusIcon: View {
     let session: Session
     let activity: AgentActivity
     var muted = false
 
     var body: some View {
-        if session.agentIdentity != nil || session.programStatus != nil {
+        if session.agentIdentity != nil || session.programStatus != nil || activity == .notified {
             AgentActivityIndicator(activity: activity, muted: muted)
         } else {
             Image(systemName: "terminal").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)

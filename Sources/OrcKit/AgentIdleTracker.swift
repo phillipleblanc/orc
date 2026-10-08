@@ -24,7 +24,7 @@ public struct AgentIdleTracker: Codable, Equatable {
                 if working[session.handle] == identity { next[session.handle] = identity }
             case .idle:
                 if working[session.handle] == identity { completed.append(session) }
-            case .unread, .noAgent, .unknown, .offline:
+            case .unread, .notified, .noAgent, .unknown, .offline:
                 break
             }
         }

@@ -17,6 +17,7 @@ import { overallState, type ProgramState } from './program-status.ts'
 import type { PullRequestWatch } from './pull-requests/watch.ts'
 import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
 import type { WakeDirectory } from './wakes.ts'
+import type { NotificationQueue } from './notifications.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
 export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1']
@@ -28,6 +29,8 @@ export type Runtime = {
   projects: Projects
   agents: AgentDirectory
   wakes: WakeDirectory
+  /** Notifications sessions ask Orc.app to show (`orc notify`). */
+  notifications: NotificationQueue
   pullRequests: PullRequestWatch
   /** Who sizes each session's PTY: phones viewing it ahead of desktops. */
   sizes: TerminalSizes
@@ -60,7 +63,7 @@ function programStatus(state: ProgramState | null): string | null {
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
-  const { store, projects, agents, wakes, pullRequests, sizes, history, catalog, subscriptions } = runtime
+  const { store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions } = runtime
   const mutations = new Map<string, Promise<unknown>>()
 
   const session = (selector: unknown): TerminalSession => {
@@ -288,6 +291,13 @@ export function createHandlers(runtime: Runtime): Handlers {
     'wake.list': async (params) => ({ wakes: await wakes.list(String(params.name ?? '')) }),
 
     'wake.cancel': (params) => wakes.cancel(String(params.name ?? ''), String(params.id ?? '')),
+
+    'notify.post': (params) => {
+      const name = typeof params.name === 'string' && params.name ? params.name : null
+      return notifications.post(name === null ? null : { name, handle: store.get(name)?.handle ?? null }, params.message)
+    },
+
+    'notify.take': () => ({ notifications: notifications.take() }),
 
     'history.list': async () => ({ sessions: await history.list() }),
 

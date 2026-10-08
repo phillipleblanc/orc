@@ -103,7 +103,7 @@ public struct OverviewItem: Identifiable, Equatable {
     public var lane: OverviewLane {
         if !handedOver.isEmpty { return .needsYou }
         switch activity {
-        case .needsAttention, .unread: return .needsYou
+        case .needsAttention, .unread, .notified: return .needsYou
         case .active: return .working
         default: return needsYou == nil ? .idle : .needsYou
         }

@@ -81,15 +81,33 @@ import OrcKit
             content.subtitle = "Agent is idle"
             content.body = "Finished working in \(project)."
         }
+        await deliver(content, from: session, kind: "idle")
+    }
+
+    /// A message a session sent with `orc notify`. It shows whether or not the session is muted: muting silences
+    /// turn ends, and a session notifies only when it has something to say.
+    func postMessage(_ notification: SessionNotification, from session: Session?) async {
+        start()
+        await authorization?.value
+        guard await isAuthorized() else { return }
+        let content = UNMutableNotificationContent()
+        content.title = session?.name ?? notification.session ?? "Orc"
+        content.body = notification.message
+        await deliver(content, from: session, kind: "message")
+    }
+
+    private func deliver(_ content: UNMutableNotificationContent, from session: Session?, kind: String) async {
         content.sound = .default
-        content.threadIdentifier = "orc-session-" + session.handle
-        content.userInfo = ["sessionHandle": session.handle]
-        if let incarnation = session.incarnationId { content.userInfo["incarnationId"] = incarnation }
+        if let session {
+            content.threadIdentifier = "orc-session-" + session.handle
+            content.userInfo = ["sessionHandle": session.handle]
+            if let incarnation = session.incarnationId { content.userInfo["incarnationId"] = incarnation }
+        }
         // Reusing an identifier can silently update the previous notification
-        // instead of presenting a banner for the next completed work cycle.
-        let id = "orc-agent-idle-" + session.handle + "-" + UUID().uuidString
+        // instead of presenting a banner for the next one.
+        let id = "orc-\(kind)-" + (session.map { $0.handle + "-" } ?? "") + UUID().uuidString
         do { try await center?.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
-        catch { warning = "Could not show the idle notification: \(error.localizedDescription)" }
+        catch { warning = "Could not show the \(kind) notification: \(error.localizedDescription)" }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,

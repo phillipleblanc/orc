@@ -35,6 +35,7 @@ import { fetchClaudeUsage } from './usage/claude.ts'
 import { fetchCodexUsage } from './usage/codex.ts'
 import { UsageService, type UsageRefresh } from './usage/service.ts'
 import { WakeDirectory } from './wakes.ts'
+import { NotificationQueue } from './notifications.ts'
 import { ConnectionSubscriptions } from './subscriptions.ts'
 import { WebSocketRpcServer } from './websocket-server.ts'
 
@@ -108,7 +109,8 @@ const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
 const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
 const sizes = new TerminalSizes(log)
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, pullRequests, sizes, history, catalog, subscriptions }
+const notifications = new NotificationQueue()
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {

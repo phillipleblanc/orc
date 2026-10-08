@@ -74,6 +74,16 @@ public struct SessionListing: Decodable {
     public let truncated: Bool
 }
 
+/// A message a session asked Orc to show as a notification (`orc notify`).
+public struct SessionNotification: Decodable, Hashable {
+    public let id: String
+    /// The name of the session that sent it, or nil when `orc notify` ran outside a session.
+    public let session: String?
+    /// The session's handle, when a session had that name.
+    public let handle: String?
+    public let message: String
+}
+
 public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
@@ -113,6 +123,10 @@ public struct SessionService {
         }
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
         try SessionNotesStore.rename(session.name, to: name)
+    }
+    /// The notifications sessions asked Orc to show, each returned once.
+    public func takeNotifications() async throws -> [SessionNotification] {
+        try decode(await LocalRPC.call("notify.take")["notifications"] ?? [])
     }
     /// Ends the session and the program running in it. A closed agent session can be reopened.
     public func close(handle: String) async throws {

@@ -358,6 +358,7 @@ private struct OverviewRow: View {
         case .active: "working"
         case .idle: "idle"
         case .unread: "finished"
+        case .notified: "sent a notification"
         case .needsAttention: "at a prompt"
         case .offline: "offline"
         default: nil

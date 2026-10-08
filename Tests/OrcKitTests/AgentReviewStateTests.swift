@@ -56,6 +56,33 @@ final class AgentReviewStateTests: XCTestCase {
         XCTAssertEqual(permissions?.intValue, 0o600)
     }
 
+    func testANotificationShowsOverWorkAndIdleUntilTheSessionIsViewed() throws {
+        let loop = session("handle", name: "loop")
+        var state = AgentReviewState()
+        state.markNotified(loop)
+        XCTAssertEqual(state.unreadKeys, ["handle"])
+        for base: AgentActivity in [.active, .idle, .noAgent, .unknown] { XCTAssertEqual(state.activity(for: loop, base: base), .notified) }
+        XCTAssertEqual(state.activity(for: loop, base: .needsAttention), .needsAttention)
+        XCTAssertEqual(state.activity(for: loop, base: .offline), .offline)
+        // It survives a relaunch, and a state saved before notifications existed still loads.
+        let saved = try JSONEncoder().encode(state)
+        XCTAssertEqual(try JSONDecoder().decode(AgentReviewState.self, from: saved).activity(for: loop, base: .idle), .notified)
+        var older = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        older.removeValue(forKey: "notified")
+        XCTAssertEqual(try JSONDecoder().decode(AgentReviewState.self, from: JSONSerialization.data(withJSONObject: older)).activity(for: loop, base: .idle), .idle)
+        // Viewing the session clears it, along with a finished turn.
+        _ = state.update(sessions: [loop], activities: [loop.handle: .active])
+        _ = state.update(sessions: [loop], activities: [loop.handle: .idle])
+        state.markRead(loop)
+        XCTAssertEqual(state.activity(for: loop, base: .idle), .idle)
+        XCTAssertTrue(state.unreadKeys.isEmpty)
+        // A replacement process does not inherit it.
+        state.markNotified(loop)
+        let replacement = session("handle", name: "loop", incarnation: "process-two")
+        _ = state.update(sessions: [replacement], activities: [replacement.handle: .idle])
+        XCTAssertEqual(state.activity(for: replacement, base: .idle), .idle)
+    }
+
     func testTruncatedOrUnavailableInventoryDoesNotLoseUnreadState() {
         let current = session("handle", name: "tab")
         var state = AgentReviewState()

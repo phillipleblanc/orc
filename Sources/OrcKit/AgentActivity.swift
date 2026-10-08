@@ -1,7 +1,8 @@
 import Foundation
 
 public enum AgentActivity: Equatable, Sendable {
-    case idle, active, unread, needsAttention, noAgent, unknown, offline
+    /// `notified`: the session sent a notification with `orc notify` since it was last viewed.
+    case idle, active, unread, notified, needsAttention, noAgent, unknown, offline
 
     public init(isRunningAgent: Bool?, state: String?) {
         guard let isRunningAgent else { self = .unknown; return }
@@ -19,6 +20,7 @@ public enum AgentActivity: Equatable, Sendable {
         case .idle: return "Idle"
         case .active: return "Active"
         case .unread: return "New output to review"
+        case .notified: return "Sent a notification"
         case .needsAttention: return "Needs attention"
         case .noAgent: return "No agent running"
         case .unknown: return "Activity unavailable"
