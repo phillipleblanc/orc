@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -73,4 +73,17 @@ test('names are unique and a finished session frees its name', async (t) => {
   await until(async () => (await frontend.rpc('terminal.list')).terminals.length === 0, 10_000, 'exited session to retire')
   await frontend.rpc('terminal.create', { name: 'solo', cwd: profile, argv: ['/bin/sh', '-c', 'sleep 5'] })
   assert.equal((await frontend.rpc('terminal.list')).terminals.length, 1)
+})
+
+test('sessions created together on a new profile share one install of the holder', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const names = ['one', 'two', 'three', 'four', 'five']
+  await Promise.all(names.map((name) => frontend.rpc('terminal.create', { name, cwd: profile, argv: ['/bin/sh', '-c', 'sleep 5'] })))
+  assert.equal((await frontend.rpc('terminal.list')).terminals.length, names.length)
+  const [digest, ...others] = await readdir(join(profile, 'holders'))
+  assert.deepEqual(others, [])
+  assert.deepEqual(await readdir(join(profile, 'holders', digest)), ['orc-holder'])
 })

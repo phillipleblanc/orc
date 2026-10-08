@@ -53,6 +53,7 @@ export class SessionStore extends EventEmitter {
   /** Names of finished sessions whose directories are still being moved to `ended/`. */
   private readonly retiring = new Map<string, Promise<void>>()
   private holderPath: string | null = null
+  private holderInstall: Promise<string> | null = null
 
   constructor(options: StoreOptions) {
     super()
@@ -238,8 +239,14 @@ export class SessionStore extends EventEmitter {
   }
 
   /** Copies the holder to a content-addressed path, so an app update never replaces a running binary. */
-  private async installedHolder(): Promise<string> {
-    if (this.holderPath && existsSync(this.holderPath)) return this.holderPath
+  private installedHolder(): Promise<string> {
+    if (this.holderPath && existsSync(this.holderPath)) return Promise.resolve(this.holderPath)
+    // Sessions created together share one install.
+    this.holderInstall ??= this.installHolder().finally(() => { this.holderInstall = null })
+    return this.holderInstall
+  }
+
+  private async installHolder(): Promise<string> {
     const bytes = await readFile(this.options.holderSource)
     const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
     const dir = join(this.profile, 'holders', digest)
