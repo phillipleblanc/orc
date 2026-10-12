@@ -300,7 +300,8 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
   access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
   `brief.refresh`, `brief.settings` and `brief.configure` serve agents' status briefs written from their transcripts;
-  they are not served over the WebSocket.
+  they are not served over the WebSocket. `brief.dismiss` (`name`, `question`) drops a question its person marked read
+  from the brief and keeps it, the latest only, so later briefs' prompts tell the model not to raise it again.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
   `session.tabs.subscribe` and `runtime.clientEvents.subscribe`, and `nativeChat.*` to mobile

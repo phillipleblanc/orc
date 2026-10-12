@@ -16,7 +16,9 @@ export type EvalCase = {
   linked: string[]
   /** Pull requests the model must report, as `owner/name#number`; it must report no others. */
   report: string[]
-  /** Whether the agent waits on its person. */
+  /** The question its person last marked read. */
+  dismissed?: string
+  /** Whether the agent waits on its person for something the brief should raise. */
   needsYou: boolean
   /** Text the brief must carry, to show it read the log: a field, or any, and a pattern. */
   mentions: [keyof Brief | 'any', RegExp][]
@@ -83,6 +85,8 @@ export const EVAL_CASES: EvalCase[] = [
       ],
       truncated: false
     },
+    // A question about something else, marked read earlier, does not hide this one.
+    dismissed: 'Approve deleting the stale benchmark cache bucket?',
     report: [],
     needsYou: true,
     mentions: [['needsYou', /rebase|force|new (pull request|PR|branch)/i]]
@@ -107,6 +111,25 @@ export const EVAL_CASES: EvalCase[] = [
     report: [],
     needsYou: false,
     mentions: [['now', /test|cargo/i]]
+  },
+  {
+    id: 'dismissed-question',
+    title: 'Does not raise again a question its person marked read',
+    about: { name: 'changesink-pr3', agent: 'codex', state: 'idle' },
+    linked: ['spiceai/spiceai#14790', 'spiceai/spiceai#14791', 'spiceai/spiceai#14792'],
+    digest: {
+      summary: 'Goal: land the three-PR ChangeSink stack: PR1 https://github.com/spiceai/spiceai/pull/14790, PR2 https://github.com/spiceai/spiceai/pull/14791 and PR3 https://github.com/spiceai/spiceai/pull/14792. PR1 and PR2 merged. PR3 conflicts with trunk; the agent asked whether to rebase it and force-push or open a new pull request.',
+      items: [
+        { role: 'tool', text: 'exec gh pr checks 14792' },
+        { role: 'result', text: 'All checks were successful' },
+        { role: 'assistant', text: 'Checks on #14792 pass, but it still conflicts with trunk. Should I rebase PR3 and force-push, or open a new pull request from a fresh branch?' }
+      ],
+      truncated: false
+    },
+    dismissed: 'Whether to rebase PR3 onto trunk and force-push, or open a new pull request.',
+    report: [],
+    needsYou: false,
+    mentions: [['any', /14792|PR3/i]]
   }
 ]
 
@@ -129,7 +152,9 @@ export function grade(test: EvalCase, outcome: { brief: Brief | null; error: str
   if (!brief.goal) failures.push('wrote no goal')
   if (brief.next.length !== 3) failures.push(`listed ${brief.next.length} next steps instead of 3`)
   if (test.needsYou && !brief.needsYou) failures.push('missed the question the agent asked its person')
-  if (!test.needsYou && brief.needsYou) failures.push(`said the agent waits on its person ("${brief.needsYou}") when it does not`)
+  if (!test.needsYou && brief.needsYou) {
+    failures.push(test.dismissed ? `raised again the question its person marked read ("${brief.needsYou}")` : `said the agent waits on its person ("${brief.needsYou}") when it does not`)
+  }
   for (const [field, pattern] of test.mentions) {
     // A missing question is already a failure.
     if (field === 'needsYou' && !brief.needsYou) continue
@@ -151,6 +176,7 @@ export async function evaluateBriefModel(model: string, write: (request: BriefRe
     try {
       brief = await write({
         digest: test.digest, about: test.about, model,
+        ...(test.dismissed ? { dismissed: test.dismissed } : {}),
         pullRequests: {
           linked: test.linked,
           // Answered as the watch answers, without asking GitHub.

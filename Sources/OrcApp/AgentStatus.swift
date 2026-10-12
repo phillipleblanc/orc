@@ -38,6 +38,12 @@ import OrcKit
         briefs[name] = try AgentBrief(record: record)
     }
 
+    /// Its person marked the brief's question read: the runtime drops it, and later briefs do not raise it again.
+    func dismiss(_ name: String, question: String) async throws {
+        let record = try await LocalRPC.call("brief.dismiss", ["name": name, "question": question])
+        briefs[name] = try AgentBrief(record: record)
+    }
+
     /// The model briefs are written with, the models Pi can use, and how the chosen model did on the brief evals.
     struct Settings {
         var model: String?

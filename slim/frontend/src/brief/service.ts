@@ -22,6 +22,8 @@ export type BriefRequest = {
   model: string
   /** The pull requests already linked to the agent, and how to link another, answered for the model. */
   pullRequests?: { linked: string[]; report: (url: string) => Promise<string> }
+  /** The question its person last marked read, which the brief must not raise again. */
+  dismissed?: string
 }
 
 /** Pull requests linked to agents, which a brief's model can add to. */
@@ -46,6 +48,8 @@ export type BriefRecord = {
   /** Failed attempts since the last brief; the next automatic attempt waits until `retryAt`. */
   failures?: number
   retryAt?: number | null
+  /** The question its person last marked read; briefs do not raise it again. */
+  dismissed?: string | null
   generating: boolean
 }
 
@@ -143,6 +147,18 @@ export class BriefService {
     const done = wait ? new Promise<void>((resolve) => this.waiters.set(name, [...(this.waiters.get(name) ?? []), resolve])) : null
     this.enqueue(name, true)
     await done
+    return this.record(name)
+  }
+
+  /** Its person marked `question` read: the brief no longer asks it, and later briefs do not raise it again. */
+  async dismiss(name: string, question: string): Promise<BriefRecord> {
+    const text = question.replace(/\s+/g, ' ').trim()
+    if (!text) throw new Error('The question is empty')
+    if (!this.sessions().some((source) => source.name === name)) throw new Error(`${name} is not a running agent session`)
+    await this.load(name)
+    const previous = this.records.get(name) ?? { name, brief: null, generatedAt: null, model: null, error: null, mark: null, generating: false }
+    const brief = previous.brief?.needsYou?.replace(/\s+/g, ' ').trim() === text ? { ...previous.brief, needsYou: null } : previous.brief
+    await this.store({ ...previous, brief, dismissed: text })
     return this.record(name)
   }
 
@@ -245,17 +261,22 @@ export class BriefService {
       const shown = shownText(transcript.digest)
       const brief = await this.write({
         digest: transcript.digest, about: { name, agent: source.agent, state: source.state }, model,
+        ...(previous.dismissed ? { dismissed: previous.dismissed } : {}),
         ...(pullRequests ? { pullRequests: { linked: await pullRequests.linked(name), report: (url: string) => pullRequests.claim(name, url, shown) } } : {})
       })
-      record = { name, brief, generatedAt: this.now(), model, error: null, mark: transcript.mark, failures: 0, retryAt: null, generating: false }
+      record = { name, brief, generatedAt: this.now(), model, error: null, mark: transcript.mark, failures: 0, retryAt: null, dismissed: previous.dismissed ?? null, generating: false }
     } catch (error) {
       // The last brief stays, with the error, and an automatic attempt follows after a backoff.
       const failures = (previous.failures ?? 0) + 1
       record = { ...previous, error: (error as Error).message, failures, retryAt: this.now() + Math.min(MAX_RETRY_MS, FIRST_RETRY_MS * 2 ** (failures - 1)) }
     }
-    this.records.set(name, record)
+    await this.store(record)
+  }
+
+  private async store(record: BriefRecord): Promise<void> {
+    this.records.set(record.name, record)
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
     const { generating: _, ...stored } = record
-    await writeJsonFile(join(this.directory, `${name}.json`), stored).catch(() => {})
+    await writeJsonFile(join(this.directory, `${record.name}.json`), stored).catch(() => {})
   }
 }

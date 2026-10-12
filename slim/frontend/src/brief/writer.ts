@@ -35,7 +35,7 @@ export async function writeBrief(request: BriefRequest, models: MutableModels = 
   const reporting = request.pullRequests
   const context: Context = {
     systemPrompt: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: briefPrompt(request.digest, request.about, reporting?.linked), timestamp: Date.now() }],
+    messages: [{ role: 'user', content: briefPrompt(request.digest, request.about, reporting?.linked, request.dismissed), timestamp: Date.now() }],
     ...(reporting ? { tools: [REPORT_TOOL] } : {})
   }
   for (let round = 0; round < MAX_ROUNDS; round++) {

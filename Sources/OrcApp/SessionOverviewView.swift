@@ -73,7 +73,8 @@ struct SessionOverviewView: View {
 
     var body: some View {
         let lanes = self.lanes
-        let order = lanes.flatMap { $0.families.flatMap(\.items) }.map(\.session.name)
+        let items = lanes.flatMap { $0.families.flatMap(\.items) }
+        let order = items.map(\.session.name)
         VStack(spacing: 0) {
             if lanes.isEmpty {
                 ContentUnavailableView(model.sessions.isEmpty ? "No Sessions" : "No Matching Sessions", systemImage: "rectangle.stack",
@@ -91,7 +92,7 @@ struct SessionOverviewView: View {
                     .focusable()
                     .focused($boardFocused)
                     .focusEffectDisabled()
-                    .onKeyPress { press in key(press, order: order) }
+                    .onKeyPress { press in key(press, order: order, items: items) }
                     .overlay {
                         if showingShortcuts {
                             OverviewShortcuts().onTapGesture { showingShortcuts = false }
@@ -163,7 +164,7 @@ struct SessionOverviewView: View {
         }
     }
 
-    private func key(_ press: KeyPress, order: [String]) -> KeyPress.Result {
+    private func key(_ press: KeyPress, order: [String], items: [OverviewItem]) -> KeyPress.Result {
         guard let action = Self.keyAction(press.key, characters: press.characters, replying: replying != nil) else { return .ignored }
         let index = selected.flatMap { order.firstIndex(of: $0) }
         switch action {
@@ -185,6 +186,12 @@ struct SessionOverviewView: View {
             }
         case .markRead:
             guard let selected, let session = model.sessions.first(where: { $0.name == selected }) else { return .ignored }
+            // A question it shows is not raised again by later briefs.
+            if let question = items.first(where: { $0.session.name == selected })?.needsYou {
+                Task {
+                    do { try await briefs.dismiss(selected, question: question) } catch { refreshErrors[selected] = error.localizedDescription }
+                }
+            }
             model.markRead(session)
             acknowledged[selected] = Date()
             OverviewAcknowledgements.save(acknowledged, keeping: Set(model.sessions.map(\.name)))

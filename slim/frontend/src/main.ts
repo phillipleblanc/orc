@@ -181,6 +181,7 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   },
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
+  'brief.dismiss': async (params) => briefs.dismiss(String(params.name ?? ''), String(params.question ?? '')),
   'brief.settings': async () => {
     const { model } = briefs.settings
     return { model, models: await briefModels(), ...(model ? await evaluations.status(model) : { evaluation: null, evaluating: false }) }

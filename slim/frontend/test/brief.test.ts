@@ -125,6 +125,9 @@ test('the brief prompt carries the summary and log, and a brief is read from an 
   assert.match(prompt, /Session "cdc", a pi agent, is idle now/)
   assert.match(prompt, /<summary>\nGoal: ship\n<\/summary>/)
   assert.match(prompt, /<log note="older entries left out">\nTOOL CALL: bash ls\n<\/log>/)
+  assert.doesNotMatch(prompt, /marked it read/)
+  assert.match(briefPrompt({ items: [], truncated: false }, { name: 'cdc', agent: 'pi', state: 'idle' }, undefined, 'Rebase PR3?'),
+    /The person already saw this question and marked it read: "Rebase PR3\?"\. Do not put it, or anything that asks the same thing in other words, in needsYou again/)
 
   const brief = parseBrief('<think>Let me see</think>```json\n{"headline": "Checkpoint: fix Clippy", "goal": "Ship  the stack.", "progress": ["PR1 failed", ""], "now": "At a checkpoint.", "next": ["Fix", "Rerun", "Diagnose", "Extra"], "needsYou": "None"}\n```')
   assert.deepEqual(brief, { headline: 'Checkpoint: fix Clippy', goal: 'Ship the stack.', progress: ['PR1 failed'], now: 'At a checkpoint.', next: ['Fix', 'Rerun', 'Diagnose'], needsYou: null })
@@ -227,4 +230,36 @@ test('briefs are written when asked and after a turn, only for a changed transcr
   t.after(() => again.stop())
   assert.deepEqual([again.settings.model, again.get('cdc').brief?.headline, again.get('cdc').error], ['lab/qwen', 'brief 5', 'the lab is down'])
   assert.deepEqual(again.list().map((record) => record.name), ['cdc'])
+})
+
+test('a question marked read leaves the brief and is not raised again, across a restart', async (t) => {
+  const profile = await temporary(t)
+  const source: BriefSource = {
+    name: 'changesink', agent: 'codex', state: 'idle', mark: async () => 'm1',
+    transcript: async () => ({ digest: { summary: 'Goal', items: [], truncated: false }, mark: 'm1' })
+  }
+  const requests: BriefRequest[] = []
+  const service = new BriefService({
+    profile, sessions: () => [source],
+    write: async (request) => { requests.push(request); return { ...BRIEF, needsYou: 'Rebase PR3, or open a new pull request?' } }
+  })
+  t.after(() => service.stop())
+  await service.start()
+  await service.configure('lab/qwen')
+  await service.refresh('changesink', { wait: true })
+  assert.equal(requests.at(-1)?.dismissed, undefined)
+  assert.equal(service.get('changesink').brief?.needsYou, 'Rebase PR3, or open a new pull request?')
+
+  const dismissed = await service.dismiss('changesink', ' Rebase PR3,  or open a new pull request? ')
+  assert.deepEqual([dismissed.brief?.needsYou, dismissed.dismissed, dismissed.brief?.headline], [null, 'Rebase PR3, or open a new pull request?', BRIEF.headline])
+  await service.refresh('changesink', { wait: true })
+  assert.equal(requests.at(-1)?.dismissed, 'Rebase PR3, or open a new pull request?')
+  await assert.rejects(service.dismiss('other', 'Approve?'), /not a running agent session/)
+  await assert.rejects(service.dismiss('changesink', ' '), /empty/)
+
+  const again = new BriefService({ profile, sessions: () => [source], write: async (request) => { requests.push(request); return BRIEF } })
+  await again.start()
+  t.after(() => again.stop())
+  await again.refresh('changesink', { wait: true })
+  assert.equal(requests.at(-1)?.dismissed, 'Rebase PR3, or open a new pull request?')
 })

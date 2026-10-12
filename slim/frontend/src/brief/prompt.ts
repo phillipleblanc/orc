@@ -36,14 +36,16 @@ export const REPORT_PULL_REQUEST = 'report_pull_request'
 
 /**
  * The request for a brief: the agent, its state, its summary and its log since. With `linked`, the pull requests
- * already linked to the agent, the model is asked to report the others it is responsible for.
+ * already linked to the agent, the model is asked to report the others it is responsible for. `dismissed` is the
+ * question its person last marked read, which the brief must not raise again.
  */
-export function briefPrompt(digest: Digest, about: { name: string; agent: string; state: string }, linked?: string[]): string {
+export function briefPrompt(digest: Digest, about: { name: string; agent: string; state: string }, linked?: string[], dismissed?: string): string {
   const log = digest.items.map((entry) => `${LABELS[entry.role]}: ${entry.text}`).join('\n')
   return [
     `Session "${about.name}", a ${about.agent} agent, is ${about.state} now.`,
     digest.summary ? `<summary>\n${digest.summary}\n</summary>` : digest.firstPrompt ? `<first_request>\n${digest.firstPrompt}\n</first_request>` : '',
     `<log${digest.truncated ? ' note="older entries left out"' : ''}>\n${log || '(nothing since)'}\n</log>`,
+    dismissed ? `The person already saw this question and marked it read: "${dismissed}". Do not put it, or anything that asks the same thing in other words, in needsYou again: needsYou is null unless the agent waits on the person for something else.` : '',
     linked ? `Orc already watches these pull requests for this agent: ${linked.map(pullRequestLink).join(', ') || 'none'}. Call ${REPORT_PULL_REQUEST} only for a pull request that is not in that list and that the summary or log shows this agent opened or pushes commits to; usually there is none, and then you call nothing.` : '',
     INSTRUCTIONS
   ].filter(Boolean).join('\n\n')

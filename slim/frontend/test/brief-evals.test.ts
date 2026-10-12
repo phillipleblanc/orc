@@ -11,7 +11,7 @@ import type { BriefRequest } from '../src/brief/service.ts'
 import { writeBrief } from '../src/brief/writer.ts'
 
 const brief = (overrides: Partial<Brief> = {}): Brief => ({
-  headline: 'Waiting on CI for PR 14785', goal: 'Add a cold-start test', progress: ['Opened #14785; Clippy fixed'], now: 'Running the refresh test with cargo',
+  headline: 'Waiting on CI for PR 14785', goal: 'Add a cold-start test', progress: ['Opened #14785; Clippy fixed; PR3 checks pass'], now: 'Running the refresh test with cargo',
   next: ['a', 'b', 'c'], needsYou: null, ...overrides
 })
 
@@ -32,7 +32,7 @@ test('a capable model passes every eval case', async () => {
 })
 
 test('the grades name what a model got wrong', () => {
-  const [opened, , question, working] = EVAL_CASES
+  const [opened, , question, working, dismissed] = EVAL_CASES
   assert.deepEqual(grade(opened, { brief: brief(), error: null, reported: ['spiceai/spiceai#14785', 'spiceai/spiceai#14700', 'spiceai/spiceai#99999'] }), [
     'reported spiceai/spiceai#14700, which the agent did not open or push to',
     'reported spiceai/spiceai#99999, which is not in the log'
@@ -51,6 +51,9 @@ test('the grades name what a model got wrong', () => {
     'said the agent waits on its person ("Approve?") when it does not'
   ])
   assert.deepEqual(grade(working, { brief: null, error: 'the model did not answer with a brief', reported: [] }), ['did not write a brief: the model did not answer with a brief'])
+  assert.deepEqual(grade(dismissed, { brief: brief({ needsYou: 'Rebase PR3 or open a new pull request?' }), error: null, reported: [] }), [
+    'raised again the question its person marked read ("Rebase PR3 or open a new pull request?")'
+  ])
 })
 
 test('evals run through the brief writer, so a model that never calls the tool fails the pull request cases', async () => {
@@ -60,7 +63,8 @@ test('evals run through the brief writer, so a model that never calls the tool f
   faux.setResponses(EVAL_CASES.map(() => () => fauxAssistantMessage(fauxText(JSON.stringify(brief())))))
   const report = await evaluateBriefModel('lab/small', (request) => writeBrief(request, models))
   assert.deepEqual(report.results.map((result) => [result.id, result.passed]), [
-    ['opened-pull-request', false], ['pushed-to-pull-request', false], ['question-for-person', false], ['working-no-pull-requests', true]
+    ['opened-pull-request', false], ['pushed-to-pull-request', false], ['question-for-person', false], ['working-no-pull-requests', true],
+    ['dismissed-question', true]
   ])
   assert.match(report.results[1].failures.join('\n'), /did not report spiceai\/spiceai#14801/)
 })
