@@ -5,12 +5,7 @@ public enum SessionCreationDefaults {
         guard !query.isEmpty else {
             throw OrcError("Choose a project with --project SELECTOR, or register a default with `orc projects add PATH --default`.")
         }
-        let matches = projects.filter {
-            if query.hasPrefix("id:") { return $0.id == String(query.dropFirst(3)) }
-            if query.hasPrefix("path:") { return $0.path == String(query.dropFirst(5)) }
-            if query.hasPrefix("/") { return $0.path == query }
-            return $0.name == query || URL(fileURLWithPath: $0.path).lastPathComponent == query
-        }
+        let matches = self.projects(matching: query, in: projects)
         guard matches.count == 1, let project = matches.first else {
             if matches.isEmpty {
                 throw OrcError("Project '\(query)' is not registered. Run `orc projects add PATH --default`, or use --project SELECTOR from `orc projects`.")
@@ -18,6 +13,16 @@ public enum SessionCreationDefaults {
             throw OrcError("Multiple projects match '\(query)'. Use --project id:ID or --project path:/absolute/path to choose one.")
         }
         return project
+    }
+
+    /// The projects a selector names. `id:` takes a project's id or its repository id, the part before `::`.
+    public static func projects(matching query: String, in projects: [Workspace]) -> [Workspace] {
+        projects.filter {
+            if query.hasPrefix("id:") { let id = String(query.dropFirst(3)); return $0.id == id || $0.id.hasPrefix(id + "::") }
+            if query.hasPrefix("path:") { return $0.path == String(query.dropFirst(5)) }
+            if query.hasPrefix("/") { return $0.path == query }
+            return $0.name == query || URL(fileURLWithPath: $0.path).lastPathComponent == query
+        }
     }
 
     public static func name(excluding existing: Set<String>) throws -> String {

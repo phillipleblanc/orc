@@ -13,7 +13,10 @@ const ORC = process.env.ORC_CLI ?? '/Applications/Orc.app/Contents/Resources/orc
 const DRIVER = join(here, 'fixtures', 'attach-driver.py')
 const run = promisify(execFile)
 
-test('the real orc CLI lists, creates and attaches, and reattaches after its runtime restarts', { skip: !existsSync(ORC) && `no Orc CLI at ${ORC}` }, async (t) => {
+const skip = !existsSync(ORC) && `no Orc CLI at ${ORC}`
+
+/** A runtime profile and settings folder of the test's own, with a project folder and the CLI that uses them. */
+async function setUp(t: { after: (fn: () => unknown) => void }) {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))
   const config = join(profile, 'orc-config')
@@ -33,6 +36,11 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
     const owner = Number(await readFile(join(profile, 'frontend.lock'), 'utf8').catch(() => '0'))
     if (owner > 0) try { process.kill(owner, 'SIGKILL') } catch {}
   })
+  return { profile, config, project, env, orc, frontend }
+}
+
+test('the real orc CLI lists, creates and attaches, and reattaches after its runtime restarts', { skip }, async (t) => {
+  const { profile, config, project, env, orc, frontend } = await setUp(t)
   // Orc requests its own access over the local socket the first time it reaches the runtime.
   assert.match(await orc('status'), /The runtime is running/)
   assert.ok(existsSync(join(config, 'connection.json')))
@@ -72,4 +80,22 @@ test('the real orc CLI lists, creates and attaches, and reattaches after its run
 
   assert.equal((await orc('close', 'shell-a')).trim(), 'Closed shell-a.')
   assert.deepEqual(JSON.parse(await orc('list', '--json')), [])
+})
+
+test('the real orc CLI removes a project once no session belongs to it, and stops using it as the default', { skip }, async (t) => {
+  const { profile, config, project, orc } = await setUp(t)
+  await orc('projects', 'add', project, '--default')
+  await orc('new', 'terminal', '--name', 'shell-a', '--project', `path:${project}`, '--json')
+  const [{ id }] = JSON.parse(await orc('projects', '--json'))
+  const selector = `id:${id.split('::')[0]}`
+  await assert.rejects(orc('projects', 'remove', selector), { stderr: /session shell-a still belongs to project; close it/ })
+  assert.equal(JSON.parse(await orc('projects', '--json')).length, 1)
+
+  await orc('close', 'shell-a')
+  assert.match(await orc('projects', 'remove', selector), /^Removed project \(.*\); its folder is unchanged\.\nIt was the default project/)
+  assert.deepEqual(JSON.parse(await orc('projects', '--json')), [])
+  assert.deepEqual(JSON.parse(await readFile(join(profile, 'projects.json'), 'utf8')), [])
+  assert.equal(JSON.parse(await readFile(join(config, 'config.json'), 'utf8')).defaultProject, undefined)
+  assert.ok(existsSync(project))
+  await assert.rejects(orc('projects', 'remove', selector), { stderr: /No project matches/ })
 })

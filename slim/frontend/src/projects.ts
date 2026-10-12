@@ -59,4 +59,10 @@ export class Projects {
     await writeJsonFile(this.file, this.projects)
     return project
   }
+
+  /** Forgets the project; its folder is left as it is. */
+  async remove(project: Project): Promise<void> {
+    this.projects = this.projects.filter((candidate) => candidate.id !== project.id)
+    await writeJsonFile(this.file, this.projects)
+  }
 }

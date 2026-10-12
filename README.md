@@ -13,6 +13,7 @@ Runtime state lives in `~/.config/orc/runtime` (or `ORC_CONFIG_DIR/runtime`; `OR
 orc list
 orc projects
 orc projects add /absolute/path/to/project --default
+orc projects remove path:/absolute/path/to/project
 orc new
 orc new codex
 orc new pi --name fleet-rules
@@ -25,7 +26,7 @@ orc close fleet-rules
 
 Run **`orc new`** to start the configured agent in the configured project and attach to it immediately in an interactive terminal. The default agent is **Codex**. Register a project folder with `orc projects add PATH --default`, or select one with `--project`. Omitting `--name` generates an unused short **verb-noun** name, such as `glide-mouse`. Choose an agent with `orc new codex`, `orc new claude`, or `orc new pi`; `orc new terminal` starts a shell without an agent. Agent commands must be installed and available to your login shell. Use `--command 'COMMAND'` for a custom command instead of a session type. Noninteractive use prints the attach command without opening a terminal; `--json` retains its creation-only output for scripts.
 
-Use **`--project SELECTOR`** to choose another registered project by name, absolute path, `path:/absolute/path`, or `id:ID`. `orc projects` lists available choices. `list`, `projects`, and `new` support `--json`; creation JSON includes the name, type, project, handle, and attach command.
+Use **`--project SELECTOR`** to choose another registered project by name, absolute path, `path:/absolute/path`, or `id:ID`, where ID is the id `orc projects` lists or its part before `::`. `orc projects` lists available choices. `orc projects remove SELECTOR` forgets a project and leaves its folder as it is; it refuses while sessions belong to the project, and clears the default project when it was that one. `list`, `projects`, and `new` support `--json`; creation JSON includes the name, type, project, handle, and attach command.
 The app and CLI read session defaults from **`~/.config/orc/config.json`**:
 
 ```json

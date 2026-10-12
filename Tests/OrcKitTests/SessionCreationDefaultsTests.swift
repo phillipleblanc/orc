@@ -50,4 +50,12 @@ final class SessionCreationDefaultsTests: XCTestCase {
         XCTAssertThrowsError(try SessionCreationDefaults.project("unknown", in: projects))
         XCTAssertThrowsError(try SessionCreationDefaults.project("id:loc", in: projects))
     }
+    func testIdSelectorsTakeTheRepositoryIdOfAProject() throws {
+        let project = Workspace(id: "a0daf6f8::/code/one", path: "/code/one", displayName: "one", hostId: "local")
+        let other = Workspace(id: "a0daf6f8-2::/code/two", path: "/code/two", displayName: "two", hostId: "local")
+        for selector in ["id:a0daf6f8", "id:a0daf6f8::/code/one"] {
+            XCTAssertEqual(SessionCreationDefaults.projects(matching: selector, in: [project, other]), [project])
+        }
+        XCTAssertEqual(SessionCreationDefaults.projects(matching: "id:a0daf6f8-", in: [project, other]), [])
+    }
 }

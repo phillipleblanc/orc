@@ -115,6 +115,10 @@ public struct SessionService {
         }
         return project
     }
+    /// Forgets a project; the runtime refuses while sessions belong to it. Its folder is left as it is.
+    public func removeProject(_ project: Workspace) async throws {
+        _ = try await LocalRPC.call("repo.remove", ["repo": "id:" + project.id])
+    }
     public func create(name: String, worktree: String, command: String?, mcp: [String] = []) async throws -> String {
         var params: [String: Any] = ["title": try validatedName(name), "worktree": worktree, "clientMutationId": UUID().uuidString]
         if let command, !command.isEmpty { params["command"] = command }

@@ -80,7 +80,29 @@ import COrcSupport
                 else { print("Registered \(safe(project.name))\(makeDefault ? " as the default project" : "").") }
                 return
             }
-            guard options.isEmpty else { throw OrcError("Usage: orc projects [--json]") }
+            if options.first == "remove" {
+                options.removeFirst()
+                guard options.count == 1, !options[0].hasPrefix("--") else {
+                    throw OrcError("Usage: orc projects remove SELECTOR [--json]")
+                }
+                let projects = try await service.workspaces()
+                let matches = SessionCreationDefaults.projects(matching: options[0], in: projects)
+                guard matches.count == 1, let project = matches.first else {
+                    if matches.isEmpty { throw OrcError("No project matches '\(options[0])'. Run `orc projects` to list them.") }
+                    throw OrcError("Multiple projects match '\(options[0])'. Choose one with id:ID or path:/absolute/path.")
+                }
+                let defaultProject = (try? OrcConfiguration.load())?.defaultProject ?? ""
+                let wasDefault = !defaultProject.isEmpty && SessionCreationDefaults.projects(matching: defaultProject, in: projects).map(\.id) == [project.id]
+                try await service.removeProject(project)
+                if wasDefault { try OrcConfiguration.setDefaultProject(nil) }
+                if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(project))) }
+                else {
+                    print("Removed \(safe(project.name)) (\(safe(project.path))); its folder is unchanged.")
+                    if wasDefault { print("It was the default project; choose another with `orc projects add PATH --default`.") }
+                }
+                return
+            }
+            guard options.isEmpty else { throw OrcError("Usage: orc projects [add PATH [--default] | remove SELECTOR] [--json]") }
             let projects = try await service.workspaces()
             if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(projects))) }
             else { for project in projects { print("\(safe(project.name))\t\(safe(project.path))\t\(project.id)") } }
@@ -349,6 +371,7 @@ import COrcSupport
     orc list [--json]                         List sessions
     orc projects [--json]                    List projects
     orc projects add PATH [--default]        Register a project folder
+    orc projects remove SELECTOR [--json]    Forget a project with no sessions; its folder is unchanged
     orc new [codex|claude|pi|durable|terminal] Create and attach (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
             [--project SELECTOR] [--json]    Override the configured project

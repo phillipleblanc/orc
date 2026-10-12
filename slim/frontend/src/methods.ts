@@ -184,6 +184,17 @@ export function createHandlers(runtime: Runtime): Handlers {
       return { repo: { id: project.id, path: project.path, displayName: project.displayName } }
     },
 
+    'repo.remove': async (params) => {
+      const project = typeof params.repo === 'string' ? projects.resolve(params.repo) : undefined
+      if (!project) throw new RpcError('not_found', `no project ${String(params.repo)}`)
+      const names = store.list().filter((session) => session.meta.project === project.id).map((session) => session.meta.name)
+      if (names.length === 1) throw new RpcError('in_use', `session ${names[0]} still belongs to ${project.displayName}; close it, then remove the project`)
+      if (names.length > 1) throw new RpcError('in_use', `sessions ${names.join(', ')} still belong to ${project.displayName}; close them, then remove the project`)
+      await projects.remove(project)
+      catalog.changed()
+      return { repo: { id: project.id, path: project.path, displayName: project.displayName } }
+    },
+
     'terminal.list': (params) => {
       const worktree = typeof params.worktree === 'string' ? catalog.resolveWorktree(params.worktree) : undefined
       const terminals = (worktree ? catalog.sessionsIn(worktree.id) : store.list()).map(describe)

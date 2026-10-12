@@ -296,7 +296,8 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
 
 - **Local socket:** `status.get`, `terminal.list`, `terminal.create`, `terminal.rename`, `terminal.send`,
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
-  and `repo.add` use Orca's request and result shapes, including agent identity and status.
+  and `repo.add` use Orca's request and result shapes, including agent identity and status. `repo.remove` (`repo`, a
+  project selector) forgets a project, and refuses with `in_use` while sessions belong to it.
   `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
   access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
   `brief.refresh`, `brief.settings` and `brief.configure` serve agents' status briefs written from their transcripts;
