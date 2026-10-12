@@ -2,7 +2,7 @@ import { Type, type Context, type Tool } from '@earendil-works/pi-ai'
 import { getSupportedThinkingLevels, type MutableModels } from '@earendil-works/pi-ai/models'
 import { validateToolArguments } from '@earendil-works/pi-ai/utils/validation'
 import { piModels, piScopedModels } from '../durable/pi-models.ts'
-import { briefPrompt, parseBrief, REPORT_PULL_REQUEST, SYSTEM_PROMPT, type Brief } from './prompt.ts'
+import { briefPrompt, namedPullRequests, parseBrief, REPORT_PULL_REQUESTS, SYSTEM_PROMPT, type Brief } from './prompt.ts'
 import type { BriefRequest } from './service.ts'
 
 const TIMEOUT_MS = 5 * 60_000
@@ -10,9 +10,9 @@ const TIMEOUT_MS = 5 * 60_000
 const MAX_ROUNDS = 3
 
 const REPORT_TOOL: Tool = {
-  name: REPORT_PULL_REQUEST,
-  description: 'Links a GitHub pull request to the agent: one it opened or pushes commits to, which it must get through review and CI. Orc then tells the agent about failing checks, review comments and merge conflicts on it.',
-  parameters: Type.Object({ url: Type.String({ description: 'The pull request link, https://github.com/OWNER/REPO/pull/NUMBER' }) })
+  name: REPORT_PULL_REQUESTS,
+  description: 'Links GitHub pull requests to the agent: ones it opened or pushes commits to, which it must get through review and CI. Orc then tells the agent about failing checks, review comments and merge conflicts on them.',
+  parameters: Type.Object({ urls: Type.Array(Type.String({ description: 'A pull request link, https://github.com/OWNER/REPO/pull/NUMBER' }), { minItems: 1 }) })
 }
 
 /** A model Pi can use, for choosing the one briefs are written with. */
@@ -32,7 +32,8 @@ export async function writeBrief(request: BriefRequest, models: MutableModels = 
   const model = slash > 0 ? models.getModel(request.model.slice(0, slash), request.model.slice(slash + 1)) : undefined
   if (!model) throw new Error(`Pi has no model ${request.model}`)
   const [least] = getSupportedThinkingLevels(model)
-  const reporting = request.pullRequests
+  // The tool is offered only when the log names pull requests not yet linked, which the model is asked about.
+  const reporting = request.pullRequests && namedPullRequests(request.digest, request.pullRequests.linked).length > 0 ? request.pullRequests : undefined
   const context: Context = {
     systemPrompt: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: briefPrompt(request.digest, request.about, reporting?.linked, request.dismissed), timestamp: Date.now() }],
@@ -46,16 +47,18 @@ export async function writeBrief(request: BriefRequest, models: MutableModels = 
     if (calls.length === 0 || !reporting) return parseBrief(text)
     context.messages.push(answer)
     for (const call of calls) {
-      let result: string
+      let results: string[]
       try {
-        if (call.name !== REPORT_PULL_REQUEST) throw new Error(`There is no tool ${call.name}.`)
-        result = await reporting.report(String(validateToolArguments(REPORT_TOOL, call).url))
+        if (call.name !== REPORT_PULL_REQUESTS) throw new Error(`There is no tool ${call.name}.`)
+        const urls: unknown[] = validateToolArguments(REPORT_TOOL, call).urls
+        results = []
+        for (const url of urls) results.push(await reporting.report(String(url)))
       } catch (error) {
-        result = (error as Error).message
+        results = [(error as Error).message]
       }
       context.messages.push({
-        role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: result }],
-        isError: !/^(Recorded|Already)/.test(result), timestamp: Date.now()
+        role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: results.join('\n') }],
+        isError: results.some((result) => !/^(Recorded|Already)/.test(result)), timestamp: Date.now()
       })
     }
     // A brief written beside the calls needs no further round.

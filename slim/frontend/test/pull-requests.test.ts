@@ -275,7 +275,7 @@ test('the brief’s model links pull requests through a tool and is told what ca
   faux.setResponses([
     (context) => {
       prompts.push(JSON.stringify(context.messages))
-      return fauxAssistantMessage([fauxToolCall('report_pull_request', { url: 'https://github.com/spiceai/spiceai/pull/14785' }), fauxToolCall('report_pull_request', { url: 'https://github.com/spiceai/spiceai/pull/1' })], { stopReason: 'toolUse' })
+      return fauxAssistantMessage([fauxToolCall('report_pull_requests', { urls: ['https://github.com/spiceai/spiceai/pull/14785', 'https://github.com/spiceai/spiceai/pull/1'] })], { stopReason: 'toolUse' })
     },
     (context) => {
       for (const message of context.messages as any[]) if (message.role === 'toolResult') results.push(`${message.isError ? 'error' : 'ok'}: ${message.content[0].text}`)
@@ -284,12 +284,14 @@ test('the brief’s model links pull requests through a tool and is told what ca
   ])
   const reported: string[] = []
   const brief = await writeBrief({
-    digest: { items: [{ role: 'result', text: 'https://github.com/spiceai/spiceai/pull/14785' }], truncated: false },
+    digest: { items: [{ role: 'result', text: 'https://github.com/spiceai/spiceai/pull/14785 after spicehq/spiceai#1673' }], truncated: false },
     about: { name: 'fixer', agent: 'pi', state: 'idle' }, model: 'lab/qwen',
     pullRequests: { linked: ['spicehq/spiceai#1673'], report: async (url) => { reported.push(url); return url.endsWith('/1') ? 'Not recorded: it does not appear in the log or summary.' : 'Recorded: Orc watches it.' } }
   }, models)
   assert.equal(brief.headline, 'Fixing lint')
   assert.deepEqual(reported, ['https://github.com/spiceai/spiceai/pull/14785', 'https://github.com/spiceai/spiceai/pull/1'])
-  assert.deepEqual(results, ['ok: Recorded: Orc watches it.', 'error: Not recorded: it does not appear in the log or summary.'])
-  assert.match(prompts[0], /Orc already watches these pull requests for this agent: https:\/\/github\.com\/spicehq\/spiceai\/pull\/1673\. Call report_pull_request only/)
+  assert.deepEqual(results, ['error: Recorded: Orc watches it.\nNot recorded: it does not appear in the log or summary.'])
+  // The model is asked about the pull requests the log names that are not linked yet.
+  assert.match(prompts[0], /names these pull requests, which Orc does not watch for this agent yet: https:\/\/github\.com\/spiceai\/spiceai\/pull\/14785\. Call report_pull_requests once/)
+  assert.doesNotMatch(prompts[0], /spicehq\/spiceai\/pull\/1673/)
 })

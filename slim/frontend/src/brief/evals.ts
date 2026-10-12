@@ -130,6 +130,32 @@ export const EVAL_CASES: EvalCase[] = [
     report: [],
     needsYou: false,
     mentions: [['any', /14792|PR3/i]]
+  },
+  {
+    id: 'opened-several-pull-requests',
+    title: 'Reports every pull request the agent opened across repositories, not one it reviewed',
+    about: { name: 'dependency-fixes', agent: 'claude', state: 'idle' },
+    linked: [],
+    digest: {
+      firstPrompt: 'Fix the open Dependabot alerts in the cloud repositories, one pull request per repository. Review spicehq/cloud#6188 first; it touches the same lockfile.',
+      items: [
+        { role: 'tool', text: 'Bash {"command":"gh pr view 6188 -R spicehq/cloud --json title,files"}' },
+        { role: 'result', text: '{"title":"Bump sharp","files":[{"path":"package-lock.json"}]}' },
+        { role: 'assistant', text: 'spicehq/cloud#6188 only bumps sharp; it does not fix the alerts. I will open my own pull requests.' },
+        ...['ai-platform#10829', 'cloud#6252', 'team#615', 'spice-cloud-deploy-action#38'].flatMap((key) => {
+          const [repo, number] = key.split('#')
+          return [
+            { role: 'tool' as const, text: `Bash {"command":"cd ~/code/${repo} && npm audit fix && git commit -am 'Fix Dependabot alerts' && git push -u origin vuln-fixes && gh pr create --fill"}` },
+            { role: 'result' as const, text: `added 3 packages, changed 12 packages\nhttps://github.com/spicehq/${repo}/pull/${number}` }
+          ]
+        }),
+        { role: 'assistant', text: 'Opened four pull requests, one per repository. CI is running on all of them.' }
+      ],
+      truncated: false
+    },
+    report: ['spicehq/ai-platform#10829', 'spicehq/cloud#6252', 'spicehq/team#615', 'spicehq/spice-cloud-deploy-action#38'],
+    needsYou: false,
+    mentions: [['any', /four|10829|6252/i]]
   }
 ]
 

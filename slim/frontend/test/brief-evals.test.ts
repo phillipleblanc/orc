@@ -11,7 +11,7 @@ import type { BriefRequest } from '../src/brief/service.ts'
 import { writeBrief } from '../src/brief/writer.ts'
 
 const brief = (overrides: Partial<Brief> = {}): Brief => ({
-  headline: 'Waiting on CI for PR 14785', goal: 'Add a cold-start test', progress: ['Opened #14785; Clippy fixed; PR3 checks pass'], now: 'Running the refresh test with cargo',
+  headline: 'Waiting on CI for PR 14785', goal: 'Add a cold-start test', progress: ['Opened #14785; Clippy fixed; PR3 checks pass; four PRs open'], now: 'Running the refresh test with cargo',
   next: ['a', 'b', 'c'], needsYou: null, ...overrides
 })
 
@@ -64,7 +64,7 @@ test('evals run through the brief writer, so a model that never calls the tool f
   const report = await evaluateBriefModel('lab/small', (request) => writeBrief(request, models))
   assert.deepEqual(report.results.map((result) => [result.id, result.passed]), [
     ['opened-pull-request', false], ['pushed-to-pull-request', false], ['question-for-person', false], ['working-no-pull-requests', true],
-    ['dismissed-question', true]
+    ['dismissed-question', true], ['opened-several-pull-requests', false]
   ])
   assert.match(report.results[1].failures.join('\n'), /did not report spiceai\/spiceai#14801/)
 })

@@ -31,22 +31,39 @@ const INSTRUCTIONS = `Answer with only this JSON object, no Markdown:
 
 Go by where the log ends; it is newer than the summary. Be concrete: name PRs, files, commands and numbers from the log. Plain text in every field.`
 
-/** The tool that links a pull request to the agent, so Orc watches it. */
-export const REPORT_PULL_REQUEST = 'report_pull_request'
+/** The tool that links pull requests to the agent, so Orc watches them. */
+export const REPORT_PULL_REQUESTS = 'report_pull_requests'
+
+// At most this many named pull requests are asked about, the newest.
+const NAMED_LIMIT = 40
+
+/** The pull requests the summary or log names, other than `linked` (`owner/name#number`), as links. */
+export function namedPullRequests(digest: Digest, linked: string[]): string[] {
+  const skip = new Set(linked.map((key) => key.toLowerCase()))
+  const named = new Map<string, string>()
+  for (const match of shownText(digest).matchAll(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)|\b([\w.-]+\/[\w.-]+)#(\d+)\b/g)) {
+    const key = `${match[1] ?? match[3]}#${match[2] ?? match[4]}`
+    if (skip.has(key.toLowerCase())) continue
+    named.delete(key.toLowerCase())
+    named.set(key.toLowerCase(), key)
+  }
+  return [...named.values()].slice(-NAMED_LIMIT).map(pullRequestLink)
+}
 
 /**
  * The request for a brief: the agent, its state, its summary and its log since. With `linked`, the pull requests
- * already linked to the agent, the model is asked to report the others it is responsible for. `dismissed` is the
- * question its person last marked read, which the brief must not raise again.
+ * already linked to the agent, the model is asked which of the others its log names the agent is responsible for.
+ * `dismissed` is the question its person last marked read, which the brief must not raise again.
  */
 export function briefPrompt(digest: Digest, about: { name: string; agent: string; state: string }, linked?: string[], dismissed?: string): string {
   const log = digest.items.map((entry) => `${LABELS[entry.role]}: ${entry.text}`).join('\n')
+  const named = linked ? namedPullRequests(digest, linked) : []
   return [
     `Session "${about.name}", a ${about.agent} agent, is ${about.state} now.`,
     digest.summary ? `<summary>\n${digest.summary}\n</summary>` : digest.firstPrompt ? `<first_request>\n${digest.firstPrompt}\n</first_request>` : '',
     `<log${digest.truncated ? ' note="older entries left out"' : ''}>\n${log || '(nothing since)'}\n</log>`,
     dismissed ? `The person already saw this question and marked it read: "${dismissed}". Do not put it, or anything that asks the same thing in other words, in needsYou again: needsYou is null unless the agent waits on the person for something else.` : '',
-    linked ? `Orc already watches these pull requests for this agent: ${linked.map(pullRequestLink).join(', ') || 'none'}. Call ${REPORT_PULL_REQUEST} only for a pull request that is not in that list and that the summary or log shows this agent opened or pushes commits to; usually there is none, and then you call nothing.` : '',
+    named.length > 0 ? `The summary or log names these pull requests, which Orc does not watch for this agent yet: ${named.join(', ')}. Call ${REPORT_PULL_REQUESTS} once, with every one of them that this agent opened or pushes commits to, and not ones it only read, reviewed or mentioned. Then answer with the brief.` : '',
     INSTRUCTIONS
   ].filter(Boolean).join('\n\n')
 }
