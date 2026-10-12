@@ -38,7 +38,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from '@earendil-works/pi-durable/tools'
 import { piAgentDir } from './credentials.ts'
 import { installFaux } from './faux.ts'
-import { piModels, piScopedModels, piSettings } from './pi-models.ts'
+import { piModels, piScopedModels, piSettings, resolvePiModel } from './pi-models.ts'
 import { DURABLE_RESTART_STATUS, durableConversationId, durableSocket } from './paths.ts'
 import { messageText, TerminalView } from './terminal-view.ts'
 import { durableCodeVersion } from './version.ts'
@@ -69,20 +69,6 @@ Messages beginning with a line like "[from NAME]" come from another agent or a s
 const models = piModels()
 let fauxModel: { provider: string; modelId: string } | undefined
 if (values.faux === true) fauxModel = installFaux(models)
-
-/** `provider/id`, or a bare model ID looked up across providers; Pi's default model when absent. */
-function resolveModel(spec: string | undefined): { provider: string; modelId: string } | undefined {
-  if (fauxModel) return fauxModel
-  const settings = piSettings()
-  const wanted = spec ?? (settings.defaultProvider && settings.defaultModel ? `${settings.defaultProvider}/${settings.defaultModel}` : undefined)
-  if (!wanted) return undefined
-  const slash = wanted.indexOf('/')
-  if (slash > 0 && models.getModel(wanted.slice(0, slash), wanted.slice(slash + 1))) {
-    return { provider: wanted.slice(0, slash), modelId: wanted.slice(slash + 1) }
-  }
-  const found = models.getModels().find((model) => model.id === wanted)
-  return found ? { provider: found.provider, modelId: found.id } : undefined
-}
 
 /** The models to offer: Pi's scoped models (see `piScopedModels`), and always the conversation's model. */
 async function offeredModels(current?: { provider: string; modelId: string }) {
@@ -142,7 +128,7 @@ const harness = await Harness.open(storage, {
   registry,
   env: (input) => new NodeExecutionEnv({ cwd: input.cwd ?? cwd })
 }, context)
-const model = resolveModel(typeof values.model === 'string' ? values.model : undefined)
+const model = fauxModel ?? await resolvePiModel(models, typeof values.model === 'string' ? values.model : undefined)
 const thinking = typeof values.thinking === 'string' ? values.thinking : piSettings().defaultThinkingLevel
 const root = await harness.root(context, { agent: { cwd, ...(model ? { model } : {}), ...(thinking ? { thinkingLevel: thinking as any } : {}) } })
 // The thinking level stays one the model supports, as Pi clamps it.

@@ -31,12 +31,29 @@ export function piModels(): MutableModels {
 }
 
 /** Pi's scope (`enabledModels`, which `/scoped-models` saves) resolved against the signed-in providers' models, or all of them without one. */
-export async function piScopedModels(models: MutableModels): Promise<ScopedModel<Awaited<ReturnType<MutableModels['getAvailable']>>[number]>[]> {
+export async function piScopedModels(models: MutableModels, settings: PiSettings = piSettings()): Promise<ScopedModel<Awaited<ReturnType<MutableModels['getAvailable']>>[number]>[]> {
   const available = await models.getAvailable()
-  const patterns = piSettings().enabledModels
+  const patterns = settings.enabledModels
   return Array.isArray(patterns) && patterns.length > 0
     ? resolveModelScope(patterns.filter((pattern): pattern is string => typeof pattern === 'string'), available)
     : available.map((model) => ({ model }))
+}
+
+/**
+ * `provider/id`, or a bare model ID, which several providers may serve: the one in Pi's scope, else one Pi is signed
+ * in to, else any. Pi's default model when `spec` is absent.
+ */
+export async function resolvePiModel(models: MutableModels, spec: string | undefined, settings: PiSettings = piSettings()): Promise<{ provider: string; modelId: string } | undefined> {
+  const wanted = spec ?? (settings.defaultProvider && settings.defaultModel ? `${settings.defaultProvider}/${settings.defaultModel}` : undefined)
+  if (!wanted) return undefined
+  const slash = wanted.indexOf('/')
+  if (slash > 0 && models.getModel(wanted.slice(0, slash), wanted.slice(slash + 1))) {
+    return { provider: wanted.slice(0, slash), modelId: wanted.slice(slash + 1) }
+  }
+  const named = (model: { id: string }) => model.id === wanted
+  const found = (await piScopedModels(models, settings)).map(({ model }) => model).find(named)
+    ?? (await models.getAvailable()).find(named) ?? models.getModels().find(named)
+  return found ? { provider: found.provider, modelId: found.id } : undefined
 }
 
 /**

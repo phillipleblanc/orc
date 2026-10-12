@@ -12,7 +12,7 @@ const PASTE_END = '\x1b[201~'
 
 type Entry = SnapshotEvent['entries'][number]
 type Block = { type: string; text?: string; name?: string; arguments?: Record<string, unknown> }
-type Message = { role: string; content: string | Block[]; isError?: boolean }
+type Message = { role: string; content: string | Block[]; isError?: boolean; stopReason?: string; errorMessage?: string }
 
 export type TerminalActions = {
   submit(text: string, mode: 'steer' | 'followUp'): void
@@ -93,8 +93,10 @@ export class TerminalView {
         break
       case 'message_end':
         if (event.entry.kind === 'pi.assistant') {
-          this.answerText = messageText(event.entry.model?.[0] as Message | undefined)
+          const message = event.entry.model?.[0] as Message | undefined
+          this.answerText = messageText(message)
           this.flush()
+          if (message?.stopReason === 'error' && message.errorMessage) this.print(`${RED}${message.errorMessage}${RESET}`)
         }
         else if (event.entry.kind === 'pi.compaction') this.print(`${DIM}── earlier context summarized ──${RESET}`)
         else if (event.entry.kind === 'pi.reset') this.print(`${DIM}── new context ──${RESET}`)
