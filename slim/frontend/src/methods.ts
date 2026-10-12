@@ -18,6 +18,7 @@ import type { PullRequestWatch } from './pull-requests/watch.ts'
 import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
 import type { WakeDirectory } from './wakes.ts'
 import type { NotificationQueue } from './notifications.ts'
+import { listMcpConfigs } from './mcp-configs.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
 export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1']
@@ -100,8 +101,10 @@ export function createHandlers(runtime: Runtime): Handlers {
     const cwd = typeof params.cwd === 'string' ? params.cwd : project?.path ?? homedir()
     const launch = isAgentKind(params.agent) ? { agent: params.agent as AgentKind, args: [] }
       : typeof params.command === 'string' && !Array.isArray(params.argv) ? agentCommand(params.command) : null
+    const mcp = Array.isArray(params.mcp) ? params.mcp.map(String) : []
+    if (mcp.length > 0 && !launch) throw new RpcError('invalid_argument', 'MCP configs are for agent sessions')
     if (launch) {
-      const created = await agents.launch({ agent: launch.agent, args: launch.args, name, cwd, project: project ? projects.worktreeId(project) : undefined,
+      const created = await agents.launch({ agent: launch.agent, args: launch.args, mcp, name, cwd, project: project ? projects.worktreeId(project) : undefined,
         cols: Number(params.cols ?? 120), rows: Number(params.rows ?? 40) })
       return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
     }
@@ -261,6 +264,7 @@ export function createHandlers(runtime: Runtime): Handlers {
         model: typeof params.model === 'string' ? params.model : undefined,
         effort: typeof params.effort === 'string' ? params.effort : undefined,
         args: Array.isArray(params.args) ? params.args.map(String) : undefined,
+        mcp: Array.isArray(params.mcp) ? params.mcp.map(String) : undefined,
         timeoutMs: Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 90_000))
       })
     },
@@ -285,6 +289,14 @@ export function createHandlers(runtime: Runtime): Handlers {
     'agent.status': (params) => agents.status(String(params.name)),
 
     'agent.wait': (params) => agents.wait(String(params.name), Math.min(MAX_WAIT_MS, Number(params.timeoutMs ?? 30_000))),
+
+    'mcp.list': (params) => {
+      const project = typeof params.project === 'string' ? projects.resolve(params.project) : undefined
+      if (params.project && !project) throw new RpcError('not_found', `no project ${params.project}`)
+      const dir = project?.path ?? (typeof params.cwd === 'string' ? params.cwd : undefined)
+      if (!dir) throw new RpcError('invalid_argument', 'choose a project or a directory')
+      return { configs: listMcpConfigs(dir) }
+    },
 
     'wake.create': (params) => wakes.create(String(params.name ?? ''), params),
 

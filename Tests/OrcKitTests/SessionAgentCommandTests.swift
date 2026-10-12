@@ -17,6 +17,12 @@ final class SessionAgentCommandTests: XCTestCase {
         XCTAssertThrowsError(try SessionAgentCommand(["spawn"]))
     }
 
+    func testSpawnTakesTheProjectsMcpConfigsByName() throws {
+        let command = try SessionAgentCommand(["spawn", "claude", "vanta-check", "--mcp", "vanta, jira,"])
+        XCTAssertEqual(SessionService.mcpNames(command.options["mcp"] ?? ""), ["vanta", "jira"])
+        XCTAssertThrowsError(try SessionAgentCommand(["send", "vanta-check", "--mcp", "vanta"]))
+    }
+
     func testSpawnWithoutAnAgentUsesTheDefaultAgent() throws {
         let named = try SessionAgentCommand(["spawn", "fix-ci", "--project", "orc"])
         XCTAssertNil(named.agent)

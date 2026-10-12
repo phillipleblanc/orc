@@ -111,6 +111,15 @@ with the login shell's environment, without variables that mark the frontend's o
 Codex starts with `--yolo` (no approval prompts and no sandbox) and Claude with
 `--dangerously-skip-permissions`; a copy of either flag in the caller's arguments is dropped.
 
+`mcp` (names) on `agent.spawn` and on an agent's `terminal.create` adds the servers of the project's
+`.mcp/NAME.json` files (`mcpServers` objects; `mcp-configs.ts`) to the agent's own: Claude gets
+`--mcp-config FILE`, Pi `--orc-mcp` with the files as a JSON array, which Orc's Pi extension
+registers with `pi.registerMcpServer` when the session starts, and Codex `-c mcp_servers.NAME.KEY=…`
+for `command`, `args`, `env`, `cwd`, `url` and `headers` (as `http_headers`). These are caller
+arguments, so a restarted or reopened agent keeps them. A durable agent, a session that is not an
+agent, an unknown name and a file without valid servers are refused. `mcp.list` (`project` or `cwd`)
+returns a project's configs, each with its servers or the reason it cannot be used.
+
 Status reporting is supplied per launch; nothing is written to `~/.codex`, `~/.claude` or `~/.pi`:
 
 | Agent | Mechanism |

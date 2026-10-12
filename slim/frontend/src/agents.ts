@@ -7,6 +7,7 @@ import { AgentMonitor } from './agent-monitor.ts'
 import { durableRequest } from './durable/connection.ts'
 import { durableSocket, newDurableStorage } from './durable/paths.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
+import { mcpArguments, resolveMcpConfigs } from './mcp-configs.ts'
 import type { Projects } from './projects.ts'
 import { RpcError } from './rpc-server.ts'
 import { sessionEnvironment } from './session-environment.ts'
@@ -38,6 +39,8 @@ export type SpawnOptions = {
   model?: string
   effort?: string
   args?: string[]
+  /** Optional MCP configs of the project (`.mcp/NAME.json`) whose servers the agent adds to its own. */
+  mcp?: string[]
   /** A conversation to continue instead of starting a new one. */
   resume?: ProviderSession
   /** Files copied into the new session's directory, such as a queue to keep. */
@@ -88,6 +91,7 @@ export class AgentDirectory extends EventEmitter {
     if (options.project && !project) throw new RpcError('not_found', `no project ${options.project}`)
     const cwd = options.cwd ?? project?.path
     if (!cwd) throw new RpcError('invalid_argument', 'choose a project or a working directory')
+    const mcp = resolveMcpConfigs(project?.path ?? cwd, options.mcp ?? [], options.agent)
     const login = await loginEnvironment()
     const executable = options.agent === 'durable' ? process.execPath : resolveExecutable(options.agent, login)
     if (!executable) throw new RpcError('not_found', `${options.agent} is not on the login shell's PATH`)
@@ -99,7 +103,7 @@ export class AgentDirectory extends EventEmitter {
     return this.store.create({
       name: options.name,
       cwd,
-      argv: agentArgv(options.agent, executable, hooks, { ...options, resume }),
+      argv: agentArgv(options.agent, executable, hooks, { ...options, args: [...mcpArguments(options.agent, mcp), ...(options.args ?? [])], resume }),
       env: sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: events, ORC_RUNTIME_DIR: this.profile }),
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,

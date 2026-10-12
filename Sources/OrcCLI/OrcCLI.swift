@@ -88,8 +88,9 @@ import COrcSupport
             let requestedProject = try value("--project")
             let requestedName = try value("--name")
             let customCommand = try value("--command")
+            let mcp = try value("--mcp").map(SessionService.mcpNames) ?? []
             guard options.count <= 1, options.first?.hasPrefix("--") != true else {
-                throw OrcError("Usage: orc new [codex|claude|pi|durable|terminal] [--name NAME] [--project SELECTOR] [--json]")
+                throw OrcError("Usage: orc new [codex|claude|pi|durable|terminal] [--name NAME] [--project SELECTOR] [--mcp NAME[,NAME]] [--json]")
             }
             let type: SessionType?
             if let requestedType = options.first {
@@ -103,7 +104,7 @@ import COrcSupport
                 throw OrcError("--command requires a non-empty command.")
             }
             let created = try await createSession(using: service, type: type, name: requestedName,
-                project: requestedProject, command: customCommand)
+                project: requestedProject, command: customCommand, mcp: mcp)
             if json { try emit(["handle": created.handle, "name": created.name, "type": created.type, "project": created.project,
                                "attachCommand": "orc attach \(shellQuote(created.name))"]) }
             else {
@@ -326,7 +327,7 @@ import COrcSupport
         }
     }
     @MainActor private static func createSession(using service: SessionService, type requestedType: SessionType? = nil,
-        name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil
+        name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil, mcp: [String] = []
     ) async throws -> (handle: String, name: String, type: String, project: String) {
         let config = try requestedType == nil || requestedProject == nil ? OrcConfiguration.load() : OrcConfiguration()
         let type = requestedType ?? config.defaultSessionType
@@ -338,7 +339,7 @@ import COrcSupport
             guard !listing.truncated else { throw OrcError("The runtime returned an incomplete session list. Supply a name with `orc new --name NAME`.") }
             name = try SessionCreationDefaults.name(excluding: Set(listing.terminals.map(\.name)))
         }
-        let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command)
+        let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command, mcp: mcp)
         return (handle, name, command == nil ? type.rawValue : "custom", project.name)
     }
     static func safe(_ text: String) -> String { String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }) }
@@ -351,6 +352,7 @@ import COrcSupport
     orc new [codex|claude|pi|durable|terminal] Create and attach (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
             [--project SELECTOR] [--json]    Override the configured project
+            [--mcp NAME[,NAME]]              Add the project's .mcp/NAME.json servers to the agent
     orc new --command 'COMMAND'              Run a custom command instead
     orc attach [NAME]                        Choose a session, or attach by name
                  [--read-only]              Watch without sending input or resizing

@@ -29,9 +29,18 @@ exit 0
 `
 
 /** Pi reports lifecycle events through an extension, mapped onto the hook event names above. */
-const PI_EXTENSION = `import { appendFileSync } from 'node:fs'
+const PI_EXTENSION = `import { appendFileSync, readFileSync } from 'node:fs'
 
 export default function (pi: any) {
+  // The project's MCP configs Orc turned on for this session: their servers join Pi's own.
+  pi.registerFlag('orc-mcp', { description: 'MCP config files, as a JSON array, whose servers this session adds', type: 'string' })
+  pi.on('session_start', () => {
+    const files = pi.getFlag('orc-mcp')
+    if (typeof files !== 'string' || !files) return
+    for (const path of JSON.parse(files)) {
+      for (const [name, server] of Object.entries(JSON.parse(readFileSync(path, 'utf8')).mcpServers ?? {})) pi.registerMcpServer(name, server)
+    }
+  })
   const file = process.env.ORC_AGENT_EVENTS
   if (!file) return
   const record = (event: string, ctx: any, extra: Record<string, unknown> = {}) => {

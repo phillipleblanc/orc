@@ -633,9 +633,14 @@ struct CreateSessionView: View {
     @State private var workspace = ""
     @State private var agent = "codex"
     @State private var customCommand = ""
+    /// The project's optional MCP configs, and those turned on for this agent.
+    @State private var mcpConfigs: [McpConfig] = []
+    @State private var mcp: Set<String> = []
     @State private var creating = false
     @State private var showProject = false
     @State private var error: String?
+    /// Codex, Claude and Pi can add a project's MCP servers; durable agents, terminals and custom commands cannot.
+    private var takesMcp: Bool { ["codex", "claude", "pi"].contains(agent) }
     private var fullName: String {
         guard let parent else { return name.trimmingCharacters(in: .whitespacesAndNewlines) }
         return parent.name + "-" + name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -664,6 +669,22 @@ struct CreateSessionView: View {
                     Text("Terminal").tag("terminal"); Text("Custom command").tag("custom")
                 }
                 if agent == "custom" { TextField("Command", text: $customCommand) }
+                if takesMcp, !mcpConfigs.isEmpty {
+                    LabeledContent("MCP servers") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(mcpConfigs) { config in
+                                Toggle(isOn: Binding(get: { mcp.contains(config.name) }, set: { on in
+                                    if on { mcp.insert(config.name) } else { mcp.remove(config.name) }
+                                })) {
+                                    Text(config.name)
+                                    Text(config.error ?? config.servers.joined(separator: ", ")).foregroundStyle(config.error == nil ? Color.secondary : .orange)
+                                }
+                                .disabled(config.error != nil)
+                            }
+                        }
+                    }
+                    .help("Servers from the project's .mcp folder, added to the agent's own")
+                }
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
@@ -697,6 +718,10 @@ struct CreateSessionView: View {
         .onChange(of: workspace) { _, project in
             if !project.isEmpty { error = nil }
         }
+        .task(id: workspace) {
+            mcp = []
+            mcpConfigs = workspace.isEmpty ? [] : (try? await model.service.mcpConfigs(worktree: workspace)) ?? []
+        }
     }
     func create() async {
         creating = true; defer { creating = false }
@@ -713,7 +738,7 @@ struct CreateSessionView: View {
                 sessionName = name
             }
             let handle = try await model.service.create(name: sessionName, worktree: workspace,
-                command: agent == "custom" ? customCommand : SessionType(rawValue: agent)?.command)
+                command: agent == "custom" ? customCommand : SessionType(rawValue: agent)?.command, mcp: takesMcp ? mcp.sorted() : [])
             await model.refresh(); model.selected = handle; dismiss()
         } catch { self.error = error.localizedDescription }
     }

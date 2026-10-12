@@ -74,6 +74,15 @@ public struct SessionListing: Decodable {
     public let truncated: Bool
 }
 
+/// An optional MCP config of a project: `.mcp/NAME.json` and the servers it names, or why it cannot be used.
+public struct McpConfig: Decodable, Hashable, Identifiable {
+    public let name: String
+    public let path: String
+    public let servers: [String]
+    public let error: String?
+    public var id: String { name }
+}
+
 /// A message a session asked Orc to show as a notification (`orc notify`).
 public struct SessionNotification: Decodable, Hashable {
     public let id: String
@@ -106,9 +115,10 @@ public struct SessionService {
         }
         return project
     }
-    public func create(name: String, worktree: String, command: String?) async throws -> String {
+    public func create(name: String, worktree: String, command: String?, mcp: [String] = []) async throws -> String {
         var params: [String: Any] = ["title": try validatedName(name), "worktree": worktree, "clientMutationId": UUID().uuidString]
         if let command, !command.isEmpty { params["command"] = command }
+        if !mcp.isEmpty { params["mcp"] = mcp }
         let response = try await LocalRPC.call("terminal.create", params, timeout: 60)
         guard let handle = (response["terminal"] as? [String: Any])?["handle"] as? String else {
             throw OrcError("The runtime did not return the created session. Check `orc list` before retrying.")
@@ -123,6 +133,14 @@ public struct SessionService {
         }
         _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
         try SessionNotesStore.rename(session.name, to: name)
+    }
+    /// The optional MCP configs of a project (`.mcp/NAME.json`) that an agent can add to its own servers.
+    public func mcpConfigs(worktree: String) async throws -> [McpConfig] {
+        try decode(await LocalRPC.call("mcp.list", ["project": worktree])["configs"] ?? [])
+    }
+    /// Names given as `NAME[,NAME]`.
+    public static func mcpNames(_ text: String) -> [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
     /// The notifications sessions asked Orc to show, each returned once.
     public func takeNotifications() async throws -> [SessionNotification] {
