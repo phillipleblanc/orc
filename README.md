@@ -1,6 +1,6 @@
 # Orc
 
-<img src="Resources/AppIcon.png" alt="Orc: an orca fin surfacing from a terminal window on an ocean-blue tile" width="128" height="128">
+<img src="Resources/AppIcon.png" alt="Orc: an orc peering over a terminal window on an orange tile" width="128" height="128">
 
 Native macOS clients for agent and shell sessions that keep running in the background. The SwiftUI app lists and creates sessions and attaches to them in embedded libghostty views. The `orc` CLI lists, creates, and attaches to those same sessions, and the official Orca mobile app can view and type into them.
 

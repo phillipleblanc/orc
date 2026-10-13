@@ -1,19 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1F5FC0"/><stop offset="1" stop-color="#0A1D44"/></linearGradient>
-    <radialGradient id="shine" cx="0.5" cy="0" r="0.75"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.35"/></filter>
+    <linearGradient id="bg" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FF9333"/><stop offset="1" stop-color="#F2540C"/></linearGradient>
+    <radialGradient id="shine" cx="512" cy="100" r="640" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.3"/></filter>
     <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
   </defs>
   <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)" filter="url(#shadow)"/>
-  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#shine)"/>
   <g clip-path="url(#tile)">
 
-    <path d="M 530,410 C 566,313 584,226 591,180 C 652,208 703,313 710,410 Z" fill="#F5F7FB" stroke="#F5F7FB" stroke-width="13" stroke-linejoin="round" />
-    <rect x="196" y="384" width="632" height="420" rx="64" fill="#0B0F17"/>
-    <path d="M 300,560 L 380,620 L 300,680" fill="none" stroke="#3FD8FF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="414" y="660" width="120" height="38" rx="19" fill="#3FD8FF"/>
+    <path d="M512,236 C422,236 348,264 328,346 C322,372 320,392 320,414 C262,398 210,376 160,346 C188,420 242,488 320,526 L320,620 L704,620 L704,526 C782,488 836,420 864,346 C814,376 762,398 704,414 C704,392 702,372 696,346 C676,264 602,236 512,236 Z" fill="#FFFFFF"/>
+    <g fill="url(#bg)"><circle cx="438" cy="452" r="28"/><circle cx="586" cy="452" r="28"/></g>
+    <path d="M382,384 L478,412 M642,384 L546,412" stroke="url(#bg)" stroke-width="22" stroke-linecap="round"/>
+
+    <!-- Window and fingers are each outlined in the tile's color, so they stand apart from what they overlap. -->
+    <rect x="176" y="524" width="672" height="300" rx="56" fill="none" stroke="url(#bg)" stroke-width="24"/>
+    <rect x="176" y="524" width="672" height="300" rx="56" fill="#FFFFFF"/>
+    <g fill="none" stroke="url(#bg)" stroke-width="16">
+      <rect x="238" y="494" width="34" height="62" rx="17"/><rect x="276" y="494" width="34" height="72" rx="17"/><rect x="314" y="494" width="34" height="66" rx="17"/>
+      <rect x="676" y="494" width="34" height="66" rx="17"/><rect x="714" y="494" width="34" height="72" rx="17"/><rect x="752" y="494" width="34" height="62" rx="17"/>
+    </g>
+    <g fill="#FFFFFF">
+      <rect x="238" y="494" width="34" height="62" rx="17"/><rect x="276" y="494" width="34" height="72" rx="17"/><rect x="314" y="494" width="34" height="66" rx="17"/>
+      <rect x="676" y="494" width="34" height="66" rx="17"/><rect x="714" y="494" width="34" height="72" rx="17"/><rect x="752" y="494" width="34" height="62" rx="17"/>
+    </g>
+
+    <path d="M282,630 L360,684 L282,738" fill="none" stroke="#F2540C" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="398" y="716" width="122" height="40" rx="20" fill="#F2540C"/>
 
   </g>
-  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="3"/>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#shine)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="3"/>
 </svg>
