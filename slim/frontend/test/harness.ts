@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -22,10 +22,37 @@ export function isolatedEnvironment(): NodeJS.ProcessEnv {
   return env
 }
 
+const PROFILES = process.env.TMPDIR ?? tmpdir()
+// The test process that made a profile. Sessions' terminal hosts outlive their frontend, and a test process that is
+// interrupted never destroys its profiles, so later test processes destroy those whose owner has gone.
+const OWNER = 'test-owner'
+
 export async function makeProfile(): Promise<string> {
   // Unix socket paths are limited to 104 bytes, so profiles stay short.
-  return mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'slim-'))
+  const profile = await mkdtemp(join(PROFILES, 'slim-'))
+  await writeFile(join(profile, OWNER), String(process.pid))
+  return profile
 }
+
+/** Destroys the profiles of test processes that ended without destroying them. */
+async function destroyAbandonedProfiles(): Promise<void> {
+  for (const name of await readdir(PROFILES).catch(() => [] as string[])) {
+    if (!name.startsWith('slim-')) continue
+    const owner = Number(await readFile(join(PROFILES, name, OWNER), 'utf8').catch(() => ''))
+    if (owner > 0 && !running(owner)) await destroyProfile(join(PROFILES, name))
+  }
+}
+
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+await destroyAbandonedProfiles()
 
 export class Frontend {
   readonly profile: string
