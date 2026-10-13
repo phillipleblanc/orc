@@ -1,8 +1,17 @@
 // The conversation of one durable agent, as chat views see it: the worker's snapshot and events
 // applied to one model, and its actions. Views listen for `change` events whose `detail` names what
-// changed: "reset" (render everything), "entries", "live", "status", "inbox", "usage", "info", "error".
+// changed: "reset" (render everything), "entries", "older" (entries added before the first),
+// "live", "status", "inbox", "usage", "info", "error".
+//
+// `entries` is always every entry from the first one held to the newest. The view starts with the newest
+// whole turns, from its cache (see transcript-cache.js) before it has even connected, and adds older ones
+// with `loadOlder`.
+import { TranscriptCache } from './transcript-cache.js'
 
 const RETRY_MS = [500, 1000, 2000, 4000]
+// A page of older entries from the cache: at least this many, back to the start of a turn, at most CACHE_MAX.
+const CACHE_MIN = 200
+const CACHE_MAX = 1000
 
 /** The settings a view was opened with, from its URL. */
 export function pageParams() {
@@ -35,15 +44,32 @@ export class DurableAgent extends EventTarget {
     this.pending = new Map()
     this.nextId = 1
     this.attempt = 0
+    // The conversation the entries are from, and whether it has entries before the first one held.
+    this.conversation = null
+    this.older = false
+    this.loading = null
+    this.cache = new TranscriptCache(session)
+    this.cached = this.cache.load(CACHE_MIN, CACHE_MAX).then((cached) => {
+      if (cached && !this.conversation) {
+        this.conversation = cached.conversation
+        this.older = cached.entries.length > 0 && (cached.entries[0].id > cached.floor || cached.older)
+        for (const entry of cached.entries) this.addEntry(entry)
+        if (cached.entries.length) this.emit('reset')
+      }
+    })
   }
 
   connect() {
     const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/chat/socket?session=${encodeURIComponent(this.session)}&token=${encodeURIComponent(this.token)}`
     const socket = new WebSocket(url)
     this.socket = socket
-    socket.onopen = () => {
+    socket.onopen = async () => {
       this.attempt = 0
-      this.request('subscribe').catch(() => {})
+      await this.cached
+      // With the entries it holds, the view asks only for newer ones.
+      const newest = this.entries.at(-1)?.id
+      this.asked = newest === undefined ? null : newest
+      this.request('subscribe', { pages: true, ...(this.asked === null ? {} : { after: this.asked, conversation: this.conversation }) }).catch(() => {})
     }
     socket.onmessage = (event) => this.receive(JSON.parse(event.data))
     socket.onclose = () => {
@@ -78,6 +104,36 @@ export class DurableAgent extends EventTarget {
   /** The tool result entry for a tool call, once it has one. */
   resultFor(callId) { return this.results.get(callId) }
 
+  /**
+   * Adds the whole turns before the first entry held, from the cache or else the agent, and returns whether it
+   * added any. Calls made while one is loading wait for it.
+   */
+  loadOlder() {
+    if (!this.older) return Promise.resolve(false)
+    this.loading ??= (async () => {
+      const before = this.entries[0].id
+      const conversation = this.conversation
+      let { entries, older } = await this.cache.before(before, CACHE_MIN, CACHE_MAX)
+      if (!entries.length) {
+        // Without a connection it waits for the next snapshot, which asks again.
+        if (!this.connected) return false
+        const page = await this.request('history', { before })
+        entries = page.entries
+        older = page.older
+        if (this.conversation === conversation) this.cache.prepend(conversation, entries, older, before)
+      }
+      // A snapshot from another conversation, or one that started over, replaced what this was for.
+      if (this.conversation !== conversation || this.entries[0]?.id !== before) return false
+      this.older = older && entries.length > 0
+      const added = entries.filter((entry) => !this.entryIds.has(entry.id))
+      for (const entry of added) this.indexEntry(entry)
+      this.entries = [...added, ...this.entries]
+      if (added.length) this.emit('older')
+      return added.length > 0
+    })().finally(() => { this.loading = null })
+    return this.loading
+  }
+
   receive(message) {
     if (message.id !== undefined && message.id !== null) {
       const waiter = this.pending.get(message.id)
@@ -86,18 +142,37 @@ export class DurableAgent extends EventTarget {
       return
     }
     switch (message.type) {
-      case 'snapshot':
+      case 'snapshot': {
         this.connected = true
         this.everConnected = true
         this.info = message.info
         this.inbox = message.inbox ?? []
         this.contextTokens = message.context ?? null
-        this.applySnapshot(message.snapshot, message.timing)
+        const { entries, ...state } = message.snapshot
+        this.applyState(state, message.timing)
+        if (message.after !== null && message.after === this.asked && message.conversation === this.conversation) {
+          // The newer entries, after the ones held.
+          const added = entries.filter((entry) => this.addEntry(entry))
+          this.cache.append(this.conversation, added, this.asked)
+          for (const what of ['entries', 'live', 'status', 'usage', 'inbox', 'info']) this.emit(what)
+          break
+        }
+        this.conversation = message.conversation
+        this.older = Boolean(message.older)
+        this.entries = []
+        this.entryIds.clear()
+        this.results.clear()
+        for (const entry of entries) this.addEntry(entry)
+        // A worker on older code sends every entry, of no named conversation.
+        if (this.conversation) this.cache.replace(this.conversation, entries, this.older)
         this.emit('reset')
         break
+      }
       case 'events': {
         const changed = new Set()
+        const newest = this.entries.at(-1)?.id ?? 0
         for (const event of message.events) this.apply(event, changed)
+        this.cache.append(this.conversation, this.entries.filter((entry) => entry.id > newest), newest)
         for (const what of changed) this.emit(what)
         break
       }
@@ -116,11 +191,8 @@ export class DurableAgent extends EventTarget {
     }
   }
 
-  applySnapshot(snapshot, timing = {}) {
-    this.entries = []
-    this.entryIds.clear()
-    this.results.clear()
-    for (const entry of snapshot.entries) this.addEntry(entry)
+  /** The live state of a snapshot: the run, its in-flight answer and tools, compactions and usage. */
+  applyState(snapshot, timing = {}) {
     this.busy = snapshot.run !== undefined
     this.runStartedAt = this.busy ? timing.runStartedAt ?? this.runStartedAt ?? null : null
     this.live = snapshot.generation?.message ? structuredClone(snapshot.generation.message) : null
@@ -130,13 +202,18 @@ export class DurableAgent extends EventTarget {
     this.usage = snapshot.usage ?? this.usage
   }
 
+  /** Adds an entry newer than those held; returns whether it was new. */
   addEntry(entry) {
     if (this.entryIds.has(entry.id)) return false
-    this.entryIds.add(entry.id)
+    this.indexEntry(entry)
     this.entries.push(entry)
+    return true
+  }
+
+  indexEntry(entry) {
+    this.entryIds.add(entry.id)
     const message = entry.model?.[0]
     if (entry.kind === 'pi.tool-result' && message?.toolCallId) this.results.set(message.toolCallId, entry)
-    return true
   }
 
   argsOf(callId) {
@@ -152,8 +229,10 @@ export class DurableAgent extends EventTarget {
   apply(event, changed) {
     switch (event.type) {
       case 'snapshot':
-        this.applySnapshot(event)
-        changed.add('reset')
+        // The stream started over after falling behind: the live state, and the entries after those held.
+        this.applyState(event)
+        for (const entry of event.entries) if (this.addEntry(entry)) changed.add('entries')
+        changed.add('live').add('status').add('usage')
         break
       case 'run_start':
         this.busy = true

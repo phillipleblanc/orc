@@ -14,6 +14,10 @@ const QUEUE_LABELS = { steer: 'Next step', followUp: 'Queued' }
 const $ = (id) => document.getElementById(id)
 const STEP_VERBS = { bash: 'Running', read: 'Reading', write: 'Writing', edit: 'Editing' }
 const TOAST_MS = 8000
+// Older turns load in the background until the view holds this many entries, and beyond while it is near the top.
+const OLDER_AUTO = 3000
+const OLDER_PAUSE_MS = 50
+const OLDER_RETRY_MS = 3000
 const narrow = matchMedia('(max-width: 900px)')
 
 const agent = new DurableAgent()
@@ -94,10 +98,7 @@ function renderAll() {
   transcript.reset()
   rail.signatures = {}
   renderChrome()
-  if (agent.connected && !modelsRequested) {
-    modelsRequested = true
-    picker.load().then(() => rail.setModels(picker.models), () => {})
-  }
+  pullOlder()
 }
 
 /** Applies the changes gathered since the last frame. */
@@ -105,13 +106,46 @@ function flush() {
   frame = 0
   const changes = pending
   pending = new Set()
+  if (changes.has('older')) transcript.prepend()
   if (changes.has('entries') || changes.has('live') || changes.has('status')) transcript.update(changes)
   if (changes.has('error')) showAgentErrors()
   if (changes.has('status') && !agent.connected) modelsRequested = false
   renderChrome()
+  pullOlder()
 }
 
+let pulling = false
+let pullAgain = false
+let pullFailedAt = -Infinity
+
+const nearTop = () => $('scroller').scrollTop < $('scroller').clientHeight
+
+/** Loads older turns a page at a time, pausing between pages unless the view is near the top. */
+async function pullOlder() {
+  pullAgain = true
+  if (pulling || performance.now() - pullFailedAt < OLDER_RETRY_MS) return
+  pulling = true
+  while (pullAgain) {
+    pullAgain = false
+    try {
+      while (agent.older && (agent.entries.length < OLDER_AUTO || nearTop()) && await agent.loadOlder()) {
+        await new Promise((resolve) => setTimeout(resolve, nearTop() ? 0 : OLDER_PAUSE_MS))
+      }
+    } catch {
+      pullFailedAt = performance.now()
+      break
+    }
+  }
+  pulling = false
+}
+
+$('scroller').addEventListener('scroll', () => { if (nearTop()) pullOlder() }, { passive: true })
+
 function renderChrome() {
+  if (agent.connected && !modelsRequested) {
+    modelsRequested = true
+    picker.load().then(() => rail.setModels(picker.models), () => {})
+  }
   const status = statusOf()
   renderTopbar(status)
   picker.render()

@@ -150,7 +150,9 @@ const chat = new ChatServer((name) => {
   const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
   return storage ? durableSocket(storage) : null
 })
-await chat.listen()
+const chatPort = join(profile, 'chat-port')
+await chat.listen(Number(await readFile(chatPort, 'utf8').catch(() => '')) || 0)
+await writeFile(chatPort, String(chat.port), { mode: 0o600 })
 // The agents' subscription usage, for the app's sidebar. It reads the agents' own sign-ins, so only the owner asks.
 const usage = new UsageService({
   claude: async () => fetchClaudeUsage(await loginEnvironment()),

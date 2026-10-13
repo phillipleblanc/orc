@@ -51,10 +51,24 @@ export class ChatServer {
     })
   }
 
-  listen(): Promise<void> {
+  /**
+   * Listens on `port` when it is free, so the Workbench keeps its origin, and with it the transcripts it keeps in
+   * the browser; otherwise on any free port.
+   */
+  async listen(port = 0): Promise<void> {
+    try {
+      await this.bind(port)
+    } catch (error) {
+      if (!port || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+      await this.bind(0)
+    }
+  }
+
+  private bind(port: number): Promise<void> {
     return new Promise((resolveListen, reject) => {
       this.http.once('error', reject)
-      this.http.listen(0, '127.0.0.1', () => {
+      this.http.listen(port, '127.0.0.1', () => {
+        this.http.off('error', reject)
         this.port = (this.http.address() as { port: number }).port
         resolveListen()
       })

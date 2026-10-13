@@ -235,8 +235,13 @@ terminal as for any agent.
 
 The worker serves the conversation on `<profile>/durable/<id>.sock` as newline-delimited JSON (see the
 top of `worker.ts`): a snapshot followed by pi-durable's agent events, and `submit`, `abort`,
-`withdraw`, `compact`, `reset`, `configure` and `models`. The frontend serves the Workbench, the chat
-view of durable agents (`src/chat/workbench/`), on `127.0.0.1`, on a port chosen at startup;
+`withdraw`, `compact`, `reset`, `configure`, `models` and `history`, without providers' signatures on
+models' messages. The Workbench subscribes for pages: its snapshot holds the newest whole turns, and it
+asks for older ones with `history`, in the background and at once when scrolled near the top. It keeps
+the entries it has seen in the browser (IndexedDB, `chat/shared/transcript-cache.js`), shows them when it
+opens, and asks the worker only for the entries after them. The frontend serves the Workbench, the chat
+view of durable agents (`src/chat/workbench/`), on `127.0.0.1`, on the port it used last
+(`<profile>/chat-port`) when that is free, since the browser keeps those entries by origin;
 `src/chat/shared/` holds its client, formatting and the turn model (`timeline.js`: a finished turn's work folded behind one row, tool calls grouped into
 sentences, the files each turn changed). `/chat/vendor/` serves `marked` and DOMPurify, and
 `/chat/vendor/diffs/` Pierre's code and diff renderers once `node scripts/build-chat-vendor.mjs` has

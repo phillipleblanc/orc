@@ -13,11 +13,17 @@
 //                                                    { type: "events", events } per commit,
 //                                                    { type: "inbox", items } when the queue changes and
 //                                                    { type: "context", tokens } when the context's size changes
+//   subscribe { pages: true, after?, conversation? }  the same for chat views, whose snapshot has the newest whole
+//                                                    turns, or with `after` and the `conversation` it is from, the
+//                                                    entries after it; see `viewEntries`
+//   history { before }                             ← { entries, older }: whole turns before entry `before`
 //   submit { text, mode: "steer" | "followUp" }    ← { submissionId }
 //   abort | withdraw { submissionId } | compact | reset { note? }
 //   configure { model?: { provider, modelId }, thinkingLevel? } | info
 //   models: the signed-in models within Pi's scope (`enabledModels`), with any scoped thinking level
 //   upgrade: closes and exits with DURABLE_RESTART_STATUS, for the session's loop to start it again
+//
+// Entries and messages go out without providers' signatures (see views.ts).
 //
 // `context` is the size of the model context the next request sends, in tokens (see `contextTokens`).
 //
@@ -41,6 +47,7 @@ import { installFaux } from './faux.ts'
 import { piModels, piScopedModels, piSettings, resolvePiModel } from './pi-models.ts'
 import { DURABLE_RESTART_STATUS, durableConversationId, durableSocket } from './paths.ts'
 import { messageText, TerminalView } from './terminal-view.ts'
+import { entryPage, viewEntry, viewEvent, type Entry } from './views.ts'
 import { durableCodeVersion } from './version.ts'
 
 const { values } = parseArgs({ options: { storage: { type: 'string' }, model: { type: 'string' }, thinking: { type: 'string' }, faux: { type: 'boolean' } }, strict: false })
@@ -58,8 +65,13 @@ const cwd = process.cwd()
 const STOP_SETTLE_MS = 300
 // Closing waits this long for running tools; their work is already committed.
 const CLOSE_MS = 3000
-// Views get at most this many entries from before the active context (a reset or compaction).
+// Subscribers other than chat views get at most this many entries from before the active context (a reset or compaction).
 const HISTORY_LIMIT = 2000
+// A chat view's page of entries: at least this many, back to the start of a turn, and at most PAGE_MAX.
+const PAGE_MIN = 100
+const PAGE_MAX = 500
+// A chat view that missed more entries than this starts again from the newest page.
+const DELTA_LIMIT = 2000
 
 const PREAMBLE = `You are a coding agent working in the user's project through tools: read and edit files, and run commands with bash.
 Work until the task is done, then answer briefly with what you did and anything the user must decide.
@@ -216,6 +228,43 @@ async function withHistory(snapshot: SnapshotEvent): Promise<SnapshotEvent> {
   return { ...snapshot, entries: [...earlier.reverse(), ...snapshot.entries] }
 }
 
+/** The conversation's entries before `before` and after `after`, newest first, read a page at a time. */
+async function* olderEntries(before: number, after = 0): AsyncGenerator<Entry> {
+  if (before - 1 <= after) return
+  let cursor: Parameters<Conversation['entries']>[2]
+  do {
+    const page = await root.entries({ maxEntryId: (before - 1) as any, minEntryId: (after + 1) as any }, 500, cursor, context)
+    yield* page.items
+    cursor = page.next
+  } while (cursor)
+}
+
+/** Every entry after `after`, newest first: the snapshot's, then the store's from before them. */
+async function* newestFirst(snapshot: SnapshotEvent, after = 0): AsyncGenerator<Entry> {
+  for (let index = snapshot.entries.length - 1; index >= 0; index--) {
+    if ((snapshot.entries[index].id as number) <= after) return
+    yield snapshot.entries[index]
+  }
+  yield* olderEntries((snapshot.entries[0]?.id as number | undefined) ?? Number.MAX_SAFE_INTEGER, after)
+}
+
+/**
+ * The entries a chat view gets with a snapshot. A view that kept the entries of this conversation up to `after`
+ * gets those after it, unless there are more than DELTA_LIMIT; otherwise it gets the newest page, and whether older
+ * entries remain, which it asks for with `history`.
+ */
+async function viewEntries(snapshot: SnapshotEvent, after: number | null): Promise<{ entries: Entry[]; after: number | null; older: boolean }> {
+  if (after !== null) {
+    const newer: Entry[] = []
+    for await (const entry of newestFirst(snapshot, after)) {
+      if (newer.push(entry) > DELTA_LIMIT) break
+    }
+    if (newer.length <= DELTA_LIMIT) return { entries: newer.reverse(), after, older: false }
+  }
+  const page = await entryPage(newestFirst(snapshot), PAGE_MIN, PAGE_MAX)
+  return { ...page, after: null }
+}
+
 async function inboxItems(): Promise<{ id: number; mode: string; text: string }[]> {
   const inbox = await harness.snapshot(InboxDoc, root.id, context)
   return (inbox?.items ?? []).flatMap((item: any) =>
@@ -303,6 +352,12 @@ async function call(method: string, params: Record<string, any>, conversation: C
       return { models: offered.map(({ model, thinkingLevel }) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning,
         thinkingLevels: getSupportedThinkingLevels(model), ...(thinkingLevel ? { thinkingLevel } : {}) })) }
     }
+    case 'history': {
+      const before = Number(params.before)
+      if (!Number.isInteger(before) || before < 1) throw new Error('before must be an entry id')
+      const page = await entryPage(olderEntries(before), PAGE_MIN, PAGE_MAX)
+      return { entries: page.entries.map(viewEntry), older: page.older }
+    }
     case 'info':
       return await info()
     case 'upgrade':
@@ -342,14 +397,42 @@ function serve(socket: Socket): void {
           send({ id, result: {} })
           continue
         }
+        const params = (request.params ?? {}) as Record<string, unknown>
+        // A chat view gets its entries a page at a time; other subscribers get them all at once.
+        const pages = params.pages === true
+        const after = pages && params.conversation === conversationId && typeof params.after === 'number' ? params.after : null
         void (async () => {
           stream = await watchEvents(harness, root.id, context)
           send({ id, result: {} })
           const timing = { runStartedAt, tools: Object.fromEntries(toolStartedAt) }
           let tokens = await contextTokens()
-          send({ type: 'snapshot', snapshot: await withHistory(stream.snapshot), inbox: await inboxItems(), info: await info(), context: tokens, timing })
+          // The newest entry the view has, so the snapshot that restarts the stream after an overflow brings only newer ones.
+          let newest = after ?? 0
+          const has = (entries: readonly Entry[]) => { for (const entry of entries) newest = Math.max(newest, entry.id as number) }
+          const opening = { inbox: await inboxItems(), info: await info(), context: tokens, timing }
+          if (pages) {
+            const view = await viewEntries(stream.snapshot, after)
+            has(view.entries)
+            send({ type: 'snapshot', snapshot: viewEvent({ ...stream.snapshot, entries: view.entries }), conversation: conversationId, after: view.after, older: view.older, ...opening })
+          } else {
+            send({ type: 'snapshot', snapshot: viewEvent(await withHistory(stream.snapshot)), ...opening })
+          }
           stream.start(async (events) => {
-            send({ type: 'events', events: await Promise.all(events.map((event) => event.type === 'snapshot' ? withHistory(event) : event)) })
+            const sent: unknown[] = []
+            for (const event of events) {
+              let viewed: AgentEvent
+              if (event.type !== 'snapshot') viewed = viewEvent(event)
+              else if (!pages) viewed = viewEvent(await withHistory(event))
+              else {
+                const newer: Entry[] = []
+                for await (const entry of newestFirst(event, newest)) newer.push(entry)
+                viewed = viewEvent({ ...event, entries: newer.reverse() })
+              }
+              has(viewed.type === 'snapshot' ? viewed.entries : 'entry' in viewed && viewed.entry ? [viewed.entry] : [])
+              // A chat view keeps its entries when the stream starts over after an overflow, and adds these.
+              sent.push(viewed.type === 'snapshot' && pages ? { ...viewed, delta: true } : viewed)
+            }
+            send({ type: 'events', events: sent })
             if (events.some((event) => event.type === 'inbox_update' || event.type === 'snapshot')) send({ type: 'inbox', items: await inboxItems() })
             if (events.some((event) => event.type === 'agent_changed')) send({ type: 'info', info: await info() })
             if (events.some((event) => CONTEXT_EVENTS.has(event.type))) {

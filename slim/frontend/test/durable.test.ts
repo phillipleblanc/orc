@@ -9,6 +9,7 @@ import { createServer } from 'node:net'
 import WebSocket from 'ws'
 import { ChatServer } from '../src/durable/chat-server.ts'
 import { durableRequest } from '../src/durable/connection.ts'
+import { viewEvent } from '../src/durable/views.ts'
 import { destroyProfile, Frontend, makeProfile, until } from './harness.ts'
 import { connectWithGrant } from './runtime-client.ts'
 
@@ -139,6 +140,80 @@ test("a long conversation's snapshot reaches the chat view whole and at once", a
   assert.equal(JSON.stringify(messages[0]), snapshot)
   assert.equal(messages[1].type, 'events')
   assert.ok(elapsed < 1500, `the snapshot took ${Math.round(elapsed)} ms`)
+})
+
+test('a chat view gets the newest whole turns, older ones a page at a time, and only what is new when it comes back', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const project = join(profile, 'project')
+  await mkdir(project)
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  // Three turns of 72 entries each (a prompt, 35 tool calls with their results, an answer), and a short one.
+  const steps = `steps: ${Array.from({ length: 35 }, () => 'run: true').join(' | ')}`
+  await frontend.rpc('agent.spawn', { agent: 'durable', name: 'long', cwd: project, prompt: steps, args: ['--faux'] })
+  for (const text of [steps, steps, 'hello']) {
+    await frontend.rpc('agent.wait', { name: 'long', timeoutMs: 30_000 })
+    await frontend.rpc('agent.send', { to: 'long', text })
+  }
+  assert.equal((await frontend.rpc('agent.wait', { name: 'long', timeoutMs: 30_000 })).lastAssistantMessage, 'echo: hello')
+  const { url } = await frontend.rpc('durable.chat', { name: 'long' })
+  const snapshotOf = async (params?: Record<string, unknown>) => {
+    const view = await chatSocket(url)
+    t.after(() => view.socket.close())
+    await view.request('subscribe', params)
+    return { view, snapshot: await until(async () => view.messages.find((message) => message.type === 'snapshot'), 5000, 'the snapshot') }
+  }
+  const ids = (entries: any[]) => entries.map((entry) => entry.id)
+  const all = ids((await snapshotOf()).snapshot.snapshot.entries)
+
+  // The newest 100 entries reach back into the second turn, so the view gets it whole.
+  const { view, snapshot } = await snapshotOf({ pages: true })
+  const first = snapshot.snapshot.entries
+  assert.equal(first.length, 146)
+  assert.equal(first[0].kind, 'pi.user')
+  assert.deepEqual(ids(first), all.slice(-146))
+  assert.equal(snapshot.older, true)
+  assert.equal(snapshot.after, null)
+  const pages = [first]
+  for (let page = { older: true }; page.older;) {
+    page = (await view.request('history', { before: pages[0][0].id })).result
+    pages.unshift((page as any).entries)
+  }
+  assert.deepEqual(ids(pages.flat()), all)
+  assert.equal(pages[1][0].kind, 'pi.user')
+
+  // Back with what it saw, the view gets only what is new, and a view of another conversation starts over.
+  const newest = all.at(-1)
+  const back = (await snapshotOf({ pages: true, after: newest, conversation: snapshot.conversation })).snapshot
+  assert.equal(back.after, newest)
+  assert.deepEqual(back.snapshot.entries, [])
+  await frontend.rpc('agent.send', { to: 'long', text: 'again' })
+  await frontend.rpc('agent.wait', { name: 'long', timeoutMs: 30_000 })
+  const delta = (await snapshotOf({ pages: true, after: newest, conversation: snapshot.conversation })).snapshot
+  assert.deepEqual(delta.snapshot.entries.map((entry: any) => entry.kind), ['pi.user', 'pi.assistant'])
+  const other = (await snapshotOf({ pages: true, after: newest, conversation: 'another' })).snapshot
+  assert.equal(other.after, null)
+  assert.equal(other.snapshot.entries.at(-1).kind, 'pi.assistant')
+  assert.equal(other.snapshot.entries[0].kind, 'pi.user')
+  await frontend.rpc('terminal.close', { terminal: 'long' })
+})
+
+test("views get models' messages without the providers' signatures", () => {
+  const message = { role: 'assistant', content: [
+    { type: 'thinking', thinking: 'plan', thinkingSignature: 'opaque' },
+    { type: 'text', text: 'answer', textSignature: 'opaque' },
+    { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'true' }, thoughtSignature: 'opaque' }
+  ] } as any
+  const entry = { id: 1, conversationId: 1, kind: 'pi.assistant', model: [message] } as any
+  const unsigned = [
+    { type: 'thinking', thinking: 'plan' }, { type: 'text', text: 'answer' }, { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'true' } }
+  ]
+  assert.deepEqual((viewEvent({ type: 'message_end', entry }) as any).entry.model[0].content, unsigned)
+  assert.deepEqual((viewEvent({ type: 'snapshot', entries: [entry], generation: { attempt: 1, message }, tools: [], compactions: [], inbox: [], agent: {}, usage: {} } as any) as any)
+    .generation.message.content, unsigned)
+  assert.deepEqual((viewEvent({ type: 'message_update', usage: {}, changes: [{ type: 'block', contentIndex: 0, block: message.content[0] }] } as any) as any).changes[0].block, unsigned[0])
+  assert.equal(message.content[0].thinkingSignature, 'opaque', 'the stored message is unchanged')
 })
 
 test('a phone opens a durable agent in native chat as omp, follows it, and types into it', async (t) => {

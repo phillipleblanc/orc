@@ -57,6 +57,27 @@ export class Transcript {
     if (pinned) this.scroller.scrollTop = this.scroller.scrollHeight
   }
 
+  /** Renders the entries added before the first one, keeping the rows in view where they are. */
+  prepend() {
+    const shown = this.firstShown()
+    const height = this.scroller.scrollHeight
+    this.indexed = 0
+    this.render()
+    if (this.anchor) this.holdAnchor()
+    else if (shown?.el.isConnected) this.scroller.scrollTop += shown.el.getBoundingClientRect().top - shown.top
+    else this.scroller.scrollTop += this.scroller.scrollHeight - height
+  }
+
+  /** The first row at least partly in view, and where it is. */
+  firstShown() {
+    const top = this.scroller.getBoundingClientRect().top
+    for (const el of this.log.children) {
+      const rect = el.getBoundingClientRect()
+      if (rect.bottom > top) return { el, top: rect.top }
+    }
+    return null
+  }
+
   /** Applies a frame's worth of changes. */
   update(changes) {
     this.render()
@@ -90,7 +111,7 @@ export class Transcript {
     this.onTurns?.(this.turns)
   }
 
-  /** Remembers each tool call's request time and each entry by id, for new entries only. */
+  /** Remembers each tool call's request time and each entry by id, for entries not yet indexed. */
   indexEntries() {
     const entries = this.agent.entries
     for (; this.indexed < entries.length; this.indexed++) {
@@ -157,8 +178,9 @@ export class Transcript {
     }
     const fresh = this.turns.filter((turn) => !this.seenTurns.has(turn.id))
     this.seenTurns = ids
+    // Turns added before the first are older ones loaded, not new.
     const newest = fresh.at(-1)
-    if (!newest || !this.scroll.pinned || this.turns.length < 2) return
+    if (!newest || newest !== this.turns.at(-1) || !this.scroll.pinned || this.turns.length < 2) return
     this.anchor = this.rowRecords.get(newest.id)?.el ?? null
     if (this.anchor) {
       this.log.append(this.spacer)
