@@ -222,7 +222,7 @@ A restart ends every session. The next time Orc or `orc` starts the runtime, the
 
 ## Build and install
 
-Requires Apple Silicon, macOS 14+, Python 3.12+, npm, and Xcode with the macOS SDK. The app icon's source is `Resources/AppIcon.svg`; after editing it, render the PNG the build uses with `swift scripts/render-icon.swift Resources/AppIcon.svg Resources/AppIcon.png 1024`. Install the Metal component if necessary:
+Requires Apple Silicon, macOS 14+, Python 3.12+, npm, and Xcode with the macOS SDK. The app icon's source is `Resources/AppIcon.icon`, an Icon Composer document with default and dark appearances; open it in Icon Composer, which comes with Xcode. The build compiles it with `actool`. After editing it, render the README's image with `"$(xcode-select -p)/../Applications/Icon Composer.app/Contents/Executables/ictool" "$PWD/Resources/AppIcon.icon" --export-image --output-file "$PWD/Resources/AppIcon.png" --platform macOS --rendition Default --width 512 --height 512 --scale 1`. Install the Metal component if necessary:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain

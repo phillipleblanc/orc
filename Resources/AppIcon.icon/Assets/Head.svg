@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- The layers are drawn on an 824-point tile at (100, 100), scaled to the icon's full canvas. -->
+  <!-- The mask's black shapes are cut out, so the background shows through as the eyes, the brows and the gap above the window. -->
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect x="0" y="0" width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="438" cy="452" r="28" fill="#000000"/><circle cx="586" cy="452" r="28" fill="#000000"/>
+      <path d="M382,384 L478,412 M642,384 L546,412" stroke="#000000" stroke-width="22" stroke-linecap="round"/>
+      <rect x="164" y="512" width="696" height="324" rx="68" fill="#000000"/>
+    </mask>
+  </defs>
+  <g transform="scale(1.242718) translate(-100 -100)">
+    <path d="M512,236 C422,236 348,264 328,346 C322,372 320,392 320,414 C262,398 210,376 160,346 C188,420 242,488 320,526 L320,620 L704,620 L704,526 C782,488 836,420 864,346 C814,376 762,398 704,414 C704,392 702,372 696,346 C676,264 602,236 512,236 Z" fill="#FFFFFF" mask="url(#cut)"/>
+  </g>
+</svg>
