@@ -5,7 +5,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { createServer } from 'node:net'
 import WebSocket from 'ws'
+import { ChatServer } from '../src/durable/chat-server.ts'
 import { durableRequest } from '../src/durable/connection.ts'
 import { destroyProfile, Frontend, makeProfile, until } from './harness.ts'
 import { connectWithGrant } from './runtime-client.ts'
@@ -114,6 +116,29 @@ test('a durable agent runs in a session, takes Orc messages, serves its chat vie
   const history = await until(async () => reopened.messages.find((message) => message.type === 'snapshot'), 5000, 'the reopened snapshot')
   assert.equal(history.snapshot.entries.filter((entry: any) => entry.kind === 'pi.user').length, 4)
   await frontend.rpc('terminal.close', { terminal: 'dur' })
+})
+
+test("a long conversation's snapshot reaches the chat view whole and at once", async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  // The worker sends a snapshot of 32 MB, which the view's relay reads in thousands of chunks, and an event after it.
+  const snapshot = JSON.stringify({ type: 'snapshot', snapshot: { entries: Array.from({ length: 4000 }, (_, id) => ({ id, text: 'x'.repeat(8000) })) } })
+  const worker = createServer((socket) => socket.once('data', () => socket.write(`${snapshot}\n{"type":"events","events":[]}\n`)))
+  const path = join(profile, 'worker.sock')
+  await new Promise<void>((resolve) => worker.listen(path, resolve))
+  t.after(() => worker.close())
+  const chat = new ChatServer(() => path)
+  await chat.listen()
+  t.after(() => chat.close())
+
+  const started = performance.now()
+  const { socket, messages } = await chatSocket(chat.url('agent'))
+  socket.send(JSON.stringify({ id: 1, method: 'subscribe' }))
+  await until(async () => messages.length === 2, 10_000, 'the snapshot and the event')
+  const elapsed = performance.now() - started
+  assert.equal(JSON.stringify(messages[0]), snapshot)
+  assert.equal(messages[1].type, 'events')
+  assert.ok(elapsed < 1500, `the snapshot took ${Math.round(elapsed)} ms`)
 })
 
 test('a phone opens a durable agent in native chat as omp, follows it, and types into it', async (t) => {

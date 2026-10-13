@@ -5,6 +5,7 @@ import { createConnection } from 'node:net'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
+import { splitLines } from '../lines.ts'
 
 const CHAT_DIR = fileURLToPath(new URL('../chat/', import.meta.url))
 // ES module builds of the libraries the views import from `/chat/vendor/`.
@@ -103,17 +104,10 @@ function end(response: ServerResponse, status: number): void {
 /** Joins a view's WebSocket to the worker's socket: frames become lines and lines become frames. */
 function relay(client: WebSocket, path: string): void {
   const worker = createConnection(path)
-  let buffered = ''
   worker.setEncoding('utf8')
-  worker.on('data', (chunk: string) => {
-    buffered += chunk
-    let newline: number
-    while ((newline = buffered.indexOf('\n')) >= 0) {
-      const line = buffered.slice(0, newline)
-      buffered = buffered.slice(newline + 1)
-      if (line) client.send(line)
-    }
-  })
+  worker.on('data', splitLines((line) => {
+    if (line) client.send(line)
+  }))
   worker.on('error', () => client.close(1011, 'the durable agent is not running'))
   worker.on('close', () => client.close(1011, 'the durable agent stopped'))
   client.on('message', (data) => {

@@ -1,4 +1,5 @@
 import { createConnection, type Socket } from 'node:net'
+import { splitLines } from '../lines.ts'
 import { INTERRUPTED_TEXT, type EditPatch, type NativeChatBlock, type NativeChatMessage } from './decoders.ts'
 import type { TranscriptListener, TranscriptWindow } from './transcripts.ts'
 
@@ -99,35 +100,29 @@ export function entryWindow(entries: Entry[], limit: number, beforeOffset?: numb
 /** Subscribes to a worker's conversation: its snapshot entries, then entries as they are committed. */
 function subscribe(socketPath: string, handlers: { snapshot(entries: Entry[]): void; entries(entries: Entry[]): void; closed(error: Error | null): void }): Socket {
   const socket = createConnection(socketPath)
-  let buffered = ''
   let failure: Error | null = null
   socket.setEncoding('utf8')
   socket.on('connect', () => socket.write(JSON.stringify({ id: 1, method: 'subscribe' }) + '\n'))
   socket.on('error', (error) => { failure = error })
   socket.on('close', () => handlers.closed(failure))
-  socket.on('data', (chunk: string) => {
-    buffered += chunk
-    let newline: number
-    while ((newline = buffered.indexOf('\n')) >= 0) {
-      const line = buffered.slice(0, newline)
-      buffered = buffered.slice(newline + 1)
-      let message: any
-      try {
-        message = JSON.parse(line)
-      } catch {
-        socket.destroy(new Error('the durable agent sent an unreadable message'))
-        return
-      }
-      if (message.type === 'snapshot') handlers.snapshot(message.snapshot.entries)
-      if (message.type !== 'events') continue
-      const added: Entry[] = []
-      for (const event of message.events) {
-        if (event.type === 'snapshot') handlers.snapshot(event.entries)
-        else if ((event.type === 'message_end' || event.type === 'entry_appended') && event.entry) added.push(event.entry)
-      }
-      if (added.length > 0) handlers.entries(added)
+  socket.on('data', splitLines((line) => {
+    if (socket.destroyed) return
+    let message: any
+    try {
+      message = JSON.parse(line)
+    } catch {
+      socket.destroy(new Error('the durable agent sent an unreadable message'))
+      return
     }
-  })
+    if (message.type === 'snapshot') handlers.snapshot(message.snapshot.entries)
+    if (message.type !== 'events') return
+    const added: Entry[] = []
+    for (const event of message.events) {
+      if (event.type === 'snapshot') handlers.snapshot(event.entries)
+      else if ((event.type === 'message_end' || event.type === 'entry_appended') && event.entry) added.push(event.entry)
+    }
+    if (added.length > 0) handlers.entries(added)
+  }))
   return socket
 }
 

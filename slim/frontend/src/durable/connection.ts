@@ -1,4 +1,5 @@
 import { createConnection } from 'node:net'
+import { splitLines } from '../lines.ts'
 
 /** One request to a durable agent's worker over its socket (see worker.ts for the methods). */
 export function durableRequest(socketPath: string, method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<any> {
@@ -29,7 +30,6 @@ export function durableRequest(socketPath: string, method: string, params: Recor
 export function durableSnapshot(socketPath: string, timeoutMs = 10_000): Promise<any[]> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath)
-    let buffered = ''
     const timer = setTimeout(() => finish(new Error('the durable agent did not send its conversation')), timeoutMs)
     const finish = (error: Error | null, entries?: any[]) => {
       clearTimeout(timer)
@@ -40,15 +40,11 @@ export function durableSnapshot(socketPath: string, timeoutMs = 10_000): Promise
     socket.setEncoding('utf8')
     socket.on('error', (error) => finish(error))
     socket.on('connect', () => socket.write(JSON.stringify({ id: 1, method: 'subscribe', params: {} }) + '\n'))
-    socket.on('data', (chunk: string) => {
-      buffered += chunk
-      let newline: number
-      while ((newline = buffered.indexOf('\n')) >= 0) {
-        const message = JSON.parse(buffered.slice(0, newline))
-        buffered = buffered.slice(newline + 1)
-        if (message.error) return finish(new Error(message.error))
-        if (message.type === 'snapshot') return finish(null, message.snapshot?.entries ?? [])
-      }
-    })
+    socket.on('data', splitLines((line) => {
+      if (socket.destroyed) return
+      const message = JSON.parse(line)
+      if (message.error) return finish(new Error(message.error))
+      if (message.type === 'snapshot') return finish(null, message.snapshot?.entries ?? [])
+    }))
   })
 }
