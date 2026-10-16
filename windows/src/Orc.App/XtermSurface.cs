@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
@@ -10,7 +11,8 @@ namespace Orc.Win;
 /// arrive on the connection's thread; they are queued in order and posted as one batch per dispatcher turn, with
 /// consecutive output merged.
 /// </summary>
-internal sealed class XtermSurface(string id, TerminalSize initial, WebView2 web, DispatcherQueue dispatcher, Action<string> note) : ITerminalSurface
+internal sealed class XtermSurface(string id, TerminalSize initial, WebView2 web, DispatcherQueue dispatcher, Action<string> note, Action healthy)
+    : ITerminalSurface
 {
     private readonly object gate = new();
     private readonly JsonArray pending = [];
@@ -39,8 +41,8 @@ internal sealed class XtermSurface(string id, TerminalSize initial, WebView2 web
         {
             ["type"] = "reset", ["data"] = Convert.ToBase64String(snapshot.Data), ["flags"] = snapshot.KittyKeyboardFlags
         });
-        var flags = snapshot.KittyKeyboardFlags is { } f ? $"kitty keyboard flags {f}" : "no kitty keyboard flags";
-        Note(snapshot.IsScrollbackReplay ? $"attached, scrollback loaded ({flags})" : $"attached at {snapshot.Cols}×{snapshot.Rows} ({flags}); loading scrollback…");
+        // A snapshot means the stream is up again, so any earlier warning no longer applies.
+        dispatcher.TryEnqueue(() => healthy());
     }
 
     public void Write(ReadOnlySpan<byte> bytes)
@@ -91,6 +93,8 @@ internal sealed class XtermSurface(string id, TerminalSize initial, WebView2 web
             batch = new JsonObject { ["type"] = "batch", ["items"] = pending.DeepClone() }.ToJsonString();
             pending.Clear();
         }
-        web.CoreWebView2?.PostWebMessageAsJson(batch);
+        // The window may have closed while this batch waited; its WebView2 is gone then.
+        try { web.CoreWebView2?.PostWebMessageAsJson(batch); }
+        catch (Exception error) when (error is COMException or ObjectDisposedException or InvalidOperationException) { }
     }
 }

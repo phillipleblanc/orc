@@ -77,6 +77,16 @@ internal sealed unsafe partial class WindowsConsole : IDisposable
     private static partial bool ReadConsoleW(nint handle, char* buffer, uint toRead, out uint read, nint control);
 }
 
+/// <summary>Keeps the scrollback snapshot of a read-only attach and draws nothing.</summary>
+internal sealed class SnapshotSurface : ITerminalSurface
+{
+    public TaskCompletionSource<TerminalSnapshot> Scrollback { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TerminalSize Size => new(120, 40);
+    public void Reset(TerminalSnapshot snapshot) { if (snapshot.IsScrollbackReplay) Scrollback.TrySetResult(snapshot); }
+    public void Write(ReadOnlySpan<byte> output) { }
+    public void Note(string message) { }
+}
+
 /// <summary>The spike's terminal surface: the console itself, cleared and replayed the way `orc attach` does it.</summary>
 internal sealed class ConsoleSurface(WindowsConsole console) : ITerminalSurface
 {

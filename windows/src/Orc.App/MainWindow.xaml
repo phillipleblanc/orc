@@ -4,73 +4,94 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Orc">
 
-    <Grid RequestedTheme="Dark" Background="#0d1117">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="300" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <!-- Native chrome over Mica that follows the Windows theme and accent; only the terminal pane has terminal colors. -->
+    <Grid x:Name="Root">
         <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Background="#010409" BorderBrush="#30363d" BorderThickness="0,0,1,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <StackPanel Padding="16,12,12,8" Spacing="2">
-                <TextBlock Text="Orc" FontSize="16" FontWeight="SemiBold" />
-                <TextBlock x:Name="HostText" FontSize="12" Foreground="#8b949e" TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-            <ListView x:Name="SessionList" Grid.Row="1" SelectionMode="Single" SelectionChanged="OnSessionSelected">
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Padding="0,5" ColumnSpacing="8" ToolTipService.ToolTip="{Binding StatusLabel}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid Width="12" Height="12" VerticalAlignment="Center">
-                                <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" Visibility="{Binding DotVisibility}" />
-                                <ProgressRing Width="12" Height="12" MinWidth="12" MinHeight="12" Foreground="#d29922"
-                                              IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
-                                <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
-                            </Grid>
-                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" FontSize="12" Foreground="#8b949e"
-                                       TextTrimming="CharacterEllipsis" />
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-                <ListView.GroupStyle>
-                    <GroupStyle>
-                        <GroupStyle.HeaderTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" Foreground="#8b949e" />
-                            </DataTemplate>
-                        </GroupStyle.HeaderTemplate>
-                    </GroupStyle>
-                </ListView.GroupStyle>
-            </ListView>
+        <!-- The title bar, extended into the window; the system draws the caption buttons at its right. -->
+        <Grid x:Name="AppTitleBar" Height="48" Padding="16,0,0,0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Image x:Name="TitleIcon" Width="16" Height="16" VerticalAlignment="Center" />
+            <TextBlock x:Name="TitleText" Grid.Column="1" Text="Orc" Style="{StaticResource CaptionTextBlockStyle}"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
         </Grid>
 
-        <WebView2 x:Name="Web" Grid.Column="1" />
-
-        <Grid Grid.Row="1" Grid.ColumnSpan="2" Padding="12,4" Background="#161b22" ColumnSpacing="16">
+        <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatusText" Foreground="#c9d1d9" TextTrimming="CharacterEllipsis" />
-            <TextBlock x:Name="KeysText" Grid.Column="1" Foreground="#8b949e" FontFamily="Cascadia Mono, Consolas" />
-            <TextBlock x:Name="SizeText" Grid.Column="2" Foreground="#8b949e" FontFamily="Cascadia Mono, Consolas" />
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <StackPanel Padding="16,4,12,8" Spacing="2">
+                    <TextBlock Text="Sessions" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="HostText" Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <ListView x:Name="SessionList" Grid.Row="1" SelectionMode="Single" SelectionChanged="OnSessionSelected"
+                          AutomationProperties.Name="Sessions">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="0,5" ColumnSpacing="10" ToolTipService.ToolTip="{Binding StatusLabel}"
+                                  AutomationProperties.Name="{Binding AccessibleName}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid Width="12" Height="12" VerticalAlignment="Center">
+                                    <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" Visibility="{Binding DotVisibility}" />
+                                    <ProgressRing Width="12" Height="12" MinWidth="12" MinHeight="12" Foreground="#d29922"
+                                                  IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
+                                    <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
+                                </Grid>
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                    <ListView.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Title}" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </ListView.GroupStyle>
+                </ListView>
+            </Grid>
+
+            <!-- The content layer, as Windows 11 apps draw it: a card edge and rounded corner against the Mica pane. -->
+            <Border Grid.Column="1" CornerRadius="8,0,0,0" BorderThickness="1,1,0,0" Background="#0d1117"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                <Grid>
+                    <WebView2 x:Name="Web" Visibility="Collapsed" />
+                    <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                        <FontIcon Glyph="&#xE756;" FontSize="32" Foreground="#6e7681" />
+                        <TextBlock x:Name="EmptyText" Text="Select a session" Foreground="#8b949e" HorizontalAlignment="Center"
+                                   Style="{StaticResource BodyTextBlockStyle}" />
+                    </StackPanel>
+                    <InfoBar x:Name="NoticeBar" Margin="12" VerticalAlignment="Top" IsOpen="False" IsClosable="True" />
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

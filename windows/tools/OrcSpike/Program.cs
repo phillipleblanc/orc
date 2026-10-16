@@ -14,6 +14,7 @@ const string Usage = """
       orcspike status                     The runtime's status.get
       orcspike list                       Sessions on the host
       orcspike sidebar                    Sessions by project with their activity, as the app's sidebar shows them
+      orcspike modes SESSION              Read-only: the screen, mouse and keyboard modes a session's snapshot sets
       orcspike ping [COUNT]               Connection setup time and RPC round trips
       orcspike attach SESSION [--read-only]  Attach in this console (Windows Terminal recommended); Ctrl-] detaches
       orcspike send SESSION TEXT [--enter]   Type into a session
@@ -30,6 +31,7 @@ try
         "status" => await StatusAsync(),
         "list" => await ListAsync(),
         "sidebar" => await SidebarAsync(),
+        "modes" when args.Length == 2 => await ModesAsync(args[1]),
         "ping" => await PingAsync(args.Length > 1 ? int.Parse(args[1]) : 20),
         "attach" when args.Length >= 2 => await AttachAsync(args[1], args.Contains("--read-only")),
         "send" when args.Length >= 3 => await SendAsync(args[1], args[2], args.Contains("--enter")),
@@ -139,6 +141,40 @@ static async Task<int> SidebarAsync()
         foreach (var session in section.Sessions)
             Console.WriteLine($"  {Light(snapshot.ActivityOf(session))} {session.Name,-26} {session.Detail}");
     }
+    return 0;
+}
+
+static async Task<int> ModesAsync(string selector)
+{
+    var pairing = PairingStore.Load();
+    JsonObject target;
+    await using (var connection = await RuntimeConnection.ConnectAsync(pairing))
+        target = Resolve(await Terminals(connection), selector);
+    var surface = new SnapshotSurface();
+    var controller = new AttachController(pairing, target["handle"]!.ToString(), target["incarnationId"]?.ToString(), surface, readOnly: true);
+    using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+    var run = controller.RunAsync(stop.Token);
+    var snapshot = await surface.Scrollback.Task.WaitAsync(stop.Token);
+    controller.Stop();
+    await run;
+
+    var text = Encoding.UTF8.GetString(snapshot.Data);
+    // DECSET/DECRST private modes in the serialized screen; the last one set or reset wins.
+    var modes = new Dictionary<int, bool>();
+    foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\e\[\?([\d;]+)([hl])"))
+        foreach (var mode in m.Groups[1].Value.Split(';')) modes[int.Parse(mode)] = m.Groups[2].Value == "h";
+    string On(params int[] codes) => string.Join(", ", codes.Where(c => modes.GetValueOrDefault(c)).Select(c => c.ToString())) is { Length: > 0 } s ? $"on ({s})" : "off";
+    var lines = text.Split('\n').Length;
+    Console.WriteLine($"""
+        {Name(target)} at {snapshot.Cols}×{snapshot.Rows}, {snapshot.Data.Length:N0} bytes of snapshot, {lines:N0} lines
+          alternate screen:      {On(47, 1047, 1049)}
+          mouse tracking:        {On(9, 1000, 1002, 1003)}
+          mouse encoding:        {(modes.GetValueOrDefault(1006) ? "SGR (1006)" : modes.GetValueOrDefault(1015) ? "urxvt (1015)" : modes.GetValueOrDefault(1005) ? "UTF-8 (1005)" : "default (X10)")}
+          alternate scroll:      {On(1007)}
+          bracketed paste:       {On(2004)}
+          application cursor:    {On(1)}
+          kitty keyboard flags:  {snapshot.KittyKeyboardFlags?.ToString() ?? "none"}
+        """);
     return 0;
 }
 

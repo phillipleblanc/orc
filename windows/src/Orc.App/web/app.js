@@ -6,7 +6,6 @@
 const host = window.chrome.webview;
 const post = (message) => host.postMessage(message);
 const container = document.getElementById('terminals');
-const empty = document.getElementById('empty');
 
 // GitHub Dark, the Mac app's default without a Ghostty config.
 const theme = {
@@ -32,6 +31,35 @@ const options = {
 const terminals = new Map();
 let visibleId = null;
 
+// With ORC_DIAGNOSTICS=1 the host loads this page with ?diagnostics and logs what each wheel burst did:
+// the buffer, the mouse mode, and the reports or keys it produced (%LOCALAPPDATA%\Orc\logs\terminal.log).
+const diagnostics = new URLSearchParams(location.search).has('diagnostics');
+let wheel = null;
+
+function report(event, extra = {}) {
+  const entry = terminals.get(visibleId);
+  if (!diagnostics || !entry) return;
+  const { term } = entry;
+  const buffer = term.buffer.active;
+  post({
+    type: 'diag', id: visibleId, event, buffer: buffer.type, cols: term.cols, rows: term.rows, viewportY: buffer.viewportY,
+    scrollback: term.buffer.normal.length - term.rows, mouseTracking: term.modes.mouseTrackingMode,
+    dpr: window.devicePixelRatio, renderer: entry.renderer, ...extra
+  });
+}
+
+if (diagnostics) {
+  container.addEventListener('wheel', (event) => {
+    if (!terminals.has(visibleId)) return;
+    if (!wheel) {
+      wheel = { events: 0, deltaY: 0, deltaMode: event.deltaMode, x: event.clientX, y: event.clientY, reports: 0, keys: 0, sample: null };
+      setTimeout(() => { const burst = wheel; wheel = null; report('wheel', burst); }, 400);
+    }
+    wheel.events++;
+    wheel.deltaY += event.deltaY;
+  }, { capture: true, passive: true });
+}
+
 function open(element) {
   const term = new Terminal(options);
   const fit = new FitAddon.FitAddon();
@@ -39,15 +67,17 @@ function open(element) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.open(element);
+  const entry = { term, fit, renderer: 'dom' };
   try {
     const webgl = new WebglAddon.WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
+    webgl.onContextLoss(() => { webgl.dispose(); entry.renderer = 'dom'; });
     term.loadAddon(webgl);
-  } catch (error) {
-    console.warn('WebGL renderer unavailable; using the DOM renderer', error);
+    entry.renderer = 'webgl';
+  } catch {
+    // The DOM renderer draws instead.
   }
   fit.fit();
-  return { term, fit };
+  return entry;
 }
 
 function create(id) {
@@ -56,8 +86,18 @@ function create(id) {
   element.className = 'term';
   element.style.visibility = 'hidden';
   container.appendChild(element);
-  const { term, fit } = open(element);
-  term.onData((data) => { if (id === visibleId) post({ type: 'input', id, data }); });
+  const entry = open(element);
+  const { term } = entry;
+  term.onData((data) => {
+    if (id !== visibleId) return;
+    if (wheel) {
+      // SGR wheel reports (buttons 64 and 65) for a program tracking the mouse, cursor keys on a screen without
+      // scrollback for one that does not.
+      if (/\x1b\[<6[45];/.test(data)) { wheel.reports++; wheel.sample ??= data.replace('\x1b', '\\e'); }
+      else if (/^\x1b[\[O][AB]$/.test(data)) wheel.keys++;
+    }
+    post({ type: 'input', id, data });
+  });
   term.onResize(({ cols, rows }) => { if (id === visibleId) post({ type: 'size', id, cols, rows }); });
   // Ctrl+Shift+C / Ctrl+Shift+V copy and paste; plain Ctrl+C and Ctrl+V belong to the program.
   term.attachCustomKeyEventHandler((event) => {
@@ -73,18 +113,18 @@ function create(id) {
     }
     return true;
   });
-  terminals.set(id, { term, fit, element });
+  terminals.set(id, { ...entry, element });
 }
 
 function show(id) {
   visibleId = id;
   for (const [key, entry] of terminals) entry.element.style.visibility = key === id ? 'visible' : 'hidden';
   const entry = terminals.get(id);
-  empty.style.display = entry ? 'none' : 'flex';
   if (!entry) return;
   entry.fit.fit();
   entry.term.focus();
   post({ type: 'shown', id, cols: entry.term.cols, rows: entry.term.rows });
+  report('shown');
 }
 
 function dispose(id) {
@@ -93,10 +133,7 @@ function dispose(id) {
   entry.term.dispose();
   entry.element.remove();
   terminals.delete(id);
-  if (visibleId === id) {
-    visibleId = null;
-    empty.style.display = 'flex';
-  }
+  if (visibleId === id) visibleId = null;
 }
 
 const decode = (base64) => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
@@ -113,7 +150,7 @@ function handle(item) {
       // Through the write queue, so it lands after output that arrived first. RIS, then the runtime's serialized
       // screen, then the keyboard flags the runtime reported (as `orc attach` restores them with CSI = flags u).
       term.write('\x1bc');
-      term.write(decode(item.data));
+      term.write(decode(item.data), () => { if (item.id === visibleId) report('snapshot'); });
       if (item.flags !== null && item.flags !== undefined) term.write(`\x1b[=${item.flags}u`);
       break;
     case 'output':
@@ -123,7 +160,7 @@ function handle(item) {
       term.paste(item.text);
       break;
     case 'ended':
-      term.write(`\r\n\x1b[0;2m[orc] ${item.text}\x1b[0m\r\n`);
+      term.write(`\r\n\x1b[0;2m${item.text}\x1b[0m\r\n`);
       break;
   }
 }

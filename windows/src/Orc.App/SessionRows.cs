@@ -61,14 +61,20 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
         _ => Gray
     };
     public string StatusLabel => activity.Label();
+    public string AccessibleName => $"{Name}, {StatusLabel}";
 
     public void Update(SessionInfo session, AgentActivity next)
     {
+        var renamed = Name != session.Name;
         Name = session.Name;
         Detail = session.Detail;
-        if (activity == next) return;
+        if (activity == next)
+        {
+            if (renamed) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibleName)));
+            return;
+        }
         activity = next;
-        foreach (var property in new[] { nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(StatusBrush), nameof(StatusLabel) })
+        foreach (var property in new[] { nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(StatusBrush), nameof(StatusLabel), nameof(AccessibleName) })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
     }
 
