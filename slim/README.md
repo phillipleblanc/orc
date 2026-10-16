@@ -303,8 +303,8 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   `terminal.close`, `terminal.read`, `terminal.agentStatus`, `session.tabs.listAll`, `worktree.list`
   and `repo.add` use Orca's request and result shapes, including agent identity and status. `repo.remove` (`repo`, a
   project selector) forgets a project, and refuses with `in_use` while sessions belong to it.
-  `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*` and `slim.pairing.*` issue and revoke
-  access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
+  `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*`, `orc.desktop.*` and `slim.pairing.*`
+  issue and revoke access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
   `brief.refresh`, `brief.settings` and `brief.configure` serve agents' status briefs written from their transcripts;
   they are not served over the WebSocket. `brief.dismiss` (`name`, `question`) drops a question its person marked read
   from the brief and keeps it, the latest only, so later briefs' prompts tell the model not to raise it again.
@@ -347,6 +347,18 @@ person is looking at (`terminal-sizes.ts`).
   when the owner changes without a resize.
 
 Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
+
+## Computers
+
+- **Pairing:** `orc pair-computer` calls `orc.desktop.create` (capability `orc.desktop-pairing.v1`) with a
+  name for the computer and one of the host's IPv4 addresses or its local name (`LocalHostName.local`,
+  the default, which outlasts DHCP addresses). It returns an `orca://pair` link to that address with a
+  runtime-scope device token. An unused grant with the same name is offered again unless `rotate`.
+  `orc.desktop.status` lists the addresses, local names and computers' grants, each with `connected`
+  (an authenticated WebSocket connection now); `orc.desktop.revoke` revokes one and disconnects it.
+- **Kinds:** each grant in `orca-devices.json` has a `kind`: `app` (Orc's own, named after the Mac),
+  `desktop` or `phone`. A grant without one is a phone's with mobile scope, Orc's when named `Orc`, and
+  a computer's otherwise. `orc.phone.*` sees only phones and `orc.desktop.*` only computers.
 
 ## Phones
 

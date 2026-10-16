@@ -343,6 +343,51 @@ import COrcSupport
                     for phone in status.devices { print("\(safe(phone.name))\t\(phone.isPaired ? "paired" : "awaiting pairing")\t\(phone.deviceId)") }
                 }
             }
+        case "pair-computer":
+            let requestedAddress = try value("--address"), requestedName = try value("--name")
+            let rotate = flag("--rotate"), linkOnly = flag("--link")
+            guard options.isEmpty, !(json && linkOnly) else {
+                throw OrcError("Usage: orc pair-computer [--address IP|HOST.local] [--name NAME] [--rotate] [--link | --json]")
+            }
+            let status = try await DesktopPairingService.status()
+            guard let address = requestedAddress ?? status.defaultAddress, status.offers(address) else {
+                throw OrcError("Choose a reachable address with --address IP or HOST.local. Run `orc computers` to list this Mac's addresses.")
+            }
+            let name = (requestedName ?? DesktopPairingService.defaultName).trimmingCharacters(in: .whitespacesAndNewlines)
+            let offer = try await DesktopPairingService.create(address: address, name: name, rotate: rotate)
+            if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(offer))) }
+            else if linkOnly { print(offer.pairingUrl) }
+            else {
+                print("In Orc for Windows, open the Host page, paste this private link and connect. It gives full control of this Mac's sessions.")
+                print(offer.pairingUrl)
+                print("Server: \(offer.endpoint)\nThe grant is named \(safe(name)); `orc computers` shows when it connects.")
+            }
+        case "computers":
+            if options.first == "revoke" {
+                options.removeFirst()
+                guard options.count == 1 else { throw OrcError("Usage: orc computers revoke DEVICE_ID [--json]") }
+                try await DesktopPairingService.revoke(deviceId: options[0])
+                if json { try emit(["revoked": true]) } else { print("Computer access revoked.") }
+            } else {
+                guard options.isEmpty else { throw OrcError("Usage: orc computers [--json]") }
+                let status = try await DesktopPairingService.status()
+                if json {
+                    try emit(["runtimeId": status.runtimeId, "hostnames": status.hostnames,
+                              "addresses": status.interfaces.map { ["interface": $0.name, "address": $0.address] },
+                              "defaultAddress": status.defaultAddress as Any? ?? NSNull(),
+                              "devices": try JSONSerialization.jsonObject(with: JSONEncoder().encode(status.devices))])
+                } else {
+                    print("NETWORK ADDRESSES")
+                    for host in status.hostnames { print("local name\t\(safe(host))") }
+                    for item in status.interfaces { print("\(safe(item.name))\t\(safe(item.address))") }
+                    print("\nCOMPUTER\tSTATE\tLAST SEEN\tDEVICE ID")
+                    for computer in status.devices {
+                        let state = computer.connected ? "connected" : computer.isPaired ? "paired" : "awaiting pairing"
+                        let seen = computer.isPaired ? Date(timeIntervalSince1970: computer.lastSeenAt / 1000).formatted(date: .abbreviated, time: .shortened) : "-"
+                        print("\(safe(computer.name))\t\(state)\t\(seen)\t\(computer.deviceId)")
+                    }
+                }
+            }
         case "status":
             guard options.isEmpty else { throw OrcError("Usage: orc status [--json]") }
             let result = try await LocalRPC.call("status.get")
@@ -397,6 +442,10 @@ import COrcSupport
                    [--rotate] [--link | --json]
     orc phones [--json]                      List phone grants and network addresses
     orc phones revoke DEVICE_ID [--json]     Revoke a phone's access
+    orc pair-computer [--address IP|HOST.local] Link another computer, such as Orc for Windows
+                   [--name NAME] [--rotate] [--link | --json]
+    orc computers [--json]                   List computer grants and network addresses
+    orc computers revoke DEVICE_ID [--json]  Revoke a computer's access
     orc status [--json]                      Start the runtime if needed and report it
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.

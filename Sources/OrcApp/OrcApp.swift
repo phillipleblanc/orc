@@ -23,7 +23,7 @@ import OrcKit
                     Button("Session Overview") { openWindow(id: "overview") }
                         .keyboardShortcut("o", modifiers: [.command, .shift])
                     Button("Add Project…") { model.revealWindow?(); model.showProject = true }
-                    Button("Pair Phone…") { model.revealWindow?(); model.showPhonePairing = true }
+                    Button("Pair Device…") { model.revealWindow?(); model.showPairDevice = true }
                     Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r")
                     Button("Reopen Closed Session") { model.revealWindow?(); Task { try? await model.reopenLatest() } }
                         .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(model.closed.isEmpty)
@@ -61,7 +61,7 @@ import OrcKit
     @Published private(set) var mutes = SessionMutes()
     @Published var showCreate = false
     @Published var showProject = false
-    @Published var showPhonePairing = false
+    @Published var showPairDevice = false
     @Published var showOpen = false
     @Published var connected = false
     @Published var loading = false
@@ -364,7 +364,7 @@ struct SessionWindow: View {
         }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
         .sheet(isPresented: $model.showProject) { AddProjectView(model: model) }
-        .sheet(isPresented: $model.showPhonePairing) { PhonePairingView() }
+        .sheet(isPresented: $model.showPairDevice) { PairDeviceView() }
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .alert("Close “\(closingSession?.name ?? "")”?", isPresented: Binding(get: { closingSession != nil }, set: { if !$0 { closingSession = nil } }),
@@ -439,8 +439,8 @@ struct SessionWindow: View {
             HStack {
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button { model.showPhonePairing = true } label: { Image(systemName: "iphone") }
-                    .buttonStyle(.borderless).help("Pair Phone").accessibilityLabel("Pair Phone")
+                Button { model.showPairDevice = true } label: { Image(systemName: "laptopcomputer.and.iphone") }
+                    .buttonStyle(.borderless).help("Pair a Phone or Computer").accessibilityLabel("Pair Device")
             }.padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

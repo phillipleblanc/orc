@@ -4,17 +4,18 @@ import CoreImage
 
 final class PhonePairingTests: XCTestCase {
     private let key = Data(repeating: 7, count: 32).base64EncodedString()
-    private func fixture(scope: String = "mobile", endpoint: String = "ws://100.64.1.2:6767", device: String = "phone", key: String? = nil) throws -> [String: Any] {
+    private func fixture(scope: String = "mobile", endpoint: String = "ws://100.64.1.2:6767", device: String = "phone", key: String? = nil,
+                         offerScope: String = "mobile") throws -> [String: Any] {
         let claims = try jsonData(["v": 2, "scope": scope, "endpoint": endpoint, "deviceToken": "private-test-credential",
                                   "publicKeyB64": key ?? self.key, "pairedDeviceId": device])
         let code = claims.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-        return ["runtimeId": "runtime", "scope": "mobile", "deviceId": "phone", "endpoint": endpoint,
+        return ["runtimeId": "runtime", "scope": offerScope, "deviceId": "phone", "endpoint": endpoint,
                 "pairingUrl": "orca://pair?code=" + code]
     }
-    private func validate(_ response: [String: Any]) throws -> PhonePairingOffer {
+    private func validate(_ response: [String: Any], address: String = "100.64.1.2", scope: String = "mobile") throws -> PairingOffer {
         let metadata: RuntimeMetadata = try decode(["runtimeId": "runtime", "authToken": "local-secret",
             "transports": [["kind": "websocket", "endpoint": "ws://0.0.0.0:6767"]]])
-        return try PhonePairingOffer.validated(response, metadata: metadata, publicKey: key, address: "100.64.1.2")
+        return try PairingOffer.validated(response, metadata: metadata, publicKey: key, address: address, scope: scope)
     }
 
     func testPhoneOfferPinsRuntimeScopeAddressDeviceAndKey() throws {
@@ -31,6 +32,26 @@ final class PhonePairingTests: XCTestCase {
             }
         }
         XCTAssertThrowsError(try Pairing.parse(try validate(valid).pairingUrl))
+    }
+
+    func testComputerOfferPinsRuntimeScopeAndTheLocalNameOrAddress() throws {
+        let host = "Phillips-MacBook-Pro.local"
+        func computer(scope: String = "runtime", endpoint: String = "ws://Phillips-MacBook-Pro.local:6767", offerScope: String = "runtime") throws -> [String: Any] {
+            try fixture(scope: scope, endpoint: endpoint, offerScope: offerScope)
+        }
+        let offer = try validate(computer(), address: host, scope: "runtime")
+        XCTAssertEqual(offer.endpoint, "ws://Phillips-MacBook-Pro.local:6767")
+        // A computer's link is the runtime access link Orc for Windows and Orc itself accept.
+        XCTAssertEqual(try Pairing.parse(offer.pairingUrl).scope, "runtime")
+        XCTAssertEqual(try validate(computer(endpoint: "ws://100.64.1.2:6767"), address: "100.64.1.2", scope: "runtime").deviceId, "phone")
+        for (response, address) in try [(computer(), "Other-Mac.local"), (computer(scope: "mobile"), host), (computer(offerScope: "mobile"), host),
+                                         (computer(endpoint: "ws://Phillips-MacBook-Pro.local:9999"), host),
+                                         (computer(endpoint: "wss://Phillips-MacBook-Pro.local:6767"), host)] {
+            XCTAssertThrowsError(try validate(response, address: address, scope: "runtime")) { error in
+                XCTAssertFalse(error.localizedDescription.contains("private-test-credential"))
+            }
+        }
+        XCTAssertThrowsError(try validate(fixture(), scope: "runtime"), "a phone's offer is not a computer's")
     }
 
     func testImageAndTerminalQRDecodeToTheSamePairingLink() throws {

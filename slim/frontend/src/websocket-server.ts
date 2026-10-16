@@ -68,6 +68,11 @@ export class WebSocketRpcServer {
     })
   }
 
+  /** The devices with an authenticated connection now. */
+  connectedDevices(): Set<string> {
+    return new Set([...this.devicesByConnection.values()].map((device) => device()?.deviceId).filter((id): id is string => Boolean(id)))
+  }
+
   /** Closes every connection authenticated as `deviceId`. */
   disconnectDevice(deviceId: string): void {
     for (const [socket, device] of this.devicesByConnection) {

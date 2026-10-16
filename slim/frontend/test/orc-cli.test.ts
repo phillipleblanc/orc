@@ -99,3 +99,25 @@ test('the real orc CLI removes a project once no session belongs to it, and stop
   assert.ok(existsSync(project))
   await assert.rejects(orc('projects', 'remove', selector), { stderr: /No project matches/ })
 })
+
+test('the real orc CLI pairs a computer at this Mac’s local name, lists it, and revokes it', { skip }, async (t) => {
+  const { orc, frontend } = await setUp(t)
+  const offer = JSON.parse(await orc('pair-computer', '--name', 'EPYC-WINDOWS', '--json'))
+  const { hostnames } = await frontend.rpc('orc.desktop.status')
+  assert.equal(offer.scope, 'runtime')
+  assert.equal(new URL(offer.endpoint).hostname, hostnames[0].toLowerCase())
+  assert.equal(JSON.parse(Buffer.from(new URL(offer.pairingUrl).searchParams.get('code')!, 'base64url').toString()).pairedDeviceId, offer.deviceId)
+  const link = await orc('pair-computer', '--name', 'EPYC-WINDOWS', '--link')
+  assert.match(link, /^orca:\/\/pair\?code=[\w-]+\n$/)
+
+  const listed = JSON.parse(await orc('computers', '--json'))
+  assert.deepEqual(listed.hostnames, hostnames)
+  assert.deepEqual(listed.devices.map((device: any) => [device.deviceId, device.name, device.connected]), [[offer.deviceId, 'EPYC-WINDOWS', false]])
+  // Orc's own grant, made the first time the CLI reached the runtime, is not a computer's.
+  assert.deepEqual((await frontend.rpc('slim.pairing.list')).devices.map((device: any) => device.kind).sort(), ['app', 'desktop'])
+  assert.match(await orc('computers'), new RegExp(`EPYC-WINDOWS\\tawaiting pairing\\t-\\t${offer.deviceId}`))
+
+  assert.deepEqual(JSON.parse(await orc('computers', 'revoke', offer.deviceId, '--json')), { revoked: true })
+  assert.deepEqual(JSON.parse(await orc('computers', '--json')).devices, [])
+  await assert.rejects(orc('pair-computer', '--address', '203.0.113.9'), { stderr: /Choose a reachable address/ })
+})

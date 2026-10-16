@@ -1,5 +1,5 @@
 import { networkInterfaces } from 'node:os'
-import { pairingLink, type Devices } from './devices.ts'
+import { deviceKind, pairingLink, type Devices } from './devices.ts'
 import type { ServerKeypair } from './e2ee.ts'
 import { RpcError, type Handlers } from './rpc-server.ts'
 import type { WebSocketRpcServer } from './websocket-server.ts'
@@ -30,7 +30,7 @@ function isTailscale(address: string): boolean {
 export function phonePairingHandlers(options: { runtimeId: string; devices: Devices; keypair: ServerKeypair; websocket: WebSocketRpcServer }): Handlers {
   const { runtimeId, devices, keypair, websocket } = options
   const reply = (body: Record<string, unknown>) => ({ schemaVersion: 1, runtimeId, ...body })
-  const phones = () => devices.all().filter((device) => device.scope === 'mobile')
+  const phones = () => devices.all().filter((device) => deviceKind(device) === 'phone')
   return {
     'orc.phone.status': () => {
       const interfaces = reachableAddresses()
@@ -47,7 +47,7 @@ export function phonePairingHandlers(options: { runtimeId: string; devices: Devi
       if (!reachableAddresses().some((entry) => entry.address === address)) throw new RpcError('invalid_argument', 'choose an address of this host')
       const unused = phones().filter((device) => device.lastSeenAt === 0)
       if (params.rotate === true) for (const device of unused) await devices.revoke(device.deviceId)
-      const device = params.rotate === true || unused.length === 0 ? await devices.create('mobile', 'Phone') : unused[0]
+      const device = params.rotate === true || unused.length === 0 ? await devices.create('mobile', 'Phone', 'phone') : unused[0]
       const endpoint = `ws://${address}:${websocket.port}`
       const publicKeyB64 = Buffer.from(keypair.publicKey).toString('base64')
       return reply({

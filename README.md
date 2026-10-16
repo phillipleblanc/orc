@@ -84,7 +84,7 @@ In the app, ⌘N starts a session, ⇧⌘O opens the Session Overview, and ⌥�
 - [The Orc app](docs/app.md): the main window, Session Overview, status panel, notifications and terminals
 - [The `orc` command](docs/cli.md): creating and attaching to sessions, projects and defaults
 - [Agents](docs/agents.md): messaging, wakes, agent status, pull requests, MCP servers and durable agents
-- [Pair a phone](docs/phone.md)
+- [Pair a phone](docs/phone.md) or [a computer](docs/computers.md)
 - [Windows client (experimental)](windows/README.md): drive a Mac's sessions from a Windows PC on the same network
 - [Development](docs/development.md): building, architecture and tests
 - [Runtime design](slim/README.md)

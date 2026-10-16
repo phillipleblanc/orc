@@ -91,7 +91,7 @@ struct RuntimeStarter {
     /// computers viewing a session name when this Mac sizes it.
     private func createAccess(_ connection: RuntimeSocket, timeout: Int) throws {
         let name = Host.current().localizedName ?? "Orc"
-        let result = try LocalRPC.exchange("slim.pairing.create", ["scope": "runtime", "name": name], connection: connection, timeout: timeout)
+        let result = try LocalRPC.exchange("slim.pairing.create", ["scope": "runtime", "name": name, "kind": "app"], connection: connection, timeout: timeout)
         let pairing = try Pairing.parse(result["link"] as? String ?? "")
         let endpoint = URLComponents(string: pairing.endpoint)
         guard pairing.scope == "runtime", endpoint?.host == "127.0.0.1",

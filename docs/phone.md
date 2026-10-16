@@ -2,7 +2,7 @@
 
 The official Orca mobile app can view and type into Orc's sessions.
 
-In Orc, choose **Pair Phone…** from the menu or click the phone icon below the session list. Select your Mac's LAN or Tailscale address and click **Generate QR Code**. On the same Wi-Fi or Tailscale network, open the Orca mobile app, choose **Pair**, and scan the code. **Copy Link** provides the alternative paste-pair flow.
+In Orc, choose **Pair Device…** from the menu or click the devices icon below the session list, then **Phone**. Select your Mac's LAN or Tailscale address and click **Generate QR Code**. On the same Wi-Fi or Tailscale network, open the Orca mobile app, choose **Pair**, and scan the code. **Copy Link** provides the alternative paste-pair flow.
 
 ```sh
 orc pair-phone                         # QR code, preferring Tailscale when available

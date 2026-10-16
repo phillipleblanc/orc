@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { writeJsonFile } from './json-file.ts'
 
 export type DeviceScope = 'runtime' | 'mobile'
-export type Device = { deviceId: string; name: string; token: string; scope: DeviceScope; pairedAt: number; lastSeenAt: number }
+/** Orc.app's own grant, another computer's, or a phone's. */
+export type DeviceKind = 'app' | 'desktop' | 'phone'
+export type Device = { deviceId: string; name: string; token: string; scope: DeviceScope; kind?: DeviceKind; pairedAt: number; lastSeenAt: number }
+
+/** A grant's kind. A grant issued without one is a phone's when it has mobile scope, Orc.app's when named Orc, and another computer's otherwise. */
+export function deviceKind(device: Pick<Device, 'scope' | 'name' | 'kind'>): DeviceKind {
+  return device.kind ?? (device.scope === 'mobile' ? 'phone' : device.name === 'Orc' ? 'app' : 'desktop')
+}
 
 /** Paired clients and their access tokens, `<profile>/orca-devices.json`. */
 export class Devices {
@@ -32,16 +39,16 @@ export class Devices {
     })
   }
 
-  list(): Omit<Device, 'token'>[] {
-    return this.devices.map(({ token: _token, ...device }) => device)
+  list(): (Omit<Device, 'token'> & { kind: DeviceKind })[] {
+    return this.devices.map(({ token: _token, ...device }) => ({ ...device, kind: deviceKind(device) }))
   }
 
   all(): Device[] {
     return [...this.devices]
   }
 
-  async create(scope: DeviceScope, name: string): Promise<Device> {
-    const device: Device = { deviceId: randomUUID(), name, token: randomBytes(24).toString('hex'), scope, pairedAt: Date.now(), lastSeenAt: 0 }
+  async create(scope: DeviceScope, name: string, kind?: DeviceKind): Promise<Device> {
+    const device: Device = { deviceId: randomUUID(), name, token: randomBytes(24).toString('hex'), scope, ...(kind ? { kind } : {}), pairedAt: Date.now(), lastSeenAt: 0 }
     this.devices.push(device)
     await this.save()
     return device

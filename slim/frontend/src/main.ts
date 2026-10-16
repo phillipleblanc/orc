@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { resumedConversation } from './agent-hooks.ts'
 import { AgentDirectory } from './agents.ts'
-import { Devices, pairingLink } from './devices.ts'
+import { Devices, pairingLink, type DeviceKind } from './devices.ts'
 import { ChatServer } from './durable/chat-server.ts'
 import { durableSocket } from './durable/paths.ts'
 import { DurableUpgrades } from './durable/upgrades.ts'
@@ -23,6 +23,7 @@ import { terminalMultiplex } from './multiplex.ts'
 import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
+import { desktopPairingHandlers } from './desktop-pairing.ts'
 import { ConversationIndex } from './conversations.ts'
 import { restartSession, SessionHistory } from './history.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
@@ -169,12 +170,15 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   'slim.pairing.create': async (params) => {
     const scope = params.scope === 'mobile' ? 'mobile' : params.scope === 'runtime' ? 'runtime' : null
     if (!scope) throw new RpcError('invalid_argument', 'scope must be runtime or mobile')
+    const kinds: Record<typeof scope, DeviceKind[]> = { runtime: ['app', 'desktop'], mobile: ['phone'] }
+    if (params.kind !== undefined && !kinds[scope].includes(params.kind)) throw new RpcError('invalid_argument', `kind must be ${kinds[scope].join(' or ')} for ${scope} scope`)
     const endpoint = typeof params.endpoint === 'string' ? params.endpoint : websocketEndpoint
-    const device = await devices.create(scope, typeof params.name === 'string' ? params.name : scope)
+    const device = await devices.create(scope, typeof params.name === 'string' ? params.name : scope, params.kind)
     const publicKeyB64 = Buffer.from(keypair.publicKey).toString('base64')
     return { deviceId: device.deviceId, scope, link: pairingLink({ endpoint, deviceToken: device.token, publicKeyB64, scope, pairedDeviceId: device.deviceId }) }
   },
   ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
+  ...desktopPairingHandlers({ runtimeId, devices, keypair, websocket }),
   'slim.pairing.list': () => ({ devices: devices.list() }),
   'durable.chat': async (params) => {
     const name = String(params.name ?? '')
