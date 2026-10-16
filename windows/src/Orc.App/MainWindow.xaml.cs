@@ -49,6 +49,8 @@ public sealed partial class MainWindow : Window
     private readonly CancellationTokenSource closing = new();
     private readonly bool diagnostics = Environment.GetEnvironmentVariable("ORC_DIAGNOSTICS") == "1";
     private readonly SessionDefaults defaults = SessionDefaults.Load();
+    private readonly ReviewState review = ReviewState.Load();
+    private readonly Notifier notifier;
     private List<string> shape = [];
     private Pairing? pairing;
     private HostMonitor? monitor;
@@ -74,8 +76,11 @@ public sealed partial class MainWindow : Window
     private sealed record Attached(SessionInfo Session, string PageId, XtermSurface Surface, AttachController Controller);
     private sealed record Notice(InfoBarSeverity Severity, string Title, string Message, IReadOnlyList<(string Label, Action Run)>? Actions = null);
 
-    public MainWindow()
+    public MainWindow(Notifier notifier, string? openSession = null)
     {
+        this.notifier = notifier;
+        // A notification that launched Orc opens its session once the host lists it.
+        pendingSelect = openSession;
         InitializeComponent();
         Title = AppTitle;
         ExtendsContentIntoTitleBar = true;
@@ -128,6 +133,7 @@ public sealed partial class MainWindow : Window
             if (!windowActive) return;
             ReportViews(ViewAttention.Strong);
             RefreshUsage();
+            MarkShownRead();
         };
         AppWindow.Changed += (_, _) =>
         {
@@ -153,11 +159,14 @@ public sealed partial class MainWindow : Window
         usageTimer.Tick += (_, _) => { if (windowActive) RefreshUsage(); };
         usageTimer.Start();
 
+        notifier.Opened += handle => DispatcherQueue.TryEnqueue(() => OpenFromNotification(handle));
+
         Closed += (_, _) =>
         {
             closing.Cancel();
             presence.Stop();
             usageTimer.Stop();
+            notifier.Close();
             foreach (var terminal in attached.Values) terminal.Controller.Stop();
         };
         _ = InitializeAsync();
@@ -250,7 +259,7 @@ public sealed partial class MainWindow : Window
     {
         StopHost();
         pairing = next;
-        var host = new HostMonitor(next);
+        var host = new HostMonitor(next) { NotificationCursor = SavedCursor() };
         monitor = host;
         hostStop = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);
         host.Updated += update => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) Apply(update); });
@@ -314,6 +323,8 @@ public sealed partial class MainWindow : Window
         if (color is { } fill) HostDot.Fill = new SolidColorBrush(fill);
         var connected = status?.IsConnected == true;
         NewSessionButton.IsEnabled = connected;
+        // A turn that ends while the host is away is not inferred across the gap.
+        if (!connected) review.ResetCycles();
         // What the sidebar shows is the last known state while the host is away.
         SessionList.Opacity = connected || snapshot is null ? 1 : 0.5;
 
@@ -379,6 +390,7 @@ public sealed partial class MainWindow : Window
     private void Apply(HostSnapshot update)
     {
         snapshot = update;
+        Review(update);
         var sections = SessionSections.Build(update.Sessions, update.Projects);
         // A child about to be selected is shown even when its parent is collapsed.
         if (pendingSelect is { } wanted)
@@ -407,7 +419,7 @@ public sealed partial class MainWindow : Window
                 var (section, sectionRows) = layout[i];
                 groups[i].Title = $"{section.Title}  {section.Sessions.Count}";
                 foreach (var row in sectionRows)
-                    rows[row.Session.Handle].Update(row.Session, update.ActivityOf(row.Session), update.DetailOf(row.Session), section.Hierarchy, row,
+                    rows[row.Session.Handle].Update(row.Session, ActivityOf(row.Session), update.DetailOf(row.Session), section.Hierarchy, row,
                         collapsedParents.Contains(row.Session.Handle));
             }
         }
@@ -487,6 +499,82 @@ public sealed partial class MainWindow : Window
         if (snapshot is not null) Apply(snapshot);
     }
 
+    // ---- Review and notifications ----
+
+    /// <summary>A session's activity with this PC's review state over it: a finished turn or a notification not yet viewed.</summary>
+    private AgentActivity ActivityOf(SessionInfo session) => review.ActivityOf(session, snapshot?.ActivityOf(session) ?? AgentActivity.Unknown);
+
+    /// <summary>
+    /// As Orc.app does on each refresh: notices agents that finished a turn and messages sessions sent, notifies, marks
+    /// the session on screen read, and counts the sessions to review on the taskbar button.
+    /// </summary>
+    private void Review(HostSnapshot update)
+    {
+        var completed = review.Update(update.Sessions, update.ActivityOf);
+        foreach (var session in completed)
+        {
+            // The person is looking at it here: nothing to tell them.
+            if (session.Handle == visible && windowActive && TerminalOnScreen) continue;
+            var project = Project.LastComponent(session.WorktreePath);
+            if (session.Agent is null && session.Program?.Lead is { } program)
+                notifier.Show(session.Name, $"{program.App ?? "Program"} is done", program.Msg ?? program.Title ?? $"Finished in {project}.", session.Handle);
+            else
+                notifier.Show(session.Name, "Agent is idle", $"Finished working in {project}.", session.Handle);
+        }
+        if (update.Notifications is { } batch)
+        {
+            foreach (var notification in batch.Notifications)
+            {
+                var session = update.Sessions.FirstOrDefault(s => s.Handle == notification.Handle);
+                if (session is not null) review.MarkNotified(session);
+                // Catching up after a long time away, only the recent ones are worth a banner; the rest show in the sidebar.
+                if (batch.CatchingUp && DateTimeOffset.Now - notification.At > TimeSpan.FromHours(1)) continue;
+                notifier.Show(session?.Name ?? notification.Session ?? "Orc", null, notification.Message, session?.Handle);
+            }
+            SaveCursor(batch.Cursor);
+        }
+        MarkShownRead(save: false);
+        review.Save();
+        UpdateBadge();
+    }
+
+    /// <summary>The session on screen, in the window in front, has been seen.</summary>
+    private void MarkShownRead(bool save = true)
+    {
+        if (!windowActive || !TerminalOnScreen || snapshot?.Sessions.FirstOrDefault(s => s.Handle == visible) is not { } session || !review.MarkRead(session)) return;
+        if (!save) return;
+        review.Save();
+        rows.GetValueOrDefault(session.Handle)?.SetActivity(ActivityOf(session));
+        UpdateBadge();
+    }
+
+    private void UpdateBadge() => notifier.SetBadge(snapshot?.Sessions.Count(s => ActivityOf(s) is AgentActivity.Unread or AgentActivity.Notified) ?? 0);
+
+    /// <summary>A notification was selected: Orc comes forward with its session.</summary>
+    private void OpenFromNotification(string handle)
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter) presenter.Restore();
+        Activate();
+        if (Hosts.Visibility == Visibility.Visible && pairing is not null) CloseHosts();
+        if (rows.TryGetValue(handle, out var row) && listed.Contains(handle))
+        {
+            SessionList.SelectedItem = row;
+            SessionList.ScrollIntoView(row);
+        }
+        else pendingSelect = handle;
+    }
+
+    private static NotificationCursor? SavedCursor() =>
+        LocalSettings.GetString("notificationRuntime") is { Length: > 0 } runtime && LocalSettings.GetLong("notificationLatest") is { } latest
+            ? new NotificationCursor(runtime, latest) : null;
+
+    private static void SaveCursor(NotificationCursor cursor)
+    {
+        if (SavedCursor() == cursor) return;
+        LocalSettings.Set("notificationRuntime", cursor.RuntimeId);
+        LocalSettings.Set("notificationLatest", cursor.Latest);
+    }
+
     // ---- Terminals ----
 
     private void Show(string handle)
@@ -517,6 +605,7 @@ public sealed partial class MainWindow : Window
         ShowNotice();
         // Selecting a session is turning to it: the others are hidden, and this one takes its session's size.
         ReportViews(ViewAttention.Strong);
+        MarkShownRead();
 
         // Keep the ten most recently shown terminals attached.
         while (recent.Count > MaxAttached)

@@ -27,8 +27,9 @@ public sealed record HostStatus(HostState State, string? Detail = null, int Fail
 /// <summary>
 /// Keeps one control connection to the host and refreshes what Orc.app's sidebar shows, on the Mac app's schedule:
 /// every 2 seconds, terminal.list and worktree.list, then terminal.agentStatus for each running session, at most 8 at
-/// a time with a 3-second limit each (Sources/OrcApp/OrcApp.swift, Sources/OrcKit/AgentActivity.swift). After a
-/// failure it retries with backoff (1 s up to 30 s); a refused pairing waits for <see cref="RetryNow"/>.
+/// a time with a 3-second limit each (Sources/OrcApp/OrcApp.swift, Sources/OrcKit/AgentActivity.swift); from hosts
+/// that serve them, agents' briefs every 5 seconds and new <c>orc notify</c> messages. After a failure it retries with
+/// backoff (1 s up to 30 s); a refused pairing waits for <see cref="RetryNow"/>.
 /// </summary>
 public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func<int, TimeSpan>? backoff = null)
 {
@@ -93,6 +94,7 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
                 }
                 var snapshot = await PollAsync(connection, stop);
                 if (info?.Has(HostInfo.OwnerMethods) == true) snapshot = snapshot with { Briefs = await BriefsAsync(connection) };
+                if (info?.Has(HostInfo.NotifyCursor) == true) snapshot = snapshot with { Notifications = await NotificationsAsync(connection) };
                 failures = 0;
                 everConnected = true;
                 Report(new HostStatus(HostState.Connected, Info: info));
@@ -148,6 +150,23 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
         // A host whose briefs are unavailable leaves the last ones.
         catch (Exception error) when (error is TimeoutException or RpcException) { }
         return briefs;
+    }
+
+    /// <summary>
+    /// Where this PC is in the host's <c>orc notify</c> messages; set before running to resume from a saved cursor, and
+    /// moved on by each snapshot that carries notifications.
+    /// </summary>
+    public NotificationCursor? NotificationCursor { get; set; }
+
+    private async Task<NotificationBatch?> NotificationsAsync(RuntimeConnection current)
+    {
+        try
+        {
+            var batch = await NotificationFeed.SinceAsync((method, parameters, timeout) => current.RequestAsync(method, parameters, timeout ?? StatusTimeout), NotificationCursor);
+            NotificationCursor = batch.Cursor;
+            return batch;
+        }
+        catch (Exception error) when (error is TimeoutException or RpcException) { return null; }
     }
 
     private static async Task<HostSnapshot> PollAsync(RuntimeConnection connection, CancellationToken stop)

@@ -83,6 +83,8 @@
                                                   IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
                                     <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
                                                VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
+                                    <FontIcon Glyph="&#xEA8F;" FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                              Visibility="{Binding BellVisibility}" />
                                 </Grid>
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="NoWrap"
                                            TextTrimming="CharacterEllipsis" />

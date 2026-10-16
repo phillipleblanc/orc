@@ -60,6 +60,43 @@ public sealed class HostMonitorTests
     }
 
     [Fact]
+    public async Task ReadsNotificationsThroughItsOwnCursor()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.NotifyCursor] };
+        lock (runtime.Notices) runtime.Notices.AddRange(["old one", "older two"]);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var monitor = new HostMonitor(runtime.Pairing(), TimeSpan.FromMilliseconds(100));
+        var batches = new Recorder<NotificationBatch>();
+        monitor.Updated += snapshot => { if (snapshot.Notifications is { Notifications.Count: > 0 } batch) batches.Add(batch); };
+        var run = monitor.RunAsync(stop.Token);
+        // Without a cursor: the newest few, catching up.
+        Assert.True(await Eventually(() => batches.Count == 1));
+        Assert.True(batches.Latest.CatchingUp);
+        Assert.Equal(["old one", "older two"], batches.Latest.Notifications.Select(n => n.Message));
+        Assert.Equal(new NotificationCursor("fake-runtime", 2), monitor.NotificationCursor);
+
+        lock (runtime.Notices) runtime.Notices.Add("Build is green");
+        Assert.True(await Eventually(() => batches.Count == 2));
+        var latest = batches.Latest;
+        Assert.False(latest.CatchingUp);
+        Assert.Equal(("Build is green", FakeRuntime.Handle), (Assert.Single(latest.Notifications).Message, latest.Notifications[0].Handle));
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        // A cursor from another runtime instance starts over.
+        var restarted = new HostMonitor(runtime.Pairing(), TimeSpan.FromMilliseconds(100)) { NotificationCursor = new NotificationCursor("gone", 7) };
+        var again = new Recorder<NotificationBatch>();
+        restarted.Updated += snapshot => { if (snapshot.Notifications is { } batch) again.Add(batch); };
+        using var stopAgain = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var rerun = restarted.RunAsync(stopAgain.Token);
+        Assert.True(await Eventually(() => again.Count > 0));
+        Assert.True(again.All[0].CatchingUp);
+        Assert.Equal(3, again.All[0].Notifications.Count);
+        stopAgain.Cancel();
+        await rerun.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task AnOlderHostHasNoBriefs()
     {
         await using var runtime = new FakeRuntime();

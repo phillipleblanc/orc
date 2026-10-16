@@ -46,6 +46,27 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public JsonObject ViewReply = new() { ["owner"] = false, ["cols"] = 120, ["rows"] = 40, ["ownerDevice"] = "Studio" };
     /// <summary>The headline of the terminal's brief, from a host with owner methods.</summary>
     public volatile string Headline = "Writing the tests";
+    /// <summary>`orc notify` messages kept, oldest first, numbered from 1; notify.since serves them as notifications.ts does.</summary>
+    public readonly List<string> Notices = [];
+
+    private JsonObject NotifySince(JsonObject parameters)
+    {
+        lock (Notices)
+        {
+            long latest = Notices.Count;
+            long? after = parameters["after"] is JsonValue a && a.TryGetValue(out long n) ? n : null;
+            var known = after is { } cursor && cursor >= 0 && cursor <= latest;
+            var from = known ? after!.Value : Math.Max(0, latest - 20);
+            var list = new JsonArray();
+            for (var seq = from + 1; seq <= latest; seq++)
+                list.Add(new JsonObject
+                {
+                    ["id"] = $"n{seq}", ["seq"] = seq, ["session"] = "fake-agent", ["handle"] = Handle, ["message"] = Notices[(int)seq - 1],
+                    ["at"] = DateTimeOffset.Now.ToUnixTimeMilliseconds()
+                });
+            return new JsonObject { ["runtimeId"] = RuntimeId, ["notifications"] = list, ["latest"] = latest };
+        }
+    }
 
     /// <summary>Sends every subscribed viewer a Resized frame with <paramref name="payload"/>.</summary>
     public async Task ResizedAsync(JsonObject payload)
@@ -184,6 +205,9 @@ internal sealed class FakeRuntime : IAsyncDisposable
                 case "terminal.view":
                     runtime.Views.Enqueue(parameters.ToJsonString());
                     await ReplyAsync(id, (JsonObject)runtime.ViewReply.DeepClone());
+                    break;
+                case "notify.since" when runtime.Capabilities.Contains("orc.notify-cursor.v1"):
+                    await ReplyAsync(id, runtime.NotifySince(parameters));
                     break;
                 case "brief.list" when runtime.Capabilities.Contains("orc.owner-methods.v1"):
                     await ReplyAsync(id, new JsonObject

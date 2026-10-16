@@ -73,6 +73,63 @@ public sealed class SessionParsingTests
     }
 }
 
+public sealed class ReviewTests
+{
+    private static SessionInfo Agent(string incarnation = "inc-1") => new("t1", "fix-auth", "w", "/Users/me/proj", true, "claude", incarnation, null);
+
+    [Fact]
+    public void AFinishedTurnIsUnreadUntilViewed()
+    {
+        var review = new ReviewState();
+        var session = Agent();
+        Assert.Empty(review.Update([session], _ => AgentActivity.Idle));
+        Assert.Empty(review.Update([session], _ => AgentActivity.Active));
+        // Waiting at a prompt keeps the cycle open.
+        Assert.Empty(review.Update([session], _ => AgentActivity.NeedsAttention));
+        Assert.Equal([session], review.Update([session], _ => AgentActivity.Idle));
+        Assert.Empty(review.Update([session], _ => AgentActivity.Idle));
+        Assert.Equal(AgentActivity.Unread, review.ActivityOf(session, AgentActivity.Idle));
+        Assert.Equal(AgentActivity.Active, review.ActivityOf(session, AgentActivity.Active));
+        Assert.True(review.MarkRead(session));
+        Assert.False(review.MarkRead(session));
+        Assert.Equal(AgentActivity.Idle, review.ActivityOf(session, AgentActivity.Idle));
+    }
+
+    [Fact]
+    public void ARestartIsNotAFinishedTurn()
+    {
+        var review = new ReviewState();
+        review.Update([Agent()], _ => AgentActivity.Active);
+        Assert.Empty(review.Update([Agent("inc-2")], _ => AgentActivity.Idle));
+        // Nor is a turn across a lost connection.
+        review.Update([Agent()], _ => AgentActivity.Active);
+        review.ResetCycles();
+        Assert.Empty(review.Update([Agent()], _ => AgentActivity.Idle));
+    }
+
+    [Fact]
+    public void ANotificationShowsUntilViewedAndIsKept()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"orc-review-{Guid.NewGuid():N}.json");
+        try
+        {
+            var review = new ReviewState();
+            var session = Agent();
+            review.MarkNotified(session);
+            Assert.Equal(AgentActivity.Notified, review.ActivityOf(session, AgentActivity.Active));
+            // A prompt waiting for an answer shows as such.
+            Assert.Equal(AgentActivity.NeedsAttention, review.ActivityOf(session, AgentActivity.NeedsAttention));
+            review.Save(file);
+            var loaded = ReviewState.Load(file);
+            Assert.True(loaded.HasUnread(session));
+            // A replaced session's notification is dropped.
+            loaded.Update([Agent("inc-2")], _ => AgentActivity.Idle);
+            Assert.False(loaded.HasUnread(Agent("inc-2")));
+        }
+        finally { File.Delete(file); }
+    }
+}
+
 public sealed class InsightTests
 {
     [Fact]

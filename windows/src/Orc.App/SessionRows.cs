@@ -32,7 +32,8 @@ public sealed class SessionGroup(string id) : ObservableCollection<SessionRow>
 /// A session in the sidebar, as Sources/OrcApp/SessionSidebarModel.swift shows it: its activity light, its name (a
 /// child's without its parent's prefix, indented under the parent), and its agent with its status headline, or what a
 /// reporting program says.
-/// Green is idle, a yellow spinner active, orange with "!" needs attention, gray no agent, unavailable or offline.
+/// Green is idle, a yellow spinner active, orange with "!" needs attention, a blue bell something to review (a finished
+/// turn or a notification), gray no agent, unavailable or offline.
 /// </summary>
 [Microsoft.UI.Xaml.Data.Bindable]
 public sealed class SessionRow(string handle) : INotifyPropertyChanged
@@ -65,9 +66,12 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
     public string ChevronLabel => collapsed ? "Show child sessions" : "Hide child sessions";
 
     public bool IsActive => activity == AgentActivity.Active;
+    private bool HasBell => activity is AgentActivity.Unread or AgentActivity.Notified;
     public Visibility RingVisibility => IsActive ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility DotVisibility => IsActive ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility DotVisibility => IsActive || HasBell ? Visibility.Collapsed : Visibility.Visible;
     public Visibility GlyphVisibility => activity == AgentActivity.NeedsAttention ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>A finished turn or a notification not yet viewed, as Orc.app's blue bell.</summary>
+    public Visibility BellVisibility => HasBell ? Visibility.Visible : Visibility.Collapsed;
     public Brush StatusBrush => activity switch
     {
         AgentActivity.Idle => Green,
@@ -86,12 +90,16 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
         if (isChild != (row.ParentHandle is not null)) { isChild = !isChild; Changed(nameof(Indent)); }
         if (hasChildren != row.HasChildren) { hasChildren = row.HasChildren; Changed(nameof(ChevronVisibility)); }
         if (collapsed != isCollapsed) { collapsed = isCollapsed; Changed(nameof(ChevronGlyph), nameof(ChevronLabel)); }
-        if (activity != nextActivity)
-        {
-            activity = nextActivity;
-            Changed(nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(StatusBrush), nameof(StatusLabel));
-        }
+        SetActivity(nextActivity);
         Changed(nameof(AccessibleName));
+    }
+
+    public void SetActivity(AgentActivity next)
+    {
+        if (activity == next) return;
+        activity = next;
+        Changed(nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(BellVisibility), nameof(StatusBrush),
+            nameof(StatusLabel), nameof(AccessibleName));
     }
 
     private void Set(ref string field, string value, [CallerMemberName] string? property = null)

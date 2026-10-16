@@ -2,8 +2,12 @@ using System.Text.Json.Nodes;
 
 namespace Orc.Core;
 
-/// <summary>A session's activity light, as Sources/OrcKit/AgentActivity.swift derives it from terminal.agentStatus.</summary>
-public enum AgentActivity { Idle, Active, NeedsAttention, NoAgent, Unknown, Offline }
+/// <summary>
+/// A session's activity light, as Sources/OrcKit/AgentActivity.swift derives it from terminal.agentStatus; this PC's
+/// review state adds <see cref="Unread"/> (a finished turn not yet viewed) and <see cref="Notified"/> (an
+/// <c>orc notify</c> message not yet viewed).
+/// </summary>
+public enum AgentActivity { Idle, Active, Unread, Notified, NeedsAttention, NoAgent, Unknown, Offline }
 
 public static class AgentActivities
 {
@@ -24,6 +28,8 @@ public static class AgentActivities
     {
         AgentActivity.Idle => "Idle",
         AgentActivity.Active => "Active",
+        AgentActivity.Unread => "New output to review",
+        AgentActivity.Notified => "Sent a notification",
         AgentActivity.NeedsAttention => "Needs attention",
         AgentActivity.NoAgent => "No agent running",
         AgentActivity.Offline => "Offline",
@@ -107,7 +113,7 @@ public sealed record Project(string Id, string Path, string? DisplayName)
     public static Project? FromJson(JsonObject worktree) =>
         worktree["id"]?.ToString() is { Length: > 0 } id ? new Project(id, worktree["path"]?.ToString() ?? "", worktree["displayName"]?.ToString()) : null;
 
-    internal static string LastComponent(string path) =>
+    public static string LastComponent(string path) =>
         path.TrimEnd('/', '\\') is { Length: > 0 } trimmed ? trimmed[(trimmed.LastIndexOfAny(['/', '\\']) + 1)..] : path;
 }
 
@@ -137,9 +143,13 @@ public static class SessionSections
     }
 }
 
-/// <summary>What the host's sessions are and do, and (from hosts that serve them) their agents' briefs by session name.</summary>
+/// <summary>
+/// What the host's sessions are and do; from hosts that serve them, their agents' briefs by session name and the
+/// <c>orc notify</c> messages that arrived since the last snapshot.
+/// </summary>
 public sealed record HostSnapshot(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<Project> Projects,
-    IReadOnlyDictionary<string, AgentActivity> Activity, DateTimeOffset At, IReadOnlyDictionary<string, AgentBrief>? Briefs = null)
+    IReadOnlyDictionary<string, AgentActivity> Activity, DateTimeOffset At, IReadOnlyDictionary<string, AgentBrief>? Briefs = null,
+    NotificationBatch? Notifications = null)
 {
     public AgentActivity ActivityOf(SessionInfo session) =>
         !session.Connected ? AgentActivity.Offline : Activity.GetValueOrDefault(session.Handle, AgentActivity.Unknown);
