@@ -83,7 +83,7 @@
                                                   IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
                                     <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
                                                VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
-                                    <FontIcon Glyph="&#xEA8F;" FontSize="12" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                    <FontIcon Glyph="&#xEA8F;" FontSize="13" FontWeight="SemiBold" Foreground="#58a6ff"
                                               Visibility="{Binding BellVisibility}" />
                                 </Grid>
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="NoWrap"
@@ -122,6 +122,8 @@
                         <FontIcon Glyph="&#xE756;" FontSize="32" Foreground="#6e7681" />
                         <TextBlock x:Name="EmptyText" Text="Select a session" Foreground="#8b949e" HorizontalAlignment="Center"
                                    Style="{StaticResource BodyTextBlockStyle}" />
+                        <Button x:Name="EmptyAction" Content="Add Project…" Click="OnEmptyAction" HorizontalAlignment="Center"
+                                Margin="0,8,0,0" Visibility="Collapsed" />
                     </StackPanel>
                     <!-- Shown while another screen sizes the session; selecting it gives the session this window's size. -->
                     <Button x:Name="OwnerNotice" Visibility="Collapsed" Click="OnFitHere" Margin="12" Padding="10,5"

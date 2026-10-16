@@ -323,6 +323,36 @@ host.addEventListener('message', (event) => {
   else handle(message);
 });
 
+// Files dropped on the shown terminal go to the host, which saves them and gets their paths pasted, as Orc.app does
+// with files dropped on its terminals. Nothing dropped ever navigates the page away from the terminals.
+const MAX_ATTACHMENT = 12 * 1024 * 1024;
+const readBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).slice(String(reader.result).indexOf(',') + 1));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+document.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = terminals.has(visibleId) && event.dataTransfer.types.includes('Files') ? 'copy' : 'none';
+});
+document.addEventListener('drop', async (event) => {
+  event.preventDefault();
+  const id = visibleId;
+  const dropped = [...(event.dataTransfer?.files ?? [])];
+  if (!terminals.has(id) || dropped.length === 0) return;
+  attention(id);
+  const files = [];
+  const folders = [];
+  const tooLarge = [];
+  for (const file of dropped) {
+    if (file.size > MAX_ATTACHMENT) { tooLarge.push(file.name); continue; }
+    // A folder cannot be read as a file.
+    try { files.push({ name: file.name, data: await readBase64(file) }); } catch { folders.push(file.name); }
+  }
+  post({ type: 'drop', id, files, folders, tooLarge });
+});
+
 let fitTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(fitTimer);

@@ -196,3 +196,65 @@ public sealed class SessionCommandTests
         finally { File.Delete(file); }
     }
 }
+
+public sealed class HostDataTests
+{
+    [Fact]
+    public async Task SavesAttachmentsAndQuotesTheirPaths()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.HostData] };
+        await using var connection = await RuntimeConnection.ConnectAsync(runtime.Pairing(), TestContext.Current.CancellationToken);
+        var path = await HostData.SaveAttachmentAsync(connection.RequestAsync, "shot.png", [1, 2, 3]);
+        Assert.Equal("/Users/me/.config/orc/attachments/abc/shot.png", path);
+        var saved = JsonNode.Parse(runtime.Calls.Single().Parameters)!;
+        Assert.Equal(("shot.png", "AQID"), (saved["name"]?.ToString(), saved["data"]?.ToString()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => HostData.SaveAttachmentAsync(connection.RequestAsync, "big.bin", new byte[HostData.MaxAttachmentBytes + 1]));
+        Assert.Equal("'/tmp/it'\"'\"'s here.png'", HostData.ShellQuote("/tmp/it's here.png"));
+    }
+
+    [Fact]
+    public async Task BrowsesFoldersInTheHome()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.HostData] };
+        await using var connection = await RuntimeConnection.ConnectAsync(runtime.Pairing(), TestContext.Current.CancellationToken);
+        var listing = await HostData.ListFoldersAsync(connection.RequestAsync, "/Users/me/");
+        Assert.Equal(("/Users/me", false), (listing.Path, listing.Truncated));
+        // Folders only: files are not projects.
+        Assert.Equal(["code"], listing.Folders);
+        var forbidden = await Assert.ThrowsAsync<RpcException>(() => HostData.ListFoldersAsync(connection.RequestAsync, "/etc"));
+        Assert.Equal("forbidden", forbidden.Code);
+        Assert.Equal("/Users/me", HostData.ParentOf("/Users/me/code/"));
+        Assert.Equal("/", HostData.ParentOf("/Users"));
+        Assert.Null(HostData.ParentOf("/"));
+        Assert.Equal("/Users/me/code", HostData.Child("/Users/me/", "code"));
+    }
+
+    [Fact]
+    public async Task AddsAProjectAndMakesItTheDefault()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.HostData] };
+        await using var connection = await RuntimeConnection.ConnectAsync(runtime.Pairing(), TestContext.Current.CancellationToken);
+        var project = await HostData.AddProjectAsync(connection.RequestAsync, "/Users/me/code/site", makeDefault: true);
+        Assert.Equal(("r2", "/Users/me/code/site", "site"), (project.Id, project.Path, project.Name));
+        var calls = runtime.Calls.ToArray();
+        Assert.Equal(["repo.add", "config.set"], calls.Select(c => c.Method));
+        Assert.Equal("id:r2", JsonNode.Parse(calls[1].Parameters)!["defaultProject"]?.ToString());
+        await HostData.AddProjectAsync(connection.RequestAsync, "/Users/me/code/other", makeDefault: false);
+        Assert.Equal(3, runtime.Calls.Count);
+    }
+
+    [Fact]
+    public async Task NewSessionsUseTheHostsDefaultsWithoutChangingThem()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.HostData] };
+        await using var connection = await RuntimeConnection.ConnectAsync(runtime.Pairing(), TestContext.Current.CancellationToken);
+        var defaults = await HostData.DefaultsAsync(connection.RequestAsync);
+        Assert.Equal(("claude", true, "id:local::/Users/me/proj"), (defaults.Kind, defaults.HasKind, defaults.Project));
+        var project = new Project("local::/Users/me/proj", "/Users/me/proj", "proj");
+        Assert.Equal(project, defaults.ProjectIn([project]));
+        // Creating a session on this PC leaves the host's defaults, and this PC's file, alone.
+        defaults.Remember(SessionKind.Find("codex")!, project);
+        Assert.Equal("claude", defaults.Kind);
+        Assert.Empty(runtime.Calls);
+    }
+}

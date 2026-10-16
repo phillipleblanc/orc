@@ -82,15 +82,31 @@ public static class SessionCommands
 }
 
 /// <summary>
-/// Defaults for new sessions, in <c>%LOCALAPPDATA%\Orc\config.json</c> with the keys Orc.app keeps in
-/// ~/.config/orc/config.json: <c>defaultSessionType</c> and <c>defaultProject</c> (a project selector).
-/// Settings this app does not know are kept.
+/// Defaults for new sessions: <c>defaultSessionType</c> and <c>defaultProject</c> (a project selector). From a host with
+/// host data they are the host's own (~/.config/orc/config.json, which Orc.app's Settings and <c>orc new</c> use), and
+/// creating a session leaves them alone, as on the Mac. Otherwise they are this PC's, in
+/// <c>%LOCALAPPDATA%\Orc\config.json</c> with the same keys, and remember the last session created; settings this app
+/// does not know are kept.
 /// </summary>
 public sealed class SessionDefaults
 {
     private readonly string file;
+    private bool fromHost;
 
     public SessionDefaults(string? file = null) => this.file = file ?? Path.Combine(PairingStore.Directory, "config.json");
+
+    /// <summary>The defaults in a <c>config.get</c> result.</summary>
+    public static SessionDefaults FromHost(JsonObject config)
+    {
+        var defaults = new SessionDefaults { fromHost = true };
+        if (SessionKind.Find(config["defaultSessionType"]?.ToString()) is { Id: not "custom" } kind)
+        {
+            defaults.Kind = kind.Id;
+            defaults.HasKind = true;
+        }
+        if (config["defaultProject"] is JsonValue project && project.TryGetValue(out string? selector) && selector.Length > 0) defaults.Project = selector;
+        return defaults;
+    }
 
     public string Kind { get; private set; } = "codex";
     public string? Project { get; private set; }
@@ -120,6 +136,7 @@ public sealed class SessionDefaults
     /// <summary>Remembers the kind and project of a session just created, for the next one.</summary>
     public void Remember(SessionKind kind, Project project)
     {
+        if (fromHost) return;
         if (kind.Id != "custom")
         {
             Kind = kind.Id;

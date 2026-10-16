@@ -7,9 +7,9 @@ drives them.
 
 | Path | What |
 |---|---|
-| `src/Orc.Protocol` | `E2eeChannel` (libsodium, the same calls as `Sources/COrcSupport/support.c`), `TerminalFrame`, `RuntimeConnection`, `Pairing`, and `AttachController`, which owns the attach protocol and draws through `ITerminalSurface` |
-| `src/Orc.Core` | The client model: sessions, projects and activity as the Mac app derives them, sidebar sections, and `HostMonitor`, which refreshes them on Orc.app's schedule |
-| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): the host's sessions by project with their activity lights, children nested under their parents, beside the selected session's terminal (xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface`); the ten most recently shown terminals stay attached. Sessions are created (Ctrl+Shift+N, or Create Child… from a session's menu), renamed (F2), restarted and closed (Delete) as in Orc.app |
+| `src/Orc.Protocol` | `E2eeChannel` (libsodium, the same calls as `Sources/COrcSupport/support.c`), `TerminalFrame`, `RuntimeConnection` (which finds `NAME.local` hosts with multicast DNS when Windows does not), `Pairing`, and `AttachController`, which owns the attach protocol, follows viewport ownership, and draws through `ITerminalSurface` |
+| `src/Orc.Core` | The client model: sessions, projects and activity as the Mac app derives them, sidebar sections, briefs, usage, the review state behind notifications, host data, and `HostMonitor`, which refreshes them on Orc.app's schedule |
+| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): the host's sessions by project with their activity lights and status headlines, children nested under their parents, and the agents' usage, beside the selected session's terminal (xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface`); the ten most recently shown terminals stay attached. Sessions are created (Ctrl+Shift+N, or Create Child… from a session's menu), renamed (F2), restarted and closed (Delete) as in Orc.app, and projects added. Windows notifications and a taskbar badge tell of finished turns and `orc notify` messages |
 | `tools/OrcSpike` | `orcspike`, a console client for probing, pairing and attaching from a terminal |
 | `tests/` | Protocol, attach and model tests against an in-process fake runtime |
 | `scripts/bootstrap-xterm.ps1` | Fetches the checksum-pinned xterm.js packages; the app build runs it when they are missing |
@@ -87,5 +87,19 @@ The clipboard works as in Windows Terminal: Ctrl+C copies a selection and is oth
 pastes this PC's clipboard, and Ctrl+Shift+C/V and Ctrl+Insert/Shift+Insert work too. Programs that track the mouse,
 such as Claude Code, get the drag; hold Shift to select instead. Programs that copy with OSC 52 put text on the Windows
 clipboard; requests to read it are refused. Right-click opens Copy, Paste and Select All (Shift+right-click while a
-program tracks the mouse). Pasting images or files needs the host's attachment support
-([plan](../docs/plans/remote-desktops.md#5-host-data-for-remote-desktops)).
+program tracks the mouse). Pasting or dropping images and files saves each on the host (up to 12 MB) and pastes its
+path there, shell-quoted, as Orc.app does with dropped files; Claude Code attaches images pasted as paths. A host
+without host data takes text only.
+
+## Sidebar and notifications
+
+On a host that serves them, each agent's row shows its status headline (from `brief.list`, every 5 seconds), and
+**Usage** under the sessions shows Claude's and Codex's plan windows: read when the host connects, when the window
+comes forward, and every 15 minutes while it is in front. New Session starts from the host's own defaults (Orc's
+Settings, `orc new`), and **Add Project…** (in New Session, or when the host has none) browses the host's home folder
+for one, made the default for new sessions unless that is turned off.
+
+Like Orc.app, the app notifies when an agent it saw working finishes its turn (not for the session you are looking
+at) and for each `orc notify` message, read through this PC's own cursor so the Mac and the PC both show them.
+Sessions with something to review show a blue bell until you view them, and their count is on the taskbar button.
+Windows' notification settings decide how notifications show; selecting one opens its session.

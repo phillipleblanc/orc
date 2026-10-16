@@ -3,7 +3,10 @@
 Status: items 1 to 5 are in the runtime, the `orc` command and Orc.app, advertised as `orc.viewport-ownership.v1`,
 `orc.desktop-pairing.v1`, `orc.owner-methods.v1`, `orc.notify-cursor.v1` and `orc.host-data.v1`; item 6 is open. The
 methods as built are described in [slim/README.md](../../slim/README.md#desktop-viewers). The Windows client follows
-each item (see [windows/README.md](../../windows/README.md)).
+each item (see [windows/README.md](../../windows/README.md)): it opts into viewport ownership, pairs with
+`orc pair-computer` (resolving `NAME.local` itself), shows headlines and usage, notifies through its own cursor, and
+pastes files and adds projects through host data. Still to do there: the Session Overview, the Status panel (with
+notes), pull request lines, the Markdown viewer, and muting a session's notifications.
 
 The Windows client drives a Mac's runtime over the LAN with a runtime-scope device grant and the existing WebSocket
 protocol. It works today without runtime changes, but a few things only a runtime or Orc.app change can fix. This

@@ -26,6 +26,9 @@ public sealed partial class NewSessionDialog : ContentDialog
     /// <summary>The created session's handle, once it exists.</summary>
     public string? CreatedHandle { get; private set; }
 
+    /// <summary>Closed to add a project; the window opens Add Project, then this dialog again with it.</summary>
+    public bool AddProjectRequested { get; private set; }
+
     public NewSessionDialog(SessionCommands.Request request, IReadOnlyList<Project> projects, SessionDefaults defaults,
         TerminalSize size, SessionInfo? parent = null, Project? suggestedProject = null, string? suggestedKind = null)
     {
@@ -42,9 +45,11 @@ public sealed partial class NewSessionDialog : ContentDialog
             PrimaryButtonText = "Create Child";
             Description.Text = $"Create a session grouped under {parent.Name}.";
             NameBox.Header = "Child name";
+            // A child is created in its parent's project.
+            AddProjectLink.Visibility = Visibility.Collapsed;
         }
         ProjectBox.ItemsSource = projects.Select(p => $"{p.Name} — {p.Path}").ToList();
-        if (projects.Count == 0) ShowError("The host has no registered projects. Register one on the host with `orc projects add PATH`.");
+        if (projects.Count == 0) ShowError("The host has no projects yet. Add one to start sessions in it.");
         var project = parent is not null ? projects.FirstOrDefault(p => p.Id == parent.WorktreeId)
             : defaults.ProjectIn(projects) ?? suggestedProject ?? (projects.Count == 1 ? projects[0] : null);
         if (parent is not null && project is null) ShowError("The parent session's project is no longer registered. Choose another project.");
@@ -63,6 +68,22 @@ public sealed partial class NewSessionDialog : ContentDialog
     private string FullName => parent is null ? NameBox.Text.Trim() : $"{parent.Name}-{NameBox.Text.Trim()}";
 
     private void OnInputChanged(object sender, TextChangedEventArgs e) => Validate();
+
+    private void OnAddProject(object sender, RoutedEventArgs e)
+    {
+        if (creating) return;
+        AddProjectRequested = true;
+        Hide();
+    }
+
+    /// <summary>What was typed, to fill in again when the dialog comes back after Add Project.</summary>
+    public string TypedName => NameBox.Text;
+
+    public void Restore(string name, Project? project)
+    {
+        NameBox.Text = name;
+        if (project is not null && projects.ToList().IndexOf(project) is var index and >= 0) ProjectBox.SelectedIndex = index;
+    }
 
     private void OnKindChanged(object sender, SelectionChangedEventArgs e)
     {

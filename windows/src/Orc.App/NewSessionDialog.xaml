@@ -16,8 +16,11 @@
             <TextBlock x:Name="FullNameText" Visibility="Collapsed" IsTextSelectionEnabled="True"
                        Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </StackPanel>
-        <ComboBox x:Name="ProjectBox" Header="Project" HorizontalAlignment="Stretch" PlaceholderText="Choose a project"
-                  SelectionChanged="OnProjectChanged" />
+        <StackPanel Spacing="2">
+            <ComboBox x:Name="ProjectBox" Header="Project" HorizontalAlignment="Stretch" PlaceholderText="Choose a project"
+                      SelectionChanged="OnProjectChanged" />
+            <HyperlinkButton x:Name="AddProjectLink" Content="Add Project…" Click="OnAddProject" Padding="0,4" />
+        </StackPanel>
         <ComboBox x:Name="KindBox" Header="Run" HorizontalAlignment="Stretch" SelectionChanged="OnKindChanged" />
         <TextBox x:Name="CommandBox" Header="Command" Visibility="Collapsed" PlaceholderText="A command for the host's login shell"
                  TextChanged="OnInputChanged" />

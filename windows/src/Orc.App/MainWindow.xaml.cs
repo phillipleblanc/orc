@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
@@ -15,6 +16,9 @@ using Orc.Core;
 using Orc.Protocol;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
+using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI;
 
@@ -426,7 +430,10 @@ public sealed partial class MainWindow : Window
         finally { applying = false; }
         SessionList.Opacity = 1;
 
-        if (visible is null) EmptyText.Text = update.Sessions.Count == 0 ? "No sessions on this host" : "Select a session";
+        if (visible is null)
+            EmptyText.Text = update.Projects.Count == 0 && update.Sessions.Count == 0 ? "Add a project to start agents and terminals in it."
+                : update.Sessions.Count == 0 ? "No sessions on this host" : "Select a session";
+        EmptyAction.Visibility = update.Projects.Count == 0 && update.Sessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         // A session that ended or was replaced is no longer attached.
         var live = update.Sessions.Where(s => s.Connected).Select(s => s.Handle).ToHashSet();
@@ -635,6 +642,7 @@ public sealed partial class MainWindow : Window
         Title = AppTitle;
         TitleText.Text = AppTitle;
         EmptyText.Text = pairing is null ? "Pair with a host to see its sessions" : "Select a session";
+        EmptyAction.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Visible;
         Web.Visibility = Visibility.Collapsed;
         ShowNotice();
@@ -757,21 +765,68 @@ public sealed partial class MainWindow : Window
 
     private void OnNewSessionClick(object sender, RoutedEventArgs e) => _ = NewSessionAsync(null);
 
-    private async Task NewSessionAsync(SessionInfo? parent)
+    private async Task NewSessionAsync(SessionInfo? parent, Project? added = null, string typedName = "")
     {
-        if (monitor is null || snapshot is null || !HostConnected) return;
+        if (monitor is not { } host || snapshot is null || !HostConnected) return;
+        // The host's own defaults, as Orc.app's New Session uses them; this PC's for a host without host data.
+        var sessionDefaults = defaults;
+        if (host.Status.Info?.Has(HostInfo.HostData) == true)
+        {
+            try { sessionDefaults = await HostData.DefaultsAsync(host.RequestAsync); }
+            catch (Exception error) when (error is RpcException or IOException or TimeoutException) { }
+        }
+        var projects = snapshot.Projects;
+        if (added is not null)
+        {
+            // Just added: list the host's projects again rather than wait for the next refresh.
+            try
+            {
+                var worktrees = await host.RequestAsync("worktree.list", new JsonObject { ["limit"] = 10000 });
+                projects = (worktrees["worktrees"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Select(Project.FromJson).OfType<Project>().ToList();
+            }
+            catch (Exception error) when (error is RpcException or IOException or TimeoutException) { }
+        }
         // Until a default is saved, suggest what this host's sessions use: the shown session's project, and the
         // agent most of them run.
         var shown = snapshot.Sessions.FirstOrDefault(s => s.Handle == visible) ?? snapshot.Sessions.FirstOrDefault();
-        var suggestedProject = snapshot.Projects.FirstOrDefault(p => p.Id == shown?.WorktreeId);
+        var suggestedProject = projects.FirstOrDefault(p => p.Id == shown?.WorktreeId);
         var suggestedKind = snapshot.Sessions.Where(s => SessionKind.Find(s.Agent) is not null).GroupBy(s => s.Agent)
             .OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
-        var dialog = new NewSessionDialog(monitor.RequestAsync, snapshot.Projects, defaults, paneSize, parent, suggestedProject, suggestedKind);
+        var dialog = new NewSessionDialog(host.RequestAsync, projects, sessionDefaults, paneSize, parent, suggestedProject, suggestedKind);
+        if (added is not null) dialog.Restore(typedName, SessionCommands.ProjectsMatching("id:" + added.Id, projects).FirstOrDefault());
         await ShowDialogAsync(dialog);
+        if (dialog.AddProjectRequested)
+        {
+            // One dialog at a time: Add Project, then New Session again with what was typed and the new project.
+            var project = await AddProjectAsync();
+            await NewSessionAsync(parent, project, dialog.TypedName);
+            return;
+        }
         if (dialog.CreatedHandle is not { } handle) return;
         pendingSelect = handle;
         monitor?.RefreshNow();
     }
+
+    /// <summary>Orc.app's Add Project, for a folder on the host; returns the project added, if one was.</summary>
+    private async Task<Project?> AddProjectAsync()
+    {
+        if (monitor is not { } host || !HostConnected) return null;
+        var dialog = new AddProjectDialog(host.RequestAsync, browse: host.Status.Info?.Has(HostInfo.HostData) == true, StartFolder());
+        await ShowDialogAsync(dialog);
+        if (dialog.Added is not null) host.RefreshNow();
+        return dialog.Added;
+    }
+
+    /// <summary>Where browsing for a project starts: the folder holding the shown session's project, or another project's.</summary>
+    private string? StartFolder()
+    {
+        if (snapshot is null) return null;
+        var shown = snapshot.Sessions.FirstOrDefault(s => s.Handle == visible);
+        var path = snapshot.Projects.FirstOrDefault(p => p.Id == shown?.WorktreeId)?.Path ?? snapshot.Projects.FirstOrDefault()?.Path ?? shown?.WorktreePath;
+        return path is { Length: > 0 } ? HostData.ParentOf(path) : null;
+    }
+
+    private void OnEmptyAction(object sender, RoutedEventArgs e) => _ = AddProjectAsync();
 
     private void OnSessionContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
@@ -1005,6 +1060,9 @@ public sealed partial class MainWindow : Window
             case "paste":
                 if (shown) _ = PasteAsync(terminal!);
                 break;
+            case "drop":
+                if (shown) _ = DropAsync(terminal!, message);
+                break;
             case "menu":
                 if (shown) ShowTerminalMenu(terminal!, message);
                 break;
@@ -1015,6 +1073,18 @@ public sealed partial class MainWindow : Window
     }
 
     private static TerminalSize ReadSize(JsonObject message) => new(message["cols"]!.GetValue<int>(), message["rows"]!.GetValue<int>());
+
+    /// <summary>Files dropped on the terminal, which the page read; those it could not read are folders or too large.</summary>
+    private Task DropAsync(Attached terminal, JsonObject message)
+    {
+        var files = (message["files"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Select(f => (Name: f["name"]?.ToString() ?? "file", Data: f["data"]?.ToString() ?? ""))
+            .Select(f => (f.Name, Read: (Func<Task<byte[]>>)(() => Task.FromResult(Convert.FromBase64String(f.Data))))).ToList();
+        var names = (string key) => (message[key] as JsonArray ?? new JsonArray()).Select(n => n?.ToString() ?? "").Where(n => n.Length > 0);
+        var skipped = names("folders").Select(n => $"{n} is a folder; paste or drop files.")
+            .Concat(names("tooLarge").Select(n => $"{n} is larger than 12 MB, the most the host takes.")).ToList();
+        return AttachAsync(terminal, files, skipped);
+    }
 
     private static void Copy(string text)
     {
@@ -1029,15 +1099,88 @@ public sealed partial class MainWindow : Window
     private async Task PasteAsync(Attached terminal)
     {
         var content = Clipboard.GetContent();
-        if (content.Contains(StandardDataFormats.Text))
+        try
         {
-            // xterm.js wraps it in bracketed paste when the program asked for that.
-            terminal.Surface.Post(new JsonObject { ["type"] = "paste", ["text"] = await content.GetTextAsync() });
+            if (content.Contains(StandardDataFormats.Text))
+            {
+                // xterm.js wraps it in bracketed paste when the program asked for that.
+                terminal.Surface.Post(new JsonObject { ["type"] = "paste", ["text"] = await content.GetTextAsync() });
+                return;
+            }
+            if (content.Contains(StandardDataFormats.StorageItems))
+            {
+                var items = await content.GetStorageItemsAsync();
+                var folders = items.Where(i => i is not StorageFile).Select(i => $"{i.Name} is a folder; paste or drop files.").ToList();
+                var files = items.OfType<StorageFile>().Select(file => (file.Name, Read: (Func<Task<byte[]>>)(() => ReadAsync(file)))).ToList();
+                await AttachAsync(terminal, files, folders);
+                return;
+            }
+            if (content.Contains(StandardDataFormats.Bitmap))
+            {
+                var bitmap = await content.GetBitmapAsync();
+                await AttachAsync(terminal, [($"image-{DateTime.Now:yyyyMMdd-HHmmss}.png", () => PngAsync(bitmap))], []);
+            }
+        }
+        // The clipboard changed or was held by another app meanwhile.
+        catch (COMException) { }
+    }
+
+    /// <summary>
+    /// Files and images pasted or dropped into a terminal, as Orc.app drops them (Sources/OrcKit/TerminalFileDrop.swift):
+    /// each is saved on the host, which has no access to this PC's disk, and its path there is pasted, shell-quoted and
+    /// followed by a space, without pressing Enter. Agents such as Claude Code attach images pasted as paths.
+    /// </summary>
+    private async Task AttachAsync(Attached terminal, IReadOnlyList<(string Name, Func<Task<byte[]>> Read)> files, IReadOnlyList<string> skipped)
+    {
+        var handle = terminal.Session.Handle;
+        if (monitor is not { } host || host.Status.Info?.Has(HostInfo.HostData) != true)
+        {
+            SetNotice(handle, new Notice(InfoBarSeverity.Informational, "Can't paste files here",
+                "Update Orc on the host to paste or drop images and files into its terminals. Text pastes work."));
             return;
         }
-        if (content.Contains(StandardDataFormats.Bitmap) || content.Contains(StandardDataFormats.StorageItems))
-            SetNotice(terminal.Session.Handle, new Notice(InfoBarSeverity.Informational, "Can't paste that here yet",
-                "Images and files on this PC can't be sent to the host's terminal yet. Text pastes work."));
+        var problems = skipped.ToList();
+        var paths = new List<string>();
+        foreach (var (name, read) in files)
+        {
+            try { paths.Add(await HostData.SaveAttachmentAsync(host.RequestAsync, name, await read())); }
+            // Too large to send.
+            catch (InvalidOperationException error) { problems.Add(error.Message); }
+            catch (Exception error) when (error is IOException or RpcException or TimeoutException or UnauthorizedAccessException or COMException or FormatException)
+            {
+                problems.Add($"Couldn't send {name} to the host: {error.Message}");
+            }
+        }
+        if (paths.Count > 0 && attached.GetValueOrDefault(handle) == terminal)
+            terminal.Surface.Post(new JsonObject { ["type"] = "paste", ["text"] = string.Concat(paths.Select(p => HostData.ShellQuote(p) + " ")) });
+        SetNotice(handle, problems.Count == 0 ? null
+            : new Notice(InfoBarSeverity.Warning, paths.Count > 0 ? "Some files weren't pasted" : "Nothing was pasted", string.Join(" ", problems)));
+    }
+
+    private static async Task<byte[]> ReadAsync(StorageFile file)
+    {
+        var properties = await file.GetBasicPropertiesAsync();
+        // Not read at all when the host would refuse it.
+        if (properties.Size > HostData.MaxAttachmentBytes) throw new InvalidOperationException($"{file.Name} is larger than 12 MB, the most the host takes.");
+        var buffer = await FileIO.ReadBufferAsync(file);
+        return buffer.ToArray();
+    }
+
+    /// <summary>An image on the clipboard, as PNG.</summary>
+    private static async Task<byte[]> PngAsync(RandomAccessStreamReference bitmap)
+    {
+        using var source = await bitmap.OpenReadAsync();
+        var decoder = await BitmapDecoder.CreateAsync(source);
+        using var pixels = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        using var output = new InMemoryRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+        encoder.SetSoftwareBitmap(pixels);
+        await encoder.FlushAsync();
+        var bytes = new byte[output.Size];
+        using var reader = new DataReader(output.GetInputStreamAt(0));
+        await reader.LoadAsync((uint)output.Size);
+        reader.ReadBytes(bytes);
+        return bytes;
     }
 
     /// <summary>The terminal's right-click menu: Copy, Paste, Select All.</summary>

@@ -206,6 +206,29 @@ internal sealed class FakeRuntime : IAsyncDisposable
                     runtime.Views.Enqueue(parameters.ToJsonString());
                     await ReplyAsync(id, (JsonObject)runtime.ViewReply.DeepClone());
                     break;
+                case "attachment.save":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, new JsonObject { ["path"] = $"/Users/me/.config/orc/attachments/abc/{parameters["name"]}" });
+                    break;
+                case "fs.list":
+                    var listed = parameters["path"]?.ToString() ?? "";
+                    if (!listed.StartsWith("/Users/me")) { await ErrorAsync(id, "forbidden", "only files in the home folder are served"); break; }
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["path"] = listed.TrimEnd('/'), ["truncated"] = false,
+                        ["entries"] = new JsonArray(new JsonObject { ["name"] = "code", ["directory"] = true }, new JsonObject { ["name"] = "notes.txt", ["directory"] = false })
+                    });
+                    break;
+                case "config.get":
+                    await ReplyAsync(id, new JsonObject { ["defaultSessionType"] = "claude", ["defaultProject"] = "id:local::/Users/me/proj" });
+                    break;
+                case "config.set":
+                case "repo.add":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, method == "repo.add"
+                        ? new JsonObject { ["repo"] = new JsonObject { ["id"] = "r2", ["path"] = parameters["path"]?.ToString(), ["displayName"] = "site" } }
+                        : new JsonObject { ["defaultSessionType"] = "claude", ["defaultProject"] = parameters["defaultProject"]?.DeepClone() });
+                    break;
                 case "notify.since" when runtime.Capabilities.Contains("orc.notify-cursor.v1"):
                     await ReplyAsync(id, runtime.NotifySince(parameters));
                     break;
