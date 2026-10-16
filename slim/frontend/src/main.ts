@@ -24,6 +24,7 @@ import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
 import { desktopPairingHandlers } from './desktop-pairing.ts'
+import { hostDataHandlers } from './host-data.ts'
 import { ConversationIndex } from './conversations.ts'
 import { restartSession, SessionHistory } from './history.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
@@ -129,8 +130,10 @@ const usage = new UsageService({
     return fetchCodexUsage(env, resolveExecutable('codex', env))
   }
 })
-// Briefs, pull requests and usage are for the owner: served on the local socket and to runtime-scope devices, never to phones.
+// Briefs, pull requests, usage and the host's files are for the owner: served on the local socket and to runtime-scope
+// devices, never to phones.
 const ownerHandlers: Handlers = {
+  ...hostDataHandlers({ store, catalog, projects }),
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
   'brief.dismiss': async (params) => briefs.dismiss(String(params.name ?? ''), String(params.question ?? '')),

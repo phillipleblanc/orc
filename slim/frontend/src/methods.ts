@@ -23,7 +23,7 @@ import type { NotificationQueue } from './notifications.ts'
 import { listMcpConfigs } from './mcp-configs.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
-export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1', 'orc.viewport-ownership.v1', 'orc.desktop-pairing.v1', 'orc.owner-methods.v1', 'orc.notify-cursor.v1']
+export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1', 'orc.viewport-ownership.v1', 'orc.desktop-pairing.v1', 'orc.owner-methods.v1', 'orc.notify-cursor.v1', 'orc.host-data.v1']
 
 export type Runtime = {
   runtimeId: string

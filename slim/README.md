@@ -365,6 +365,24 @@ Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
 - **Kinds:** each grant in `orca-devices.json` has a `kind`: `app` (Orc's own, named after the Mac),
   `desktop` or `phone`. A grant without one is a phone's with mobile scope, Orc's when named `Orc`, and
   a computer's otherwise. `orc.phone.*` sees only phones and `orc.desktop.*` only computers.
+- **Host data** (capability `orc.host-data.v1`), served on the local socket and to runtime-scope
+  devices, is what Orc.app reads from its own disk (`host-data.ts`). A runtime-scope device can run any
+  command on the host, so the home-folder limit below is a second line, not the boundary.
+  - `notes.get` (`name`) returns a session's notes in `ORC_CONFIG_DIR/notes/NAME.txt` (the file Orc.app
+    and Pi's `/notes` edit) with `modifiedAt`, null when there are none. `notes.set` (`name`, `text`, up
+    to 256 KiB, and optionally `ifModifiedAt` from a read) replaces them, or fails with `conflict` when
+    they changed since.
+  - `file.read` (`path`, optional `base`: a session, whose folder a relative path resolves against, or
+    a project selector; optional `encoding`: `utf8` or `base64`) returns `text` (UTF-8, up to 4 MiB) or
+    `data` (up to 12 MiB), with `size` and `modifiedAt`. Only files whose real path is in the home
+    folder are served (`forbidden` otherwise).
+  - `attachment.save` (`name`, `data` in base64, up to 12 MiB) saves a dropped or pasted file under
+    `ORC_CONFIG_DIR/attachments/UUID/NAME` and returns its `path`, to paste into a terminal.
+  - `fs.list` (`path`, optional `directoriesOnly`) lists a folder in the home folder, as `entries` of
+    `name` and `directory`, at most 5,000 (`truncated`).
+  - `config.get` and `config.set` (`defaultSessionType`, `defaultProject`, null to remove it) read and
+    change the New Session defaults in `ORC_CONFIG_DIR/config.json`, keeping other settings; a file that
+    is not a JSON object fails with `invalid_config` and is left as it is.
 
 ## Phones
 
