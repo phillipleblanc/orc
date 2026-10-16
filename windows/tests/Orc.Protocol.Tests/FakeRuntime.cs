@@ -28,6 +28,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public ConcurrentQueue<string> Inputs { get; } = new();
     public ConcurrentQueue<string> Claims { get; } = new();
     public ConcurrentQueue<string> Subscribes { get; } = new();
+    /// <summary>Lifecycle requests (create, rename, close, restart) with their parameters, in order.</summary>
+    public ConcurrentQueue<(string Method, string Parameters)> Calls { get; } = new();
     public int SnapshotRequests;
     public int Port { get; }
     /// <summary>What terminal.agentStatus reports for the terminal: working, permission or idle.</summary>
@@ -165,6 +167,33 @@ internal sealed class FakeRuntime : IAsyncDisposable
                     await ReplyAsync(id, new JsonObject
                     {
                         ["agentStatus"] = new JsonObject { ["handle"] = parameters["terminal"]?.ToString(), ["isRunningAgent"] = true, ["status"] = runtime.AgentState }
+                    });
+                    break;
+                case "terminal.create":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["terminal"] = new JsonObject { ["handle"] = "term-new", ["title"] = parameters["title"]?.ToString(), ["worktreeId"] = "local::/Users/me/proj" }
+                    });
+                    break;
+                case "terminal.rename":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, new JsonObject { ["rename"] = new JsonObject { ["handle"] = parameters["terminal"]?.ToString(), ["title"] = parameters["title"]?.ToString() } });
+                    break;
+                case "terminal.close":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, new JsonObject { ["close"] = new JsonObject { ["handle"] = parameters["terminal"]?.ToString() } });
+                    break;
+                case "terminal.restart":
+                    runtime.Calls.Enqueue((method, parameters.ToJsonString()));
+                    await ReplyAsync(id, new JsonObject { ["restart"] = new JsonObject { ["handle"] = "term-restarted", ["title"] = "fake-agent" } });
+                    break;
+                case "mcp.list":
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["configs"] = new JsonArray(
+                            new JsonObject { ["name"] = "github", ["path"] = "/Users/me/proj/.mcp/github.json", ["servers"] = new JsonArray("github"), ["error"] = null },
+                            new JsonObject { ["name"] = "broken", ["path"] = "/Users/me/proj/.mcp/broken.json", ["servers"] = new JsonArray(), ["error"] = "not valid JSON" })
                     });
                     break;
                 case "terminal.send":

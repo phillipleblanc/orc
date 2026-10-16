@@ -9,7 +9,7 @@ drives them.
 |---|---|
 | `src/Orc.Protocol` | `E2eeChannel` (libsodium, the same calls as `Sources/COrcSupport/support.c`), `TerminalFrame`, `RuntimeConnection`, `Pairing`, and `AttachController`, which owns the attach protocol and draws through `ITerminalSurface` |
 | `src/Orc.Core` | The client model: sessions, projects and activity as the Mac app derives them, sidebar sections, and `HostMonitor`, which refreshes them on Orc.app's schedule |
-| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): the host's sessions by project with their activity lights, beside the selected session's terminal (xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface`); the ten most recently shown terminals stay attached |
+| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): the host's sessions by project with their activity lights, children nested under their parents, beside the selected session's terminal (xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface`); the ten most recently shown terminals stay attached. Sessions are created (Ctrl+Shift+N, or Create Child… from a session's menu), renamed (F2), restarted and closed (Delete) as in Orc.app |
 | `tools/OrcSpike` | `orcspike`, a console client for probing, pairing and attaching from a terminal |
 | `tests/` | Protocol, attach and model tests against an in-process fake runtime |
 | `scripts/bootstrap-xterm.ps1` | Fetches the checksum-pinned xterm.js packages; the app build runs it when they are missing |

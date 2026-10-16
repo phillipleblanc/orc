@@ -29,9 +29,9 @@ public sealed class SessionGroup(string id) : ObservableCollection<SessionRow>
 }
 
 /// <summary>
-/// A session in the sidebar: its activity light, name, and its agent with what a reporting program says, as
-/// Sources/OrcApp/SessionSidebarModel.swift shows them. Green is idle, a yellow spinner active, orange with "!" needs
-/// attention, gray no agent, unavailable or offline.
+/// A session in the sidebar, as Sources/OrcApp/SessionSidebarModel.swift shows it: its activity light, its name (a
+/// child's without its parent's prefix, indented under the parent), and its agent with what a reporting program says.
+/// Green is idle, a yellow spinner active, orange with "!" needs attention, gray no agent, unavailable or offline.
 /// </summary>
 [Microsoft.UI.Xaml.Data.Bindable]
 public sealed class SessionRow(string handle) : INotifyPropertyChanged
@@ -43,12 +43,25 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
     private string name = "";
     private string detail = "";
     private AgentActivity activity = AgentActivity.Unknown;
+    private bool isChild;
+    private bool hasChildren;
+    private bool collapsed;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public string Handle { get; } = handle;
+    public SessionInfo? Session { get; private set; }
+    public bool CanCreateChild { get; private set; }
+    public AgentActivity Activity => activity;
+
+    /// <summary>The name the sidebar shows: a child's suffix, or the full name.</summary>
     public string Name { get => name; private set => Set(ref name, value); }
     public string Detail { get => detail; private set => Set(ref detail, value); }
+
+    public Thickness Indent => isChild ? new Thickness(22, 0, 0, 0) : new Thickness(0);
+    public Visibility ChevronVisibility => hasChildren ? Visibility.Visible : Visibility.Collapsed;
+    public string ChevronGlyph => collapsed ? "" : "";
+    public string ChevronLabel => collapsed ? "Show child sessions" : "Hide child sessions";
 
     public bool IsActive => activity == AgentActivity.Active;
     public Visibility RingVisibility => IsActive ? Visibility.Visible : Visibility.Collapsed;
@@ -61,28 +74,35 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
         _ => Gray
     };
     public string StatusLabel => activity.Label();
-    public string AccessibleName => $"{Name}, {StatusLabel}";
+    public string AccessibleName => $"{Session?.Name ?? name}, {StatusLabel}";
 
-    public void Update(SessionInfo session, AgentActivity next)
+    public void Update(SessionInfo session, AgentActivity nextActivity, SessionHierarchy hierarchy, SidebarRow row, bool isCollapsed)
     {
-        var renamed = Name != session.Name;
-        Name = session.Name;
+        Session = session;
+        CanCreateChild = row.ParentHandle is null && hierarchy.CanCreateChild(session);
+        Name = hierarchy.DisplayName(session);
         Detail = session.Detail;
-        if (activity == next)
+        if (isChild != (row.ParentHandle is not null)) { isChild = !isChild; Changed(nameof(Indent)); }
+        if (hasChildren != row.HasChildren) { hasChildren = row.HasChildren; Changed(nameof(ChevronVisibility)); }
+        if (collapsed != isCollapsed) { collapsed = isCollapsed; Changed(nameof(ChevronGlyph), nameof(ChevronLabel)); }
+        if (activity != nextActivity)
         {
-            if (renamed) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibleName)));
-            return;
+            activity = nextActivity;
+            Changed(nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(StatusBrush), nameof(StatusLabel));
         }
-        activity = next;
-        foreach (var property in new[] { nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(StatusBrush), nameof(StatusLabel), nameof(AccessibleName) })
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+        Changed(nameof(AccessibleName));
     }
 
     private void Set(ref string field, string value, [CallerMemberName] string? property = null)
     {
         if (field == value) return;
         field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+        Changed(property!);
+    }
+
+    private void Changed(params string[] properties)
+    {
+        foreach (var property in properties) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
     }
 
     private static SolidColorBrush Solid(byte r, byte g, byte b) => new(Color.FromArgb(255, r, g, b));

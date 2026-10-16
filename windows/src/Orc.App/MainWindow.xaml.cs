@@ -6,6 +6,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.Web.WebView2.Core;
@@ -13,14 +14,16 @@ using Orc.Core;
 using Orc.Protocol;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
+using Windows.System;
 using Windows.UI;
 
 namespace Orc.Win;
 
 /// <summary>
-/// The sessions of the paired host in a sidebar by project, beside the selected session's terminal. The terminals of
-/// the ten most recently shown sessions stay attached, so switching back is immediate and keeps their screens; a
-/// hidden terminal does not resize its session (docs/app.md). Problems show in an InfoBar over the terminal.
+/// The sessions of the paired host in a sidebar by project, children nested under their parents, beside the selected
+/// session's terminal. The terminals of the ten most recently shown sessions stay attached, so switching back is
+/// immediate and keeps their screens; a hidden terminal does not resize its session (docs/app.md). Sessions are
+/// created, renamed, restarted and closed from the sidebar, as in Orc.app. Problems show in an InfoBar over the terminal.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -30,11 +33,16 @@ public sealed partial class MainWindow : Window
     private readonly CollectionViewSource groupsSource = new() { IsSourceGrouped = true };
     private readonly ObservableCollection<SessionGroup> groups = [];
     private readonly Dictionary<string, SessionRow> rows = [];
+    private readonly HashSet<string> listed = [];
+    private readonly HashSet<string> collapsedParents = [];
     private readonly Dictionary<string, Attached> attached = [];
     private readonly Dictionary<string, Notice> notices = [];
+    // Sessions this window closed or restarted: their terminals end without a "session ended" notice.
+    private readonly HashSet<string> quietEnds = [];
     private readonly List<string> recent = [];
     private readonly CancellationTokenSource closing = new();
     private readonly bool diagnostics = Environment.GetEnvironmentVariable("ORC_DIAGNOSTICS") == "1";
+    private readonly SessionDefaults defaults = SessionDefaults.Load();
     private List<string> shape = [];
     private Pairing? pairing;
     private HostMonitor? monitor;
@@ -43,8 +51,10 @@ public sealed partial class MainWindow : Window
     private Notice? hostNotice;
     private bool pageReady;
     private bool applying;
+    private bool dialogOpen;
     private string? visible;
     private string? pendingShow;
+    private string? pendingSelect;
     private string? lingering;
 
     private sealed record Attached(SessionInfo Session, XtermSurface Surface, AttachController Controller);
@@ -67,6 +77,15 @@ public sealed partial class MainWindow : Window
         Web.DefaultBackgroundColor = Color.FromArgb(255, 0x0d, 0x11, 0x17);
         groupsSource.Source = groups;
         SessionList.ItemsSource = groupsSource.View;
+
+        var newSession = new KeyboardAccelerator { Key = VirtualKey.N, Modifiers = VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift };
+        newSession.Invoked += (sender, e) => { e.Handled = true; _ = NewSessionAsync(null); };
+        Root.KeyboardAccelerators.Add(newSession);
+        AddListAccelerator(VirtualKey.F2, row => _ = RenameAsync(row));
+        AddListAccelerator(VirtualKey.Delete, row => _ = CloseAsync(row));
+
+        // Start with the session list focused, not the first button (which would show its focus rectangle).
+        Root.Loaded += (_, _) => SessionList.Focus(FocusState.Programmatic);
         NoticeBar.Closed += (_, _) =>
         {
             if (visible is not null) notices.Remove(visible);
@@ -94,6 +113,18 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hwnd);
+
+    private void AddListAccelerator(VirtualKey key, Action<SessionRow> action)
+    {
+        var accelerator = new KeyboardAccelerator { Key = key, ScopeOwner = SessionList };
+        accelerator.Invoked += (_, e) =>
+        {
+            if (SessionList.SelectedItem is not SessionRow row) return;
+            e.Handled = true;
+            action(row);
+        };
+        SessionList.KeyboardAccelerators.Add(accelerator);
+    }
 
     private async Task InitializeAsync()
     {
@@ -126,6 +157,7 @@ public sealed partial class MainWindow : Window
         {
             if (IsClosed) return;
             HostText.Text = state is null ? host : $"Can't reach {host}";
+            NewSessionButton.IsEnabled = state is null;
             hostNotice = state is null ? null : new Notice(InfoBarSeverity.Warning, $"Can't reach {host}", state + " Retrying.");
             ShowNotice();
         });
@@ -136,44 +168,103 @@ public sealed partial class MainWindow : Window
     {
         snapshot = update;
         var sections = SessionSections.Build(update.Sessions, update.Projects);
-        var nextShape = sections.Select(s => s.Id + ":" + string.Join(",", s.Sessions.Select(x => x.Handle))).ToList();
+        // A child about to be selected is shown even when its parent is collapsed.
+        if (pendingSelect is { } wanted)
+            foreach (var section in sections)
+                if (section.Sessions.FirstOrDefault(s => s.Handle == wanted) is { } session && section.Hierarchy.ParentOf(session) is { } parent)
+                    collapsedParents.Remove(parent.Handle);
+        collapsedParents.RemoveWhere(handle => update.Sessions.All(s => s.Handle != handle));
+
+        var layout = sections.Select(section => (Section: section, Rows: section.Hierarchy.Rows(collapsedParents))).ToList();
+        var nextShape = layout.Select(l => l.Section.Id + ":" + string.Join(",", l.Rows.Select(r => r.Session.Handle))).ToList();
         applying = true;
         try
         {
             if (!nextShape.SequenceEqual(shape))
             {
-                // Sessions came, went or moved: rebuild the sections around the same row objects.
-                groups.Clear();
-                foreach (var section in sections)
-                {
-                    var group = new SessionGroup(section.Id);
-                    foreach (var session in section.Sessions)
-                    {
-                        if (!rows.TryGetValue(session.Handle, out var row)) rows[session.Handle] = row = new SessionRow(session.Handle);
-                        group.Add(row);
-                    }
-                    groups.Add(group);
-                }
+                Reconcile(layout.Select(l => (l.Section.Id, l.Rows.Select(r => RowFor(r.Session.Handle)).ToList())).ToList());
+                listed.Clear();
+                listed.UnionWith(layout.SelectMany(l => l.Rows.Select(r => r.Session.Handle)));
                 foreach (var gone in rows.Keys.Except(update.Sessions.Select(s => s.Handle)).ToList()) rows.Remove(gone);
                 shape = nextShape;
-                if (visible is not null && rows.TryGetValue(visible, out var selected)) SessionList.SelectedItem = selected;
+                var selected = visible is not null && listed.Contains(visible) ? rows[visible] : null;
+                if (SessionList.SelectedItem != selected) SessionList.SelectedItem = selected;
             }
-            for (var i = 0; i < sections.Count; i++) groups[i].Title = $"{sections[i].Title}  {sections[i].Sessions.Count}";
-            foreach (var session in update.Sessions) rows[session.Handle].Update(session, update.ActivityOf(session));
+            for (var i = 0; i < layout.Count; i++)
+            {
+                var (section, sectionRows) = layout[i];
+                groups[i].Title = $"{section.Title}  {section.Sessions.Count}";
+                foreach (var row in sectionRows)
+                    rows[row.Session.Handle].Update(row.Session, update.ActivityOf(row.Session), section.Hierarchy, row, collapsedParents.Contains(row.Session.Handle));
+            }
         }
         finally { applying = false; }
 
-        if (update.Sessions.Count == 0 && visible is null) EmptyText.Text = "No sessions on this host";
-        else if (visible is null) EmptyText.Text = "Select a session";
+        if (visible is null) EmptyText.Text = update.Sessions.Count == 0 ? "No sessions on this host" : "Select a session";
 
         // A session that ended or was replaced is no longer attached.
         var live = update.Sessions.Where(s => s.Connected).Select(s => s.Handle).ToHashSet();
         foreach (var handle in attached.Keys.Where(h => !live.Contains(h)).ToList()) attached[handle].Controller.Stop();
+        quietEnds.RemoveWhere(handle => !live.Contains(handle) && !attached.ContainsKey(handle));
+
+        // A session this window just created or restarted is selected once it is listed.
+        if (pendingSelect is { } select && listed.Contains(select) && live.Contains(select))
+        {
+            pendingSelect = null;
+            SessionList.SelectedItem = rows[select];
+            SessionList.ScrollIntoView(rows[select]);
+        }
+    }
+
+    private SessionRow RowFor(string handle) => rows.TryGetValue(handle, out var row) ? row : rows[handle] = new SessionRow(handle);
+
+    /// <summary>
+    /// Brings the sections to <paramref name="layout"/> with the fewest changes, so focus, scroll position and
+    /// selection survive sessions arriving, leaving, or a parent folding its children.
+    /// </summary>
+    private void Reconcile(List<(string Id, List<SessionRow> Rows)> layout)
+    {
+        var wanted = layout.ToDictionary(l => l.Id, l => l.Rows.ToHashSet());
+        // First take rows out of sections they left, so no row is ever in two sections at once.
+        for (var i = groups.Count - 1; i >= 0; i--)
+        {
+            if (!wanted.TryGetValue(groups[i].Id, out var keep)) { groups.RemoveAt(i); continue; }
+            for (var j = groups[i].Count - 1; j >= 0; j--)
+                if (!keep.Contains(groups[i][j])) groups[i].RemoveAt(j);
+        }
+        for (var i = 0; i < layout.Count; i++)
+        {
+            var (id, desired) = layout[i];
+            var at = IndexOf(id);
+            if (at < 0) groups.Insert(i, new SessionGroup(id));
+            else if (at != i) { var group = groups[at]; groups.RemoveAt(at); groups.Insert(i, group); }
+            var list = groups[i];
+            for (var j = 0; j < desired.Count; j++)
+            {
+                var current = list.IndexOf(desired[j]);
+                if (current == j) continue;
+                if (current >= 0) list.RemoveAt(current);
+                list.Insert(j, desired[j]);
+            }
+        }
+
+        int IndexOf(string id)
+        {
+            for (var i = 0; i < groups.Count; i++) if (groups[i].Id == id) return i;
+            return -1;
+        }
     }
 
     private void OnSessionSelected(object sender, SelectionChangedEventArgs e)
     {
         if (!applying && SessionList.SelectedItem is SessionRow row) Show(row.Handle);
+    }
+
+    private void OnToggleChildren(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SessionRow row) return;
+        if (!collapsedParents.Remove(row.Handle)) collapsedParents.Add(row.Handle);
+        if (snapshot is not null) Apply(snapshot);
     }
 
     private void Show(string handle)
@@ -212,6 +303,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Nothing selected: the empty state in the terminal's place.</summary>
+    private void ShowEmpty()
+    {
+        visible = null;
+        applying = true;
+        SessionList.SelectedItem = null;
+        applying = false;
+        Title = AppTitle;
+        TitleText.Text = AppTitle;
+        EmptyText.Text = "Select a session";
+        EmptyState.Visibility = Visibility.Visible;
+        Web.Visibility = Visibility.Collapsed;
+        ShowNotice();
+    }
+
     private Attached Attach(SessionInfo session)
     {
         var handle = session.Handle;
@@ -237,7 +343,13 @@ public sealed partial class MainWindow : Window
         if (attached.GetValueOrDefault(handle) == terminal) attached.Remove(handle);
         recent.Remove(handle);
         // After the terminal's last output: the surface's queue keeps the order.
-        if (visible == handle)
+        if (quietEnds.Remove(handle))
+        {
+            terminal.Surface.Post(new JsonObject { ["type"] = "dispose" });
+            notices.Remove(handle);
+            if (visible == handle) ShowEmpty();
+        }
+        else if (visible == handle)
         {
             var reason = failure?.Message ?? (exit == AttachExit.Ended ? "The session ended." : "Detached from the session.");
             // Leave its last screen up with a note until another session is shown.
@@ -253,6 +365,168 @@ public sealed partial class MainWindow : Window
             notices.Remove(handle);
         }
         monitor?.RefreshNow();
+    }
+
+    private void OnNewSessionClick(object sender, RoutedEventArgs e) => _ = NewSessionAsync(null);
+
+    private async Task NewSessionAsync(SessionInfo? parent)
+    {
+        if (monitor is null || snapshot is null) return;
+        // Until a default is saved, suggest what this host's sessions use: the shown session's project, and the
+        // agent most of them run.
+        var shown = snapshot.Sessions.FirstOrDefault(s => s.Handle == visible) ?? snapshot.Sessions.FirstOrDefault();
+        var suggestedProject = snapshot.Projects.FirstOrDefault(p => p.Id == shown?.WorktreeId);
+        var suggestedKind = snapshot.Sessions.Where(s => SessionKind.Find(s.Agent) is not null).GroupBy(s => s.Agent)
+            .OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
+        var dialog = new NewSessionDialog(monitor.RequestAsync, snapshot.Projects, defaults, paneSize, parent, suggestedProject, suggestedKind);
+        await ShowDialogAsync(dialog);
+        if (dialog.CreatedHandle is not { } handle) return;
+        pendingSelect = handle;
+        monitor.RefreshNow();
+    }
+
+    private void OnSessionContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        if (args.OriginalSource is not FrameworkElement target || target.DataContext is not SessionRow { Session: { } session } row) return;
+        args.Handled = true;
+        var menu = new MenuFlyout();
+        if (row.CanCreateChild) menu.Items.Add(MenuItem("Create Child…", "", () => _ = NewSessionAsync(session)));
+        menu.Items.Add(MenuItem("Rename Session…", "", () => _ = RenameAsync(row), "F2"));
+        menu.Items.Add(MenuItem("Restart Session", "", () => _ = RestartAsync(row)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem("Close Session…", "", () => _ = CloseAsync(row), "Del"));
+        if (args.TryGetPosition(target, out var point)) menu.ShowAt(target, point);
+        else menu.ShowAt(target);
+    }
+
+    private static MenuFlyoutItem MenuItem(string text, string glyph, Action action, string? shortcut = null)
+    {
+        var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph } };
+        if (shortcut is not null) item.KeyboardAcceleratorTextOverride = shortcut;
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    /// <summary>Orc.app's Rename Session sheet: the full name, so a parent's name in front nests the session under it.</summary>
+    private async Task RenameAsync(SessionRow row)
+    {
+        if (monitor is not { } host || row.Session is not { } session) return;
+        var box = new TextBox { Header = "Name", Text = session.Name };
+        var error = new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = false, IsOpen = false };
+        var dialog = new ContentDialog
+        {
+            Title = "Rename Session", PrimaryButtonText = "Rename", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
+            Content = new StackPanel
+            {
+                Spacing = 12, MinWidth = 400,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Use the full name. Starting it with another session's name and a hyphen nests it under that session.",
+                        TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                    },
+                    box, error
+                }
+            }
+        };
+        var saving = false;
+        void Validate()
+        {
+            var name = box.Text.Trim();
+            var problem = name.Length > 0 ? SessionNames.Problem(name) : null;
+            box.Description = problem ?? "";
+            dialog.IsPrimaryButtonEnabled = !saving && name.Length > 0 && problem is null && name != session.Name;
+        }
+        box.TextChanged += (_, _) => Validate();
+        dialog.Opened += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            saving = true;
+            Validate();
+            try
+            {
+                await SessionCommands.RenameAsync(host.RequestAsync, session.Handle, box.Text.Trim());
+                dialog.Hide();
+                host.RefreshNow();
+            }
+            catch (Exception failure)
+            {
+                error.Message = failure.Message;
+                error.IsOpen = true;
+            }
+            finally
+            {
+                saving = false;
+                Validate();
+            }
+        };
+        Validate();
+        await ShowDialogAsync(dialog);
+    }
+
+    /// <summary>Ends the session and starts it again under its name; asks first when its agent is working.</summary>
+    private async Task RestartAsync(SessionRow row)
+    {
+        if (monitor is not { } host || row.Session is not { } session) return;
+        if (row.Activity == AgentActivity.Active && await ShowDialogAsync(new ContentDialog
+            {
+                Title = $"Restart “{session.Name}”?",
+                Content = "The agent is working. Restarting stops its current turn; it then continues its conversation.",
+                PrimaryButtonText = "Restart Session", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
+            }) != ContentDialogResult.Primary) return;
+        quietEnds.Add(session.Handle);
+        try
+        {
+            var restarted = await SessionCommands.RestartAsync(host.RequestAsync, session.Handle);
+            if (visible == session.Handle || visible is null) pendingSelect = restarted;
+            host.RefreshNow();
+        }
+        catch (Exception error)
+        {
+            quietEnds.Remove(session.Handle);
+            await ShowErrorAsync("Could Not Restart Session", $"Could not restart {session.Name}: {error.Message}");
+        }
+    }
+
+    private async Task CloseAsync(SessionRow row)
+    {
+        if (monitor is not { } host || row.Session is not { } session) return;
+        if (await ShowDialogAsync(new ContentDialog
+            {
+                Title = $"Close “{session.Name}”?",
+                Content = session.Agent is null ? "The terminal and everything running in it stop."
+                    : "The agent stops. You can reopen it from Recently Closed in Orc on the host.",
+                PrimaryButtonText = "Close Session", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
+            }) != ContentDialogResult.Primary) return;
+        quietEnds.Add(session.Handle);
+        try
+        {
+            await SessionCommands.CloseAsync(host.RequestAsync, session.Handle);
+            host.RefreshNow();
+        }
+        catch (Exception error)
+        {
+            quietEnds.Remove(session.Handle);
+            await ShowErrorAsync("Could Not Close Session", $"Could not close {session.Name}: {error.Message}");
+        }
+    }
+
+    private Task ShowErrorAsync(string title, string message) =>
+        ShowDialogAsync(new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", DefaultButton = ContentDialogButton.Close });
+
+    /// <summary>Shows one dialog at a time; null when another is already open or the window closed.</summary>
+    private async Task<ContentDialogResult?> ShowDialogAsync(ContentDialog dialog)
+    {
+        if (dialogOpen || IsClosed) return null;
+        dialogOpen = true;
+        try
+        {
+            dialog.XamlRoot = Content.XamlRoot;
+            return await dialog.ShowAsync();
+        }
+        finally { dialogOpen = false; }
     }
 
     private void SetNotice(string handle, Notice? notice)
@@ -299,6 +573,10 @@ public sealed partial class MainWindow : Window
                 break;
             case "input":
                 if (terminal is not null && id == visible) terminal.Controller.SendInput(message["data"]?.GetValue<string>() ?? "");
+                break;
+            case "command":
+                // The window's shortcuts, pressed while the terminal has focus.
+                if (message["name"]?.ToString() == "new-session") _ = NewSessionAsync(null);
                 break;
             case "copy":
                 var package = new DataPackage();

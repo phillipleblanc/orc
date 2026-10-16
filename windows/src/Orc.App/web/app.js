@@ -111,6 +111,11 @@ function create(id) {
       post({ type: 'paste', id });
       return false;
     }
+    // The window's shortcuts, which WebView2 would otherwise keep from it.
+    if (event.code === 'KeyN') {
+      post({ type: 'command', name: 'new-session' });
+      return false;
+    }
     return true;
   });
   terminals.set(id, { ...entry, element });

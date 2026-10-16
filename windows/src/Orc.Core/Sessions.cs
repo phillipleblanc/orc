@@ -104,7 +104,11 @@ public sealed record Project(string Id, string Path, string? DisplayName)
         path.TrimEnd('/', '\\') is { Length: > 0 } trimmed ? trimmed[(trimmed.LastIndexOfAny(['/', '\\']) + 1)..] : path;
 }
 
-public sealed record SessionSection(string Id, string Title, string Path, IReadOnlyList<SessionInfo> Sessions);
+/// <summary>One project's part of the sidebar, with the parentage among its own sessions (SessionSidebarSection).</summary>
+public sealed record SessionSection(string Id, string Title, string Path, IReadOnlyList<SessionInfo> Sessions)
+{
+    public SessionHierarchy Hierarchy { get; } = new(Sessions);
+}
 
 public static class SessionSections
 {

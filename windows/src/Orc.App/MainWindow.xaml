@@ -33,20 +33,32 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <StackPanel Padding="16,4,12,8" Spacing="2">
-                    <TextBlock Text="Sessions" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                    <TextBlock x:Name="HostText" Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
+                <Grid Padding="16,4,8,8" ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Sessions" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock x:Name="HostText" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <Button x:Name="NewSessionButton" Grid.Column="1" Click="OnNewSessionClick" IsEnabled="False"
+                            Background="Transparent" BorderThickness="0" Padding="8" VerticalAlignment="Center"
+                            ToolTipService.ToolTip="New session (Ctrl+Shift+N)" AutomationProperties.Name="New session">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                    </Button>
+                </Grid>
                 <ListView x:Name="SessionList" Grid.Row="1" SelectionMode="Single" SelectionChanged="OnSessionSelected"
-                          AutomationProperties.Name="Sessions">
+                          ContextRequested="OnSessionContextRequested" AutomationProperties.Name="Sessions">
                     <ListView.ItemTemplate>
                         <DataTemplate>
-                            <Grid Padding="0,5" ColumnSpacing="10" ToolTipService.ToolTip="{Binding StatusLabel}"
+                            <Grid Padding="0,5" ColumnSpacing="10" Margin="{Binding Indent}" ToolTipService.ToolTip="{Binding StatusLabel}"
                                   AutomationProperties.Name="{Binding AccessibleName}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="12" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -63,6 +75,11 @@
                                            TextTrimming="CharacterEllipsis" />
                                 <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                <Button Grid.Column="2" Grid.RowSpan="2" Click="OnToggleChildren" Visibility="{Binding ChevronVisibility}"
+                                        Background="Transparent" BorderThickness="0" Padding="6" VerticalAlignment="Center"
+                                        ToolTipService.ToolTip="{Binding ChevronLabel}" AutomationProperties.Name="{Binding ChevronLabel}">
+                                    <FontIcon Glyph="{Binding ChevronGlyph}" FontSize="10" />
+                                </Button>
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>

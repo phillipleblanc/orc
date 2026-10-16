@@ -1,0 +1,32 @@
+<ContentDialog
+    x:Class="Orc.Win.NewSessionDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="New Session"
+    PrimaryButtonText="Create Session"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnCreate">
+
+    <StackPanel Spacing="14" MinWidth="460">
+        <TextBlock x:Name="Description" Text="Start an agent or terminal in a project on the host." TextWrapping="Wrap"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <StackPanel Spacing="4">
+            <TextBox x:Name="NameBox" Header="Name" TextChanged="OnInputChanged" />
+            <TextBlock x:Name="FullNameText" Visibility="Collapsed" IsTextSelectionEnabled="True"
+                       Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
+        <ComboBox x:Name="ProjectBox" Header="Project" HorizontalAlignment="Stretch" PlaceholderText="Choose a project"
+                  SelectionChanged="OnProjectChanged" />
+        <ComboBox x:Name="KindBox" Header="Run" HorizontalAlignment="Stretch" SelectionChanged="OnKindChanged" />
+        <TextBox x:Name="CommandBox" Header="Command" Visibility="Collapsed" PlaceholderText="A command for the host's login shell"
+                 TextChanged="OnInputChanged" />
+        <StackPanel x:Name="McpPanel" Visibility="Collapsed" Spacing="2">
+            <TextBlock Text="MCP servers" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <TextBlock Text="Servers from the project's .mcp folder, added to the agent's own." TextWrapping="Wrap"
+                       Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <StackPanel x:Name="McpList" Margin="0,4,0,0" />
+        </StackPanel>
+        <InfoBar x:Name="ErrorBar" Severity="Error" IsClosable="False" IsOpen="False" />
+    </StackPanel>
+</ContentDialog>
