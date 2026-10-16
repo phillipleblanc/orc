@@ -177,13 +177,17 @@ later frontend learns the status. Pending wakes are checked every second and fir
 restart if their condition was met meanwhile. `wake.cancel` and the end of the session stop the
 wake's script. `orc wake` sets, lists and cancels the wakes of the session it runs in.
 
-`notify.post` queues a message for Orc.app to show as a notification (`orc notify`), with the name of
+`notify.post` queues a message for desktops to show as a notification (`orc notify`), with the name of
 the session that sent it (and its handle while a session has that name), or none from outside a
-session. Line breaks are kept, other control characters removed; a message is 1–1000 characters.
-`notify.take` returns every queued message once; Orc.app calls it on each refresh and shows them
-whether or not the session is muted. The queue keeps the newest 20 in memory, so a frontend restart
-drops messages not yet taken; `notify.post` reports `appOpen` false when nothing has taken messages in
-the last 10 seconds.
+session. Line breaks are kept, other control characters removed; a message is 1–1000 characters. Each
+message has a `seq`, counting from 1 in each frontend, and the newest 50 are kept in memory, so a
+frontend restart drops them. `notify.since` (`after`, the `latest` of an earlier reply; capability
+`orc.notify-cursor.v1`) returns the messages after it, with `latest` and the frontend's `runtimeId`, so
+each desktop keeps its own cursor; without `after`, or with one from before what is kept or from
+another frontend, it returns the newest 20. Orc.app calls it on each refresh, keeping its cursor across
+launches, and shows the messages whether or not the session is muted. `notify.take` returns the
+messages no earlier `take` returned, newest 20 at most, for clients without a cursor. `notify.post`
+reports `appOpen` false when no desktop has asked for messages in the last 10 seconds.
 
 Every session starts with `ORC_SESSION_NAME` (its name, which is its identity) and `ORC_RUNTIME_DIR`
 (its runtime profile, so `orc` run inside it reaches the same runtime); agents also get

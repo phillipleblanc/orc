@@ -93,6 +93,13 @@ public struct SessionNotification: Decodable, Hashable {
     public let message: String
 }
 
+/// Where a desktop is in the runtime's notifications: the `latest` it has seen from the frontend `runtimeId`.
+public struct NotificationCursor: Codable, Equatable {
+    public let runtimeId: String
+    public let latest: Int
+    public init(runtimeId: String, latest: Int) { self.runtimeId = runtimeId; self.latest = latest }
+}
+
 public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
@@ -146,9 +153,15 @@ public struct SessionService {
     public static func mcpNames(_ text: String) -> [String] {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
-    /// The notifications sessions asked Orc to show, each returned once.
-    public func takeNotifications() async throws -> [SessionNotification] {
-        try decode(await LocalRPC.call("notify.take")["notifications"] ?? [])
+    /// The notifications sessions asked Orc to show since `cursor`, and the cursor to ask from next. Without a cursor,
+    /// or with one from an earlier frontend, the newest few, which arrived while Orc was closed.
+    public func notifications(after cursor: NotificationCursor?) async throws -> (notifications: [SessionNotification], cursor: NotificationCursor) {
+        let result = try await LocalRPC.call("notify.since", cursor.map { ["after": $0.latest] } ?? [:])
+        guard let runtimeId = result["runtimeId"] as? String, let latest = result["latest"] as? Int else {
+            throw OrcError("The runtime returned no notification cursor.")
+        }
+        if let cursor, cursor.runtimeId != runtimeId { return try await notifications(after: nil) }
+        return (try decode(result["notifications"] ?? []), NotificationCursor(runtimeId: runtimeId, latest: latest))
     }
     /// Ends the session and the program running in it. A closed agent session can be reopened.
     public func close(handle: String) async throws {

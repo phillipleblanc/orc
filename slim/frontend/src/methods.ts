@@ -23,7 +23,7 @@ import type { NotificationQueue } from './notifications.ts'
 import { listMcpConfigs } from './mcp-configs.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
-export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1', 'orc.viewport-ownership.v1', 'orc.desktop-pairing.v1', 'orc.owner-methods.v1']
+export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1', 'orc.viewport-ownership.v1', 'orc.desktop-pairing.v1', 'orc.owner-methods.v1', 'orc.notify-cursor.v1']
 
 export type Runtime = {
   runtimeId: string
@@ -349,6 +349,11 @@ export function createHandlers(runtime: Runtime): Handlers {
     },
 
     'notify.take': () => ({ notifications: notifications.take() }),
+
+    'notify.since': (params) => {
+      if (params.after !== undefined && !Number.isSafeInteger(params.after)) throw new RpcError('invalid_argument', 'after must be the latest of an earlier reply')
+      return { runtimeId: runtime.runtimeId, ...notifications.since(params.after) }
+    },
 
     'history.list': async () => ({ sessions: await history.list() }),
 

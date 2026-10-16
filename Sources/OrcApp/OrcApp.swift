@@ -85,6 +85,11 @@ import OrcKit
     private var monitor: Task<Void, Never>?
     private var badgeCount: Int?
     private var badgeTask: Task<Void, Never>?
+    /// The notifications already shown, kept across launches so reopening Orc shows only the ones that came while it was closed.
+    private var notificationCursor: NotificationCursor? = UserDefaults.standard.data(forKey: "notificationCursor")
+        .flatMap { try? JSONDecoder().decode(NotificationCursor.self, from: $0) } {
+        didSet { if notificationCursor != oldValue { UserDefaults.standard.set(try? JSONEncoder().encode(notificationCursor), forKey: "notificationCursor") } }
+    }
 
     init(monitorSessions: Bool = true) {
         guard monitorSessions else { return }
@@ -204,7 +209,9 @@ import OrcKit
             for session in mutes.unmuted(completed) {
                 Task { await IdleNotifications.shared.postIdle(session) }
             }
-            for notification in (try? await service.takeNotifications()) ?? [] {
+            let pending = try? await service.notifications(after: notificationCursor)
+            if let pending { notificationCursor = pending.cursor }
+            for notification in pending?.notifications ?? [] {
                 let session = sessions.first { $0.handle == notification.handle }
                 if let session {
                     let previous = reviewState
