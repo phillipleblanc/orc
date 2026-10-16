@@ -32,7 +32,10 @@ public sealed partial class HostsPage : UserControl
     public HostsPage()
     {
         InitializeComponent();
-        CommandText.Text = HostPairing.HostCommand(Environment.MachineName);
+        var name = Environment.MachineName;
+        PairStep.Text = $"1. In Orc on the Mac, choose Pair Device…, then Computer. Name it {name} and select Copy Link. Or run this in Terminal on the host:";
+        CommandText.Text = HostPairing.HostCommand(name);
+        LegacyCommandText.Text = HostPairing.LegacyHostCommand(name);
     }
 
     /// <summary>Shows the saved host, or only the pairing form when there is none.</summary>
@@ -96,13 +99,17 @@ public sealed partial class HostsPage : UserControl
 
     private void OnClose(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
 
-    private void OnCopyCommand(object sender, RoutedEventArgs e)
+    private void OnCopyCommand(object sender, RoutedEventArgs e) => Copy(CommandText.Text, CopyButton);
+
+    private void OnCopyLegacyCommand(object sender, RoutedEventArgs e) => Copy(LegacyCommandText.Text, LegacyCopyButton);
+
+    private void Copy(string text, Button button)
     {
         var package = new DataPackage();
-        package.SetText(CommandText.Text);
+        package.SetText(text);
         Clipboard.SetContent(package);
-        CopyButton.Content = "Copied";
-        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => CopyButton.Content = "Copy"));
+        button.Content = "Copied";
+        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() => button.Content = "Copy"));
     }
 
     private void OnLinkChanged(object sender, RoutedEventArgs e)
@@ -199,7 +206,7 @@ public sealed partial class HostsPage : UserControl
         {
             Title = $"Forget {pairing.EndpointUri.Host}?",
             Content = "This PC stops showing its sessions and deletes its pairing. The sessions keep running on the host. "
-                + "To take this PC's access away on the host too, revoke its grant there.",
+                + "To take this PC's access away on the host too, revoke it in Orc under Pair Device… › Computer Access, or with orc computers revoke.",
             PrimaryButtonText = "Forget Host", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
         });
         if (result == ContentDialogResult.Primary) ForgetRequested?.Invoke();

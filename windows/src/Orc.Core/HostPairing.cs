@@ -57,10 +57,17 @@ public static class HostPairing
     }
 
     /// <summary>
-    /// A shell command for the host that prints a pairing link for this PC: a runtime-scope grant named after it, at the
-    /// host's own LAN address. It contains no secret; the link it prints does.
+    /// The command on the host that prints a pairing link for this PC: a computer's grant named after it, at the host's
+    /// local name (docs/computers.md). It contains no secret; the link it prints does.
     /// </summary>
-    public static string HostCommand(string computerName) => $$$"""
+    public static string HostCommand(string computerName) =>
+        $"orc pair-computer --name {(computerName.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.') ? computerName : $"'{computerName.Replace("'", "")}'")} --link";
+
+    /// <summary>
+    /// The same for a host whose Orc predates <c>orc pair-computer</c>: a script that issues a runtime-scope grant
+    /// named after this PC, at the host's own LAN address.
+    /// </summary>
+    public static string LegacyHostCommand(string computerName) => $$$"""
         python3 - <<'EOF'
         import json, os, socket, uuid
         meta = json.load(open(os.path.expanduser('~/.config/orc/runtime/orca-runtime.json')))

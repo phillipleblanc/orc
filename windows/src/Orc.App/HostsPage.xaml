@@ -63,15 +63,30 @@
 
                 <StackPanel x:Name="PairForm" Spacing="12">
                     <TextBlock x:Name="PairTitle" Text="Pair with a host" Style="{StaticResource SubtitleTextBlockStyle}" />
-                    <TextBlock Text="1. On the host, run this in Terminal. It prints a pairing link for this PC." TextWrapping="Wrap" />
+                    <TextBlock x:Name="PairStep" TextWrapping="Wrap" />
                     <Grid CornerRadius="6" BorderThickness="1" Background="{ThemeResource ControlFillColorDefaultBrush}"
                           BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                         <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="12,10,72,10">
-                            <TextBlock x:Name="CommandText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" />
+                            <TextBlock x:Name="CommandText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True"
+                                       VerticalAlignment="Center" />
                         </ScrollViewer>
-                        <Button x:Name="CopyButton" Content="Copy" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                        <Button x:Name="CopyButton" Content="Copy" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4"
                                 Click="OnCopyCommand" AutomationProperties.Name="Copy the command" />
                     </Grid>
+                    <Expander Header="Orc on the host doesn't have pair-computer" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Orc from before computer pairing: update it, or run this in Terminal on the host instead. It prints a pairing link for this PC at the host's network address."
+                                       TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Grid CornerRadius="6" BorderThickness="1" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="12,10,72,10">
+                                    <TextBlock x:Name="LegacyCommandText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" />
+                                </ScrollViewer>
+                                <Button x:Name="LegacyCopyButton" Content="Copy" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                                        Click="OnCopyLegacyCommand" AutomationProperties.Name="Copy the command for an older host" />
+                            </Grid>
+                        </StackPanel>
+                    </Expander>
                     <TextBlock Text="2. Paste the link here. It lets this PC control the host's sessions, so keep it private."
                                TextWrapping="Wrap" />
                     <PasswordBox x:Name="LinkBox" PlaceholderText="orca://pair?code=…" PasswordRevealMode="Peek"

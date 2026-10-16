@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -72,9 +73,21 @@ public sealed class RuntimeConnection : IAsyncDisposable
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(HandshakeTimeout);
+        var endpoint = pairing.EndpointUri;
+        if (LocalNames.IsLocal(endpoint.Host))
+        {
+            IPAddress? address;
+            try { address = await LocalNames.ResolveAsync(endpoint.Host, timeout.Token); }
+            catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { address = null; }
+            cancellation.ThrowIfCancellationRequested();
+            if (address is null)
+                throw new HostUnreachableException($"No computer named {endpoint.Host} answered on this network. Check that the host is awake "
+                    + "and on this network, or change the address to its IP address.");
+            endpoint = new UriBuilder(endpoint) { Host = address.ToString() }.Uri;
+        }
         try
         {
-            await socket.ConnectAsync(pairing.EndpointUri, timeout.Token);
+            await socket.ConnectAsync(endpoint, timeout.Token);
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException or HttpRequestException)
         {

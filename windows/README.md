@@ -32,11 +32,14 @@ the Windows App SDK runtime with it.
 
 ## Pair with a host
 
-The app opens on its Host page when nothing is paired; later, click the host under **Sessions**. Copy the command it
-shows and run it in Terminal on the Mac: it issues a runtime-scope grant named after this PC, at the Mac's LAN
-address, and prints an `orca://pair` link. Paste the link into the page and **Connect**. The app checks the host
-answers, proves the key the link pins, and serves this app's protocol before it saves anything. Desktop pairing in
-Orc.app itself is Phase 1; until then the command does what it would.
+The app opens on its Host page when nothing is paired; later, click the host under **Sessions**. On the Mac, choose
+**Pair Device…** in Orc, then **Computer**, name it after this PC and **Copy Link**, or run the command the page shows,
+`orc pair-computer --name PC-NAME --link` ([docs/computers.md](../docs/computers.md)). Either issues a runtime-scope
+grant named after this PC and prints an `orca://pair` link to the Mac's local name (`NAME.local`), which keeps working
+when its address changes; the app looks that name up with multicast DNS when Windows does not. Paste the link into
+the page and **Connect**. The app checks the host answers, proves the key the link pins, and serves this app's
+protocol before it saves anything. For an Orc on the host from before computer pairing, the page has a script that
+does the same at the Mac's LAN address.
 
 The link is full control of the host's sessions: paste it only into this app or `orcspike pair`, never into a chat or
 a ticket.
@@ -62,23 +65,8 @@ orcspike endpoint ws://NEW_IP:6768                # follow a new DHCP lease; the
 The host is saved in `%LOCALAPPDATA%\Orc\host.json` with its device token encrypted for the Windows user (DPAPI).
 `ORC_WINDOWS_DIR` selects another directory.
 
-To revoke a PC's grant on the Mac, leaving Orc.app's own alone, run this with `NAME` set to the PC's name (the grant
-is named after it; grants from before the Host page are named "Windows PC"):
-
-```python
-# python3 on the Mac
-import json, os, socket, uuid
-meta = json.load(open(os.path.expanduser('~/.config/orc/runtime/orca-runtime.json')))
-path = next(t['endpoint'] for t in meta['transports'] if t['kind'] == 'unix')
-def call(method, params={}):
-    s = socket.socket(socket.AF_UNIX); s.connect(path)
-    s.sendall((json.dumps({'id': str(uuid.uuid4()), 'authToken': meta['authToken'], 'method': method, 'params': params}) + '\n').encode())
-    return json.loads(s.makefile().readline())['result']
-NAME = 'Windows PC'
-for d in call('slim.pairing.list')['devices']:
-    if d['name'] == NAME:
-        print(d['deviceId'], call('slim.pairing.revoke', {'deviceId': d['deviceId']}))
-```
+To revoke a PC's access on the Mac, use **Computer Access** in Orc's **Pair Device…** sheet, or `orc computers` and
+`orc computers revoke DEVICE_ID`. Grants are named after the PC; those from before the Host page are named "Windows PC".
 
 ## Terminals
 

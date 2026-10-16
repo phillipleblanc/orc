@@ -209,10 +209,15 @@ public sealed class HostPairingTests
     [InlineData("10.0.0.5/path", null)]
     public void ReadsTypedAddresses(string typed, string? endpoint) => Assert.Equal(endpoint, HostPairing.EndpointFrom(typed));
 
+    [Theory]
+    [InlineData("EPYC-WINDOWS", "orc pair-computer --name EPYC-WINDOWS --link")]
+    [InlineData("O'Brien's PC", "orc pair-computer --name 'OBriens PC' --link")]
+    public void TheHostCommandNamesTheGrantAfterThisPc(string computer, string command) => Assert.Equal(command, HostPairing.HostCommand(computer));
+
     [Fact]
-    public void TheHostCommandNamesTheGrantAfterThisPc()
+    public void TheOlderHostsCommandNamesTheGrantAfterThisPc()
     {
-        var command = HostPairing.HostCommand("DESKTOP-O'BRIEN");
+        var command = HostPairing.LegacyHostCommand("DESKTOP-O'BRIEN");
         Assert.Contains("'name': 'DESKTOP-OBRIEN'", command);
         Assert.Contains("slim.pairing.create", command);
         Assert.DoesNotContain("authToken': '", command);

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -177,6 +178,52 @@ public sealed class RuntimeConnectionTests
         await Assert.ThrowsAsync<HostIdentityException>(() => RuntimeConnection.ConnectAsync(
             runtime.Pairing() with { PublicKeyB64 = Convert.ToBase64String(otherKey) }, TestContext.Current.CancellationToken));
     }
+}
+
+public sealed class LocalNameTests
+{
+    // A Mac's reply to Query("Phillips-MacBook-Pro.local"): the question, its A record and an AAAA record, both named
+    // by pointers to the question.
+    private static readonly byte[] Reply = Convert.FromHexString(
+        "000084000001000100000001" + "145068696c6c6970732d4d6163426f6f6b2d50726f056c6f63616c00" + "00018001"
+        + "c00c00010001" + "0000000a0004c0a87b31"
+        + "c00c001c0001" + "0000000a0010fe800000000000001406429153 95d8f3".Replace(" ", ""));
+
+    [Fact]
+    public void AsksForTheNamesAddress()
+    {
+        var query = LocalNames.Query("Phillips-MacBook-Pro.local");
+        Assert.Equal(new byte[] { 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, query[..12]);
+        // The reply repeats the question.
+        Assert.Equal(Reply[12..44], query[12..]);
+    }
+
+    [Fact]
+    public void ReadsTheAddressFromAReply()
+    {
+        Assert.Equal(IPAddress.Parse("192.168.123.49"), LocalNames.Answer(Reply, "phillips-macbook-pro.local."));
+        Assert.Null(LocalNames.Answer(Reply, "Other-Mac.local"));
+        Assert.Null(LocalNames.Answer(Reply[..56], "Phillips-MacBook-Pro.local"));
+        // A query, not a reply.
+        Assert.Null(LocalNames.Answer(LocalNames.Query("Phillips-MacBook-Pro.local"), "Phillips-MacBook-Pro.local"));
+    }
+
+    [Fact]
+    public void SurvivesAPointerLoop()
+    {
+        var looped = (byte[])Reply.Clone();
+        // The answer's name points at itself.
+        looped[44] = 0xc0;
+        looped[45] = 44;
+        Assert.Null(LocalNames.Answer(looped, "Phillips-MacBook-Pro.local"));
+    }
+
+    [Theory]
+    [InlineData("Phillips-MacBook-Pro.local", true)]
+    [InlineData("studio.LOCAL", true)]
+    [InlineData("192.168.1.30", false)]
+    [InlineData("mac.example.com", false)]
+    public void KnowsLocalNames(string host, bool local) => Assert.Equal(local, LocalNames.IsLocal(host));
 }
 
 public sealed class AttachControllerTests
