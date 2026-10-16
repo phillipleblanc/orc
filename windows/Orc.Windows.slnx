@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Orc.App/Orc.App.csproj" />
+    <Project Path="src/Orc.Protocol/Orc.Protocol.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Orc.Protocol.Tests/Orc.Protocol.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/OrcSpike/OrcSpike.csproj" />
+  </Folder>
+</Solution>
