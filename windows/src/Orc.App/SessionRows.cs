@@ -30,7 +30,8 @@ public sealed class SessionGroup(string id) : ObservableCollection<SessionRow>
 
 /// <summary>
 /// A session in the sidebar, as Sources/OrcApp/SessionSidebarModel.swift shows it: its activity light, its name (a
-/// child's without its parent's prefix, indented under the parent), and its agent with what a reporting program says.
+/// child's without its parent's prefix, indented under the parent), and its agent with its status headline, or what a
+/// reporting program says.
 /// Green is idle, a yellow spinner active, orange with "!" needs attention, gray no agent, unavailable or offline.
 /// </summary>
 [Microsoft.UI.Xaml.Data.Bindable]
@@ -76,12 +77,12 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
     public string StatusLabel => activity.Label();
     public string AccessibleName => $"{Session?.Name ?? name}, {StatusLabel}";
 
-    public void Update(SessionInfo session, AgentActivity nextActivity, SessionHierarchy hierarchy, SidebarRow row, bool isCollapsed)
+    public void Update(SessionInfo session, AgentActivity nextActivity, string detail, SessionHierarchy hierarchy, SidebarRow row, bool isCollapsed)
     {
         Session = session;
         CanCreateChild = row.ParentHandle is null && hierarchy.CanCreateChild(session);
         Name = hierarchy.DisplayName(session);
-        Detail = session.Detail;
+        Detail = detail;
         if (isChild != (row.ParentHandle is not null)) { isChild = !isChild; Changed(nameof(Indent)); }
         if (hasChildren != row.HasChildren) { hasChildren = row.HasChildren; Changed(nameof(ChevronVisibility)); }
         if (collapsed != isCollapsed) { collapsed = isCollapsed; Changed(nameof(ChevronGlyph), nameof(ChevronLabel)); }

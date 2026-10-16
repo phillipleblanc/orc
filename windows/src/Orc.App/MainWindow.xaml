@@ -33,6 +33,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid Padding="16,4,8,8" ColumnSpacing="4">
                     <Grid.ColumnDefinitions>
@@ -86,7 +87,8 @@
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="NoWrap"
                                            TextTrimming="CharacterEllipsis" />
                                 <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="NoWrap"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"
+                                           ToolTipService.ToolTip="{Binding Detail}" />
                                 <Button Grid.Column="2" Grid.RowSpan="2" Click="OnToggleChildren" Visibility="{Binding ChevronVisibility}"
                                         Background="Transparent" BorderThickness="0" Padding="6" VerticalAlignment="Center"
                                         ToolTipService.ToolTip="{Binding ChevronLabel}" AutomationProperties.Name="{Binding ChevronLabel}">
@@ -106,6 +108,7 @@
                         </GroupStyle>
                     </ListView.GroupStyle>
                 </ListView>
+                <local:UsagePanel x:Name="Usage" Grid.Row="2" />
             </Grid>
 
             <!-- The content layer, as Windows 11 apps draw it: a card edge and rounded corner against the Mica pane. -->

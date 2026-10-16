@@ -34,6 +34,7 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
 {
     private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan IncompatibleRetry = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan BriefInterval = TimeSpan.FromSeconds(5);
     private readonly TimeSpan interval = interval ?? TimeSpan.FromSeconds(2);
     private readonly Func<int, TimeSpan> backoff = backoff ?? Backoff;
     private readonly SemaphoreSlim wake = new(0, 1);
@@ -91,6 +92,7 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
                     connection = opened;
                 }
                 var snapshot = await PollAsync(connection, stop);
+                if (info?.Has(HostInfo.OwnerMethods) == true) snapshot = snapshot with { Briefs = await BriefsAsync(connection) };
                 failures = 0;
                 everConnected = true;
                 Report(new HostStatus(HostState.Connected, Info: info));
@@ -130,6 +132,23 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
     }
 
     private async Task WaitAsync(TimeSpan delay, CancellationToken stop) => await wake.WaitAsync(delay, stop);
+
+    private IReadOnlyDictionary<string, AgentBrief>? briefs;
+    private DateTimeOffset briefsAt;
+
+    /// <summary>The agents' briefs, read every five seconds as Orc.app reads them (Sources/OrcApp/AgentStatus.swift); the last ones between.</summary>
+    private async Task<IReadOnlyDictionary<string, AgentBrief>?> BriefsAsync(RuntimeConnection current)
+    {
+        if (briefs is not null && DateTimeOffset.Now - briefsAt < BriefInterval) return briefs;
+        try
+        {
+            briefs = AgentBrief.List(await current.RequestAsync("brief.list", timeout: StatusTimeout));
+            briefsAt = DateTimeOffset.Now;
+        }
+        // A host whose briefs are unavailable leaves the last ones.
+        catch (Exception error) when (error is TimeoutException or RpcException) { }
+        return briefs;
+    }
 
     private static async Task<HostSnapshot> PollAsync(RuntimeConnection connection, CancellationToken stop)
     {

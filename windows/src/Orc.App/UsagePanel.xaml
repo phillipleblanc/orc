@@ -1,0 +1,39 @@
+<UserControl
+    x:Class="Orc.Win.UsagePanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- The agents' subscription usage on the host, under the sessions, as Orc.app's sidebar shows it. -->
+    <StackPanel Padding="12,6,8,12" Spacing="8">
+        <Grid ColumnSpacing="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button x:Name="Toggle" Click="OnToggle" Background="Transparent" BorderThickness="0" Padding="4,4"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon x:Name="Chevron" Glyph="&#xE70D;" FontSize="10" VerticalAlignment="Center"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="1" Text="Usage" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="Summary" Grid.Column="2" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+            </Button>
+            <Grid Grid.Column="1" Width="32" Height="32">
+                <Button x:Name="RefreshButton" Click="OnRefresh" Background="Transparent" BorderThickness="0" Padding="8"
+                        AutomationProperties.Name="Refresh usage">
+                    <FontIcon Glyph="&#xE72C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Button>
+                <ProgressRing x:Name="Fetching" Width="14" Height="14" MinWidth="14" MinHeight="14" IsActive="False" Visibility="Collapsed" />
+            </Grid>
+        </Grid>
+        <StackPanel x:Name="Providers" Spacing="12" Padding="4,0,8,0" />
+    </StackPanel>
+</UserControl>

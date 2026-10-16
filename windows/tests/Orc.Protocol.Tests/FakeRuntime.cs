@@ -44,6 +44,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
     /// <summary>terminal.view requests, in order, and what they are answered with.</summary>
     public ConcurrentQueue<string> Views { get; } = new();
     public JsonObject ViewReply = new() { ["owner"] = false, ["cols"] = 120, ["rows"] = 40, ["ownerDevice"] = "Studio" };
+    /// <summary>The headline of the terminal's brief, from a host with owner methods.</summary>
+    public volatile string Headline = "Writing the tests";
 
     /// <summary>Sends every subscribed viewer a Resized frame with <paramref name="payload"/>.</summary>
     public async Task ResizedAsync(JsonObject payload)
@@ -182,6 +184,16 @@ internal sealed class FakeRuntime : IAsyncDisposable
                 case "terminal.view":
                     runtime.Views.Enqueue(parameters.ToJsonString());
                     await ReplyAsync(id, (JsonObject)runtime.ViewReply.DeepClone());
+                    break;
+                case "brief.list" when runtime.Capabilities.Contains("orc.owner-methods.v1"):
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["briefs"] = new JsonArray(new JsonObject
+                        {
+                            ["name"] = "fake-agent", ["generating"] = false, ["generatedAt"] = 1_760_000_000_000, ["error"] = null,
+                            ["brief"] = new JsonObject { ["headline"] = runtime.Headline, ["goal"] = "Ship it", ["progress"] = new JsonArray(), ["now"] = "Testing", ["next"] = new JsonArray() }
+                        })
+                    });
                     break;
                 case "terminal.list":
                     await ReplyAsync(id, new JsonObject

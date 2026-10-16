@@ -39,6 +39,43 @@ public sealed class HostMonitorTests
     }
 
     [Fact]
+    public async Task ReadsBriefHeadlinesFromAHostThatServesThem()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.OwnerMethods] };
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var monitor = new HostMonitor(runtime.Pairing(), TimeSpan.FromMilliseconds(100));
+        var snapshots = new Recorder<HostSnapshot>();
+        monitor.Updated += snapshots.Add;
+        var run = monitor.RunAsync(stop.Token);
+        Assert.True(await Eventually(() => snapshots.Count > 0));
+        var session = Assert.Single(snapshots.Latest.Sessions);
+        Assert.Equal("Writing the tests", snapshots.Latest.BriefOf(session)?.Headline);
+        Assert.Equal("claude · Writing the tests", snapshots.Latest.DetailOf(session));
+        // Briefs are read every five seconds; the polls between keep the last ones.
+        runtime.Headline = "Fixing the build";
+        await Task.Delay(500, TestContext.Current.CancellationToken);
+        Assert.Equal("Writing the tests", snapshots.Latest.BriefOf(session)?.Headline);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AnOlderHostHasNoBriefs()
+    {
+        await using var runtime = new FakeRuntime();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var monitor = new HostMonitor(runtime.Pairing(), TimeSpan.FromMilliseconds(100));
+        var snapshots = new Recorder<HostSnapshot>();
+        monitor.Updated += snapshots.Add;
+        var run = monitor.RunAsync(stop.Token);
+        Assert.True(await Eventually(() => snapshots.Count > 0));
+        Assert.Null(snapshots.Latest.Briefs);
+        Assert.Equal("claude", snapshots.Latest.DetailOf(snapshots.Latest.Sessions[0]));
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task ReconnectsAfterTheConnectionDrops()
     {
         await using var runtime = new FakeRuntime();

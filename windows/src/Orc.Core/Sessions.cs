@@ -79,7 +79,14 @@ public sealed record SessionInfo(string Handle, string Name, string WorktreeId, 
     string? Agent, string? IncarnationId, ProgramStatus? Program)
 {
     /// <summary>The line under the name: the agent (or program, or "terminal") and what the program says it is doing.</summary>
-    public string Detail => string.Join(" · ", new[] { Agent ?? Program?.Lead?.App ?? "terminal", Program?.Lead?.Text }.OfType<string>());
+    public string Detail => DescribeWith(null);
+
+    /// <summary>
+    /// The line under the name as Orc.app's sidebar writes it: the agent (or program, or "terminal"), then the agent's
+    /// status headline, or else what the program says it is doing.
+    /// </summary>
+    public string DescribeWith(string? headline) =>
+        string.Join(" · ", new[] { Agent ?? Program?.Lead?.App ?? "terminal", headline ?? Program?.Lead?.Text }.OfType<string>());
 
     public static SessionInfo? FromJson(JsonObject terminal)
     {
@@ -130,9 +137,15 @@ public static class SessionSections
     }
 }
 
+/// <summary>What the host's sessions are and do, and (from hosts that serve them) their agents' briefs by session name.</summary>
 public sealed record HostSnapshot(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<Project> Projects,
-    IReadOnlyDictionary<string, AgentActivity> Activity, DateTimeOffset At)
+    IReadOnlyDictionary<string, AgentActivity> Activity, DateTimeOffset At, IReadOnlyDictionary<string, AgentBrief>? Briefs = null)
 {
     public AgentActivity ActivityOf(SessionInfo session) =>
         !session.Connected ? AgentActivity.Offline : Activity.GetValueOrDefault(session.Handle, AgentActivity.Unknown);
+
+    public AgentBrief? BriefOf(SessionInfo session) => Briefs?.GetValueOrDefault(session.Name);
+
+    /// <summary>The line under a session's name, with its agent's status headline when it has one.</summary>
+    public string DetailOf(SessionInfo session) => session.DescribeWith(BriefOf(session)?.Headline);
 }

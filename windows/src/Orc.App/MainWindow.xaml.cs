@@ -62,6 +62,8 @@ public sealed partial class MainWindow : Window
     private bool applying;
     private bool dialogOpen;
     private bool minimized;
+    private bool windowActive;
+    private bool usageRead;
     private string? visible;
     private string? pendingShow;
     private string? pendingSelect;
@@ -120,7 +122,13 @@ public sealed partial class MainWindow : Window
         // The shown terminal's session takes this window's size while the person is using it here (slim/README.md,
         // "Desktop viewers"): bringing the window forward is strong attention, minimizing hides the terminal, and input
         // anywhere on this PC while it is on screen is presence, reported every two seconds.
-        Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) ReportViews(ViewAttention.Strong); };
+        Activated += (_, e) =>
+        {
+            windowActive = e.WindowActivationState != WindowActivationState.Deactivated;
+            if (!windowActive) return;
+            ReportViews(ViewAttention.Strong);
+            RefreshUsage();
+        };
         AppWindow.Changed += (_, _) =>
         {
             var now = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
@@ -136,10 +144,20 @@ public sealed partial class MainWindow : Window
         };
         presence.Start();
 
+        // Usage, as Orc.app reads it: when the host connects, when the window comes forward, and every fifteen minutes
+        // while it is in front.
+        Usage.Request = (method, parameters) =>
+            (monitor ?? throw new HostUnreachableException("This PC isn't connected to the host right now.")).RequestAsync(method, parameters, TimeSpan.FromSeconds(60));
+        var usageTimer = DispatcherQueue.CreateTimer();
+        usageTimer.Interval = TimeSpan.FromMinutes(15);
+        usageTimer.Tick += (_, _) => { if (windowActive) RefreshUsage(); };
+        usageTimer.Start();
+
         Closed += (_, _) =>
         {
             closing.Cancel();
             presence.Stop();
+            usageTimer.Stop();
             foreach (var terminal in attached.Values) terminal.Controller.Stop();
         };
         _ = InitializeAsync();
@@ -267,6 +285,8 @@ public sealed partial class MainWindow : Window
         hostNotice = null;
         pendingSelect = null;
         failedTerminal = null;
+        usageRead = false;
+        Usage.Clear();
         ShowEmpty();
     }
 
@@ -310,6 +330,17 @@ public sealed partial class MainWindow : Window
         };
         ShowNotice();
         if (Hosts.Visibility == Visibility.Visible) Hosts.UpdateStatus(status);
+        if (connected && !usageRead)
+        {
+            usageRead = true;
+            RefreshUsage();
+        }
+    }
+
+    /// <summary>Reads usage from a host that serves it to this PC.</summary>
+    private void RefreshUsage()
+    {
+        if (monitor?.Status is { IsConnected: true, Info: { } info } && info.Has(HostInfo.OwnerMethods)) _ = Usage.RefreshAsync();
     }
 
     private static string NextTry(HostStatus status) => status.NextTry is not { } next ? "Trying again now…"
@@ -376,7 +407,8 @@ public sealed partial class MainWindow : Window
                 var (section, sectionRows) = layout[i];
                 groups[i].Title = $"{section.Title}  {section.Sessions.Count}";
                 foreach (var row in sectionRows)
-                    rows[row.Session.Handle].Update(row.Session, update.ActivityOf(row.Session), section.Hierarchy, row, collapsedParents.Contains(row.Session.Handle));
+                    rows[row.Session.Handle].Update(row.Session, update.ActivityOf(row.Session), update.DetailOf(row.Session), section.Hierarchy, row,
+                        collapsedParents.Contains(row.Session.Handle));
             }
         }
         finally { applying = false; }

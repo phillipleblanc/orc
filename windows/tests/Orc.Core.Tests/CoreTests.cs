@@ -73,6 +73,58 @@ public sealed class SessionParsingTests
     }
 }
 
+public sealed class InsightTests
+{
+    [Fact]
+    public void ReadsBriefs()
+    {
+        var briefs = AgentBrief.List((JsonObject)JsonNode.Parse("""
+            {"briefs": [
+              {"name": "fix-auth", "brief": {"headline": " Waiting on your review ", "goal": "Fix auth", "progress": [], "now": "Idle", "next": [], "needsYou": "Approve the PR?"},
+               "generatedAt": 1760000000000, "model": "anthropic/claude", "error": null, "mark": "x", "generating": true},
+              {"name": "new-one", "brief": null, "generatedAt": null, "model": null, "error": "no transcript", "mark": null, "generating": false}
+            ]}
+            """)!);
+        Assert.Equal("Waiting on your review", briefs["fix-auth"].Headline);
+        Assert.Equal("Approve the PR?", briefs["fix-auth"].NeedsYou);
+        Assert.True(briefs["fix-auth"].Generating);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1760000000000), briefs["fix-auth"].GeneratedAt);
+        Assert.Null(briefs["new-one"].Headline);
+        Assert.Equal("no transcript", briefs["new-one"].Error);
+    }
+
+    [Fact]
+    public void ReadsUsage()
+    {
+        var providers = ProviderUsage.List((JsonObject)JsonNode.Parse("""
+            {"providers": [
+              {"provider": "claude", "name": "Claude", "plan": "Max 5x", "status": "ok", "error": null, "updatedAt": 1760000000000,
+               "windows": [{"kind": "session", "label": "Session", "usedPercent": 61.5, "resetsAt": 1760003600000, "windowMinutes": 300},
+                           {"kind": "weekly", "label": "Week", "usedPercent": 84, "resetsAt": null, "windowMinutes": null}]},
+              {"provider": "codex", "name": "Codex", "plan": null, "windows": [], "status": "unavailable", "error": "Not signed in", "updatedAt": null, "resetCredits": 2}
+            ]}
+            """)!);
+        var claude = providers[0];
+        Assert.Equal(("Claude", "Max 5x", 2), (claude.Name, claude.Plan, claude.Windows.Count));
+        Assert.Equal((62, UsageLevel.High), (claude.Windows[0].Percent, claude.Windows[0].Level));
+        Assert.Equal(("Week", UsageLevel.Critical), (claude.Tightest?.Label, claude.Tightest?.Level));
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1760003600000), claude.Windows[0].ResetsAt);
+        Assert.True(providers[1].Unavailable);
+        Assert.Equal(2, providers[1].ResetCredits);
+        Assert.Equal(UsageLevel.Normal, new UsageWindow("weekly", "Week", 59.9, null).Level);
+    }
+
+    [Theory]
+    [InlineData(-5, "now")]
+    [InlineData(30, "<1m")]
+    [InlineData(45 * 60, "45m")]
+    [InlineData(2 * 3600 + 13 * 60, "2h 13m")]
+    [InlineData(3 * 3600, "3h")]
+    [InlineData(3 * 86400 + 4 * 3600 + 59, "3d 4h")]
+    [InlineData(2 * 86400, "2d")]
+    public void WritesDurationsAsOrcDoes(int seconds, string text) => Assert.Equal(text, Insights.Duration(TimeSpan.FromSeconds(seconds)));
+}
+
 public sealed class SectionTests
 {
     private static SessionInfo Session(string handle, string worktree, string path) => new(handle, handle, worktree, path, true, "claude", null, null);
