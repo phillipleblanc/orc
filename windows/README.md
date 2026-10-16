@@ -28,22 +28,22 @@ the Windows App SDK runtime with it.
 
 ## Pair with a host
 
-Desktop pairing is not in Orc.app yet (Phase 1). Until then, issue a runtime-scope grant on the Mac. The link it
-prints is full control of that runtime, so paste it only into `orcspike pair`, never into a chat or a ticket.
+The app opens on its Host page when nothing is paired; later, click the host under **Sessions**. Copy the command it
+shows and run it in Terminal on the Mac: it issues a runtime-scope grant named after this PC, at the Mac's LAN
+address, and prints an `orca://pair` link. Paste the link into the page and **Connect**. The app checks the host
+answers, proves the key the link pins, and serves this app's protocol before it saves anything. Desktop pairing in
+Orc.app itself is Phase 1; until then the command does what it would.
 
-```python
-# python3 on the Mac
-import json, os, socket, uuid
-meta = json.load(open(os.path.expanduser('~/.config/orc/runtime/orca-runtime.json')))
-path = next(t['endpoint'] for t in meta['transports'] if t['kind'] == 'unix')
-s = socket.socket(socket.AF_UNIX); s.connect(path)
-req = {'id': str(uuid.uuid4()), 'authToken': meta['authToken'], 'method': 'slim.pairing.create',
-       'params': {'scope': 'runtime', 'name': 'Windows PC', 'endpoint': 'ws://MAC_LAN_IP:6768'}}
-s.sendall((json.dumps(req) + '\n').encode())
-print(json.loads(s.makefile().readline())['result']['link'])
-```
+The link is full control of the host's sessions: paste it only into this app or `orcspike pair`, never into a chat or
+a ticket.
 
-Then, on Windows:
+The Host page also changes the address (after a new DHCP lease; the key stays pinned and is checked), pairs again
+(when the host refused this PC, or with a new link), and forgets the host. The sidebar shows the connection:
+connecting, connected, reconnecting after a drop, unreachable (with the next try, backing off to 30 seconds),
+refused (waits until you retry or pair again), or incompatible. A terminal that gave up while the host was away
+attaches again when it is back.
+
+From a terminal:
 
 ```
 orcspike probe ws://MAC_LAN_IP:6768 PUBLIC_KEY   # optional: reachability and E2EE interop, no credential
@@ -58,7 +58,8 @@ orcspike endpoint ws://NEW_IP:6768                # follow a new DHCP lease; the
 The host is saved in `%LOCALAPPDATA%\Orc\host.json` with its device token encrypted for the Windows user (DPAPI).
 `ORC_WINDOWS_DIR` selects another directory.
 
-To revoke every grant named "Windows PC", leaving Orc.app's own grant alone:
+To revoke a PC's grant on the Mac, leaving Orc.app's own alone, run this with `NAME` set to the PC's name (the grant
+is named after it; grants from before the Host page are named "Windows PC"):
 
 ```python
 # python3 on the Mac
@@ -69,8 +70,9 @@ def call(method, params={}):
     s = socket.socket(socket.AF_UNIX); s.connect(path)
     s.sendall((json.dumps({'id': str(uuid.uuid4()), 'authToken': meta['authToken'], 'method': method, 'params': params}) + '\n').encode())
     return json.loads(s.makefile().readline())['result']
+NAME = 'Windows PC'
 for d in call('slim.pairing.list')['devices']:
-    if d['name'] == 'Windows PC':
+    if d['name'] == NAME:
         print(d['deviceId'], call('slim.pairing.revoke', {'deviceId': d['deviceId']}))
 ```
 

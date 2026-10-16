@@ -51,7 +51,10 @@ public sealed class RuntimeConnection : IAsyncDisposable
 
     public static async Task<RuntimeConnection> ConnectAsync(Pairing pairing, CancellationToken cancellation = default)
     {
-        var connection = new RuntimeConnection(pairing);
+        RuntimeConnection connection;
+        // libsodium refuses keys that cannot be a host's (all zeros, low-order points): the pairing itself is bad.
+        try { connection = new RuntimeConnection(pairing); }
+        catch (InvalidOperationException) { throw new HostIdentityException("The pairing's host key isn't a valid key. Pair again with a new link."); }
         try
         {
             await connection.HandshakeAsync(cancellation);
@@ -75,29 +78,45 @@ public sealed class RuntimeConnection : IAsyncDisposable
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException or HttpRequestException)
         {
-            throw new IOException($"Cannot reach the runtime at {pairing.Endpoint}. Check that the Mac is awake, on this network, "
-                + "and that Orc's runtime is running (port 6768).", error);
+            if (cancellation.IsCancellationRequested) throw;
+            throw new HostUnreachableException($"Nothing answered at {pairing.EndpointUri.Host}. Check that the host is awake, on this "
+                + "network, and running Orc.", error);
         }
 
-        var hello = new JsonObject { ["type"] = "e2ee_hello", ["publicKeyB64"] = Convert.ToBase64String(channel.PublicKey) };
-        await socket.SendAsync(Encoding.UTF8.GetBytes(hello.ToJsonString()), WebSocketMessageType.Text, true, timeout.Token);
-
-        var (readyType, readyBytes) = await ReceiveMessageAsync(timeout.Token);
-        if (readyType != WebSocketMessageType.Text || ParseObject(readyBytes)?["type"]?.GetValue<string>() != "e2ee_ready")
-            throw new IOException("The runtime rejected the encryption handshake.");
-
-        await SendJsonAsync(new JsonObject { ["type"] = "e2ee_auth", ["deviceToken"] = pairing.DeviceToken }, timeout.Token);
-        var (authType, authBytes) = await ReceiveMessageAsync(timeout.Token);
-        if (authType == WebSocketMessageType.Close) throw new IOException("The runtime closed the connection during authentication: "
-            + (socket.CloseStatusDescription ?? "no reason given") + ". The access link may have been revoked.");
-        var auth = authType == WebSocketMessageType.Text ? OpenText(authBytes) : null;
-        switch (auth?["type"]?.GetValue<string>())
+        try
         {
-            case "e2ee_authenticated": return;
-            case "e2ee_error": throw new IOException("The runtime refused this device token (unauthorized). Pair again with a new link.");
-            default: throw new IOException("The runtime's reply could not be decrypted. The link's server key may not match this runtime.");
+            var hello = new JsonObject { ["type"] = "e2ee_hello", ["publicKeyB64"] = Convert.ToBase64String(channel.PublicKey) };
+            await socket.SendAsync(Encoding.UTF8.GetBytes(hello.ToJsonString()), WebSocketMessageType.Text, true, timeout.Token);
+
+            var (readyType, readyBytes) = await ReceiveMessageAsync(timeout.Token);
+            if (readyType != WebSocketMessageType.Text || ParseObject(readyBytes)?["type"]?.GetValue<string>() != "e2ee_ready")
+                throw new HostIncompatibleException("The host did not start an Orc encryption handshake. Is this an Orc host?");
+
+            await SendJsonAsync(new JsonObject { ["type"] = "e2ee_auth", ["deviceToken"] = pairing.DeviceToken }, timeout.Token);
+            var (authType, authBytes) = await ReceiveMessageAsync(timeout.Token);
+            if (authType == WebSocketMessageType.Close)
+            {
+                // The runtime closes with 4001 for a token it does not know and 4003 for a message it cannot decrypt.
+                if ((int?)socket.CloseStatus == 4003) throw new HostIdentityException(IdentityProblem);
+                throw new HostRefusedException(RefusedProblem);
+            }
+            var auth = authType == WebSocketMessageType.Text ? OpenText(authBytes) : null;
+            switch (auth?["type"]?.GetValue<string>())
+            {
+                case "e2ee_authenticated": return;
+                case "e2ee_error": throw new HostRefusedException(RefusedProblem);
+                default: throw new HostIdentityException(IdentityProblem);
+            }
+        }
+        catch (Exception error) when (error is WebSocketException or OperationCanceledException && !cancellation.IsCancellationRequested)
+        {
+            throw new HostUnreachableException($"The connection to {pairing.EndpointUri.Host} dropped during the handshake.", error);
         }
     }
+
+    private const string RefusedProblem = "The host refused this PC's pairing. Its access may have been revoked; pair again with a new link.";
+    private const string IdentityProblem = "The host at this address isn't the one this PC paired with: it can't prove it holds the paired key. "
+        + "Pair again if the host's Orc was reset.";
 
     public async Task<JsonObject> RequestAsync(string method, JsonObject? parameters = null, TimeSpan? timeout = null)
     {

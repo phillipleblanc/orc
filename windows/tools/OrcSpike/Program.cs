@@ -85,16 +85,15 @@ static async Task<int> PairAsync()
     var started = Stopwatch.GetTimestamp();
     await using var connection = await RuntimeConnection.ConnectAsync(pairing);
     var connectMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-    var status = await connection.RequestAsync("status.get");
+    var info = await HostPairing.CheckAsync(connection);
     var terminals = (await connection.RequestAsync("terminal.list"))["terminals"] as JsonArray;
     PairingStore.Save(pairing);
     Console.WriteLine($"""
         Paired and saved (device token encrypted for this Windows user).
           Endpoint:       {pairing.Endpoint}  (connected and authenticated in {connectMs:F0} ms)
-          Grant scope:    {status["deviceScope"]}
-          Host platform:  {status["hostPlatform"]}
-          Protocol:       {status["runtimeProtocolVersion"]}
-          Capabilities:   {string.Join(", ", (status["capabilities"] as JsonArray ?? new JsonArray()).Select(c => c?.ToString()))}
+          Grant scope:    {info.Scope}
+          Host platform:  {info.PlatformName}
+          Protocol:       {info.ProtocolVersion}
           Sessions:       {terminals?.Count ?? 0}
         Next: orcspike list, then orcspike attach NAME
         """);
@@ -130,7 +129,10 @@ static async Task<int> SidebarAsync()
     using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     var first = new TaskCompletionSource<HostSnapshot>();
     monitor.Updated += snapshot => first.TrySetResult(snapshot);
-    monitor.ConnectionChanged += state => { if (state is not null) first.TrySetException(new IOException(state)); };
+    monitor.StatusChanged += status =>
+    {
+        if (status.State is not (HostState.Connecting or HostState.Connected)) first.TrySetException(new IOException(status.Detail));
+    };
     var run = monitor.RunAsync(stop.Token);
     var snapshot = await first.Task.WaitAsync(stop.Token);
     stop.Cancel();

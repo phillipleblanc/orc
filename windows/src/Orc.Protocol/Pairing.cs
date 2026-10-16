@@ -117,6 +117,14 @@ public static class PairingStore
         return new Pairing(stored.Endpoint, token, stored.PublicKeyB64, stored.Scope, stored.DeviceId);
     }
 
+    /// <summary>The saved host, or null when none is saved or it cannot be read by this Windows user.</summary>
+    public static Pairing? TryLoad()
+    {
+        try { return Load(); }
+        catch (Exception error) when (error is InvalidOperationException or IOException or JsonException or FormatException
+                                      or CryptographicException or UnauthorizedAccessException) { return null; }
+    }
+
     public static bool Forget()
     {
         var forgot = false;

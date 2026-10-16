@@ -179,7 +179,11 @@ host.addEventListener('message', (event) => {
 let fitTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(fitTimer);
-  fitTimer = setTimeout(() => terminals.get(visibleId)?.fit.fit(), 40);
+  fitTimer = setTimeout(() => {
+    // A pane collapsed to nothing (the host's page over it, a minimized window) must not shrink a session on the host.
+    if (container.clientWidth < 80 || container.clientHeight < 40) return;
+    terminals.get(visibleId)?.fit.fit();
+  }, 40);
 }).observe(container);
 
 // Measure the pane with a throwaway terminal, so the first attach subscribes at this window's size.

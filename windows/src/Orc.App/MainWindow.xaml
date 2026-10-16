@@ -2,6 +2,7 @@
     x:Class="Orc.Win.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Orc.Win"
     Title="Orc">
 
     <!-- Native chrome over Mica that follows the Windows theme and accent; only the terminal pane has terminal colors. -->
@@ -38,10 +39,21 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                    <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Sessions" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                        <TextBlock x:Name="HostText" Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                        <Button x:Name="HostButton" Click="OnHostClick" Background="Transparent" BorderThickness="0" Padding="0,2,4,2"
+                                Margin="0,2,0,0" HorizontalContentAlignment="Left" ToolTipService.ToolTip="Host settings"
+                                AutomationProperties.Name="Host settings">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Grid x:Name="HostIndicator" Width="12" Height="12" VerticalAlignment="Center">
+                                    <Ellipse x:Name="HostDot" Width="8" Height="8" />
+                                    <ProgressRing x:Name="HostRing" Width="12" Height="12" MinWidth="12" MinHeight="12"
+                                                  IsActive="False" Visibility="Collapsed" />
+                                </Grid>
+                                <TextBlock x:Name="HostText" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="NoWrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                     <Button x:Name="NewSessionButton" Grid.Column="1" Click="OnNewSessionClick" IsEnabled="False"
                             Background="Transparent" BorderThickness="0" Padding="8" VerticalAlignment="Center"
@@ -56,7 +68,7 @@
                             <Grid Padding="0,5" ColumnSpacing="10" Margin="{Binding Indent}" ToolTipService.ToolTip="{Binding StatusLabel}"
                                   AutomationProperties.Name="{Binding AccessibleName}">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="14" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
@@ -64,16 +76,16 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
-                                <Grid Width="12" Height="12" VerticalAlignment="Center">
+                                <Grid Width="14" Height="14" VerticalAlignment="Center">
                                     <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" Visibility="{Binding DotVisibility}" />
-                                    <ProgressRing Width="12" Height="12" MinWidth="12" MinHeight="12" Foreground="#d29922"
+                                    <ProgressRing Width="14" Height="14" MinWidth="14" MinHeight="14" Foreground="#d29922"
                                                   IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
                                     <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
                                                VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
                                 </Grid>
-                                <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="NoWrap"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}"
+                                <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="NoWrap"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                                 <Button Grid.Column="2" Grid.RowSpan="2" Click="OnToggleChildren" Visibility="{Binding ChevronVisibility}"
                                         Background="Transparent" BorderThickness="0" Padding="6" VerticalAlignment="Center"
@@ -87,7 +99,7 @@
                         <GroupStyle>
                             <GroupStyle.HeaderTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding Title}" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold"
+                                    <TextBlock Text="{Binding Title}" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </DataTemplate>
                             </GroupStyle.HeaderTemplate>
@@ -106,6 +118,7 @@
                         <TextBlock x:Name="EmptyText" Text="Select a session" Foreground="#8b949e" HorizontalAlignment="Center"
                                    Style="{StaticResource BodyTextBlockStyle}" />
                     </StackPanel>
+                    <local:HostsPage x:Name="Hosts" Visibility="Collapsed" />
                     <InfoBar x:Name="NoticeBar" Margin="12" VerticalAlignment="Top" IsOpen="False" IsClosable="True" />
                 </Grid>
             </Border>

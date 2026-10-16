@@ -23,22 +23,26 @@ namespace Orc.Win;
 /// The sessions of the paired host in a sidebar by project, children nested under their parents, beside the selected
 /// session's terminal. The terminals of the ten most recently shown sessions stay attached, so switching back is
 /// immediate and keeps their screens; a hidden terminal does not resize its session (docs/app.md). Sessions are
-/// created, renamed, restarted and closed from the sidebar, as in Orc.app. Problems show in an InfoBar over the terminal.
+/// created, renamed, restarted and closed from the sidebar, as in Orc.app. The host is paired, moved and forgotten on
+/// the Hosts page; its connection state shows in the sidebar header, and problems in an InfoBar over the terminal.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
     private const int MaxAttached = 10;
     private const string AppTitle = "Orc";
+    private static readonly Color Green = Color.FromArgb(255, 0x3f, 0xb9, 0x50);
+    private static readonly Color Red = Color.FromArgb(255, 0xf8, 0x51, 0x49);
 
     private readonly CollectionViewSource groupsSource = new() { IsSourceGrouped = true };
     private readonly ObservableCollection<SessionGroup> groups = [];
     private readonly Dictionary<string, SessionRow> rows = [];
     private readonly HashSet<string> listed = [];
     private readonly HashSet<string> collapsedParents = [];
+    // Attached terminals by session handle; each attachment has its own page id, so a late end never touches its successor.
     private readonly Dictionary<string, Attached> attached = [];
     private readonly Dictionary<string, Notice> notices = [];
-    // Sessions this window closed or restarted: their terminals end without a "session ended" notice.
-    private readonly HashSet<string> quietEnds = [];
+    // Attachments that end because this window closed, restarted or let go of their session: no "session ended" notice.
+    private readonly HashSet<Attached> quietEnds = [];
     private readonly List<string> recent = [];
     private readonly CancellationTokenSource closing = new();
     private readonly bool diagnostics = Environment.GetEnvironmentVariable("ORC_DIAGNOSTICS") == "1";
@@ -46,19 +50,24 @@ public sealed partial class MainWindow : Window
     private List<string> shape = [];
     private Pairing? pairing;
     private HostMonitor? monitor;
+    private CancellationTokenSource? hostStop;
     private HostSnapshot? snapshot;
     private TerminalSize paneSize = new(120, 40);
     private Notice? hostNotice;
+    private Notice? shownNotice;
+    private int pageIds;
     private bool pageReady;
     private bool applying;
     private bool dialogOpen;
     private string? visible;
     private string? pendingShow;
     private string? pendingSelect;
-    private string? lingering;
+    // The shown session's terminal that gave up while the host was away; reattached when the host is back.
+    private string? failedTerminal;
+    private Attached? lingering;
 
-    private sealed record Attached(SessionInfo Session, XtermSurface Surface, AttachController Controller);
-    private sealed record Notice(InfoBarSeverity Severity, string Title, string Message);
+    private sealed record Attached(SessionInfo Session, string PageId, XtermSurface Surface, AttachController Controller);
+    private sealed record Notice(InfoBarSeverity Severity, string Title, string Message, IReadOnlyList<(string Label, Action Run)>? Actions = null);
 
     public MainWindow()
     {
@@ -84,12 +93,26 @@ public sealed partial class MainWindow : Window
         AddListAccelerator(VirtualKey.F2, row => _ = RenameAsync(row));
         AddListAccelerator(VirtualKey.Delete, row => _ = CloseAsync(row));
 
+        Hosts.ShowDialog = ShowDialogAsync;
+        Hosts.Paired += (paired, _) => Adopt(paired);
+        Hosts.AddressChanged += Adopt;
+        Hosts.ForgetRequested += () =>
+        {
+            StopHost();
+            PairingStore.Forget();
+            pairing = null;
+            ShowHostState(null);
+            OpenHosts();
+        };
+        Hosts.CloseRequested += CloseHosts;
+
         // Start with the session list focused, not the first button (which would show its focus rectangle).
         Root.Loaded += (_, _) => SessionList.Focus(FocusState.Programmatic);
         NoticeBar.Closed += (_, _) =>
         {
-            if (visible is not null) notices.Remove(visible);
-            else hostNotice = null;
+            if (shownNotice == hostNotice) hostNotice = null;
+            else if (visible is not null) notices.Remove(visible);
+            shownNotice = null;
         };
         Closed += (_, _) =>
         {
@@ -100,6 +123,7 @@ public sealed partial class MainWindow : Window
     }
 
     private bool IsClosed => closing.IsCancellationRequested;
+    private bool HostConnected => monitor?.Status.IsConnected == true;
 
     /// <summary>A window of this many effective pixels at the display's scale, centered in its work area.</summary>
     private void SizeForDisplay(int width, int height)
@@ -128,13 +152,12 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializeAsync()
     {
-        try { pairing = PairingStore.Load(); }
-        catch (Exception error)
+        pairing = PairingStore.TryLoad();
+        if (pairing is null)
         {
-            HostText.Text = "Not paired with a host";
-            EmptyText.Text = "Pair with a host to see its sessions";
-            hostNotice = new Notice(InfoBarSeverity.Informational, "Not paired", error.Message);
-            ShowNotice();
+            // First run, or the saved host was forgotten: pairing is the only thing to do.
+            ShowHostState(null);
+            OpenHosts();
         }
 
         await Web.EnsureCoreWebView2Async();
@@ -148,21 +171,132 @@ public sealed partial class MainWindow : Window
         core.WebMessageReceived += OnWebMessage;
         core.Navigate("https://orc.local/index.html" + (diagnostics ? "?diagnostics" : ""));
 
-        if (pairing is null) return;
-        var host = pairing.EndpointUri.Host;
-        HostText.Text = $"Connecting to {host}…";
-        monitor = new HostMonitor(pairing);
-        monitor.Updated += update => DispatcherQueue.TryEnqueue(() => { if (!IsClosed) Apply(update); });
-        monitor.ConnectionChanged += state => DispatcherQueue.TryEnqueue(() =>
-        {
-            if (IsClosed) return;
-            HostText.Text = state is null ? host : $"Can't reach {host}";
-            NewSessionButton.IsEnabled = state is null;
-            hostNotice = state is null ? null : new Notice(InfoBarSeverity.Warning, $"Can't reach {host}", state + " Retrying.");
-            ShowNotice();
-        });
-        _ = Task.Run(() => monitor.RunAsync(closing.Token));
+        if (pairing is not null) StartHost(pairing);
     }
+
+    // ---- The host ----
+
+    /// <summary>A pairing checked on the Hosts page: saved, connected, and the page closed.</summary>
+    private void Adopt(Pairing next)
+    {
+        PairingStore.Save(next);
+        StartHost(next);
+        CloseHosts();
+    }
+
+    private void StartHost(Pairing next)
+    {
+        StopHost();
+        pairing = next;
+        var host = new HostMonitor(next);
+        monitor = host;
+        hostStop = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);
+        host.Updated += update => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) Apply(update); });
+        host.StatusChanged += status => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) ShowHostState(status); });
+        ShowHostState(host.Status);
+        var token = hostStop.Token;
+        _ = Task.Run(() => host.RunAsync(token));
+    }
+
+    /// <summary>Lets go of the host: its connection, its terminals and its sessions in the sidebar.</summary>
+    private void StopHost()
+    {
+        hostStop?.Cancel();
+        hostStop = null;
+        monitor = null;
+        snapshot = null;
+        foreach (var terminal in attached.Values)
+        {
+            quietEnds.Add(terminal);
+            terminal.Controller.Stop();
+        }
+        attached.Clear();
+        recent.Clear();
+        applying = true;
+        groups.Clear();
+        applying = false;
+        rows.Clear();
+        listed.Clear();
+        shape = [];
+        collapsedParents.Clear();
+        notices.Clear();
+        hostNotice = null;
+        pendingSelect = null;
+        failedTerminal = null;
+        ShowEmpty();
+    }
+
+    private void RetryHost() => monitor?.RetryNow();
+
+    /// <summary>The connection state in the sidebar header and, when something is wrong, in the notice.</summary>
+    private void ShowHostState(HostStatus? status)
+    {
+        var host = pairing?.EndpointUri.Host ?? "";
+        var (text, color, busy) = status?.State switch
+        {
+            null => ("Not paired with a host", default(Color?), false),
+            HostState.Connected => (host, Green, false),
+            HostState.Connecting => ($"Connecting to {host}…", null, true),
+            HostState.Reconnecting => ($"Reconnecting to {host}…", null, true),
+            HostState.Unreachable => ($"Can't reach {host}", Red, false),
+            HostState.Unauthorized => ($"{host} refused this PC", Red, false),
+            _ => ($"{host} needs an update", Red, false)
+        };
+        HostText.Text = text;
+        HostRing.IsActive = busy;
+        HostRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        HostDot.Visibility = busy || color is null ? Visibility.Collapsed : Visibility.Visible;
+        HostIndicator.Visibility = busy || color is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (color is { } fill) HostDot.Fill = new SolidColorBrush(fill);
+        var connected = status?.IsConnected == true;
+        NewSessionButton.IsEnabled = connected;
+        // What the sidebar shows is the last known state while the host is away.
+        SessionList.Opacity = connected || snapshot is null ? 1 : 0.5;
+
+        hostNotice = status?.State switch
+        {
+            HostState.Reconnecting => new Notice(InfoBarSeverity.Warning, $"Reconnecting to {host}",
+                status.Detail ?? "The connection dropped.", [("Retry now", RetryHost)]),
+            HostState.Unreachable => new Notice(InfoBarSeverity.Error, $"Can't reach {host}",
+                $"{status.Detail} {NextTry(status)}".Trim(), [("Retry now", RetryHost), ("Change address…", OpenHosts)]),
+            HostState.Unauthorized => new Notice(InfoBarSeverity.Error, $"{host} refused this PC",
+                status.Detail ?? "", [("Pair again…", PairAgain), ("Retry", RetryHost)]),
+            HostState.Incompatible => new Notice(InfoBarSeverity.Error, $"Can't use {host}", status.Detail ?? "", [("Retry", RetryHost)]),
+            _ => null
+        };
+        ShowNotice();
+        if (Hosts.Visibility == Visibility.Visible) Hosts.UpdateStatus(status);
+    }
+
+    private static string NextTry(HostStatus status) => status.NextTry is not { } next ? "Trying again now…"
+        : (next - DateTimeOffset.Now).TotalSeconds < 60 ? $"Trying again in {Math.Max(1, (int)Math.Round((next - DateTimeOffset.Now).TotalSeconds))} seconds."
+        : $"Trying again at {next.LocalDateTime:t}.";
+
+    private void OnHostClick(object sender, RoutedEventArgs e) => OpenHosts();
+
+    private void OpenHosts()
+    {
+        Hosts.ShowHost(pairing, monitor?.Status);
+        Hosts.Visibility = Visibility.Visible;
+        NoticeBar.IsOpen = false;
+    }
+
+    private void PairAgain()
+    {
+        OpenHosts();
+        Hosts.BeginPairing();
+    }
+
+    private void CloseHosts()
+    {
+        if (pairing is null) return;
+        Hosts.Visibility = Visibility.Collapsed;
+        ShowNotice();
+        if (visible is not null) Web.Focus(FocusState.Programmatic);
+        else SessionList.Focus(FocusState.Programmatic);
+    }
+
+    // ---- The sidebar ----
 
     private void Apply(HostSnapshot update)
     {
@@ -199,13 +333,20 @@ public sealed partial class MainWindow : Window
             }
         }
         finally { applying = false; }
+        SessionList.Opacity = 1;
 
         if (visible is null) EmptyText.Text = update.Sessions.Count == 0 ? "No sessions on this host" : "Select a session";
 
         // A session that ended or was replaced is no longer attached.
         var live = update.Sessions.Where(s => s.Connected).Select(s => s.Handle).ToHashSet();
         foreach (var handle in attached.Keys.Where(h => !live.Contains(h)).ToList()) attached[handle].Controller.Stop();
-        quietEnds.RemoveWhere(handle => !live.Contains(handle) && !attached.ContainsKey(handle));
+
+        // The host is back: the shown session's terminal, if it gave up meanwhile, attaches again.
+        if (failedTerminal is { } failed && failed == visible && live.Contains(failed) && !attached.ContainsKey(failed))
+        {
+            failedTerminal = null;
+            Show(failed);
+        }
 
         // A session this window just created or restarted is selected once it is listed.
         if (pendingSelect is { } select && listed.Contains(select) && live.Contains(select))
@@ -267,6 +408,8 @@ public sealed partial class MainWindow : Window
         if (snapshot is not null) Apply(snapshot);
     }
 
+    // ---- Terminals ----
+
     private void Show(string handle)
     {
         if (!pageReady || pairing is null || snapshot is null)
@@ -276,20 +419,20 @@ public sealed partial class MainWindow : Window
         }
         var session = snapshot.Sessions.FirstOrDefault(s => s.Handle == handle);
         if (session is null || !session.Connected) return;
-        if (lingering is { } ended && ended != handle)
-        {
-            Page(new JsonObject { ["type"] = "dispose", ["id"] = ended });
-            lingering = null;
-        }
 
         var terminal = attached.GetValueOrDefault(handle) ?? Attach(session);
+        if (lingering is { } ended && ended != terminal)
+        {
+            ended.Surface.Post(new JsonObject { ["type"] = "dispose" });
+            lingering = null;
+        }
         recent.Remove(handle);
         recent.Add(handle);
         visible = handle;
         terminal.Surface.Post(new JsonObject { ["type"] = "show" });
         Web.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Collapsed;
-        Web.Focus(FocusState.Programmatic);
+        if (Hosts.Visibility != Visibility.Visible) Web.Focus(FocusState.Programmatic);
         Title = $"{session.Name} – {AppTitle}";
         TitleText.Text = Title;
         ShowNotice();
@@ -299,7 +442,11 @@ public sealed partial class MainWindow : Window
         {
             var oldest = recent[0];
             recent.RemoveAt(0);
-            if (attached.TryGetValue(oldest, out var evicted)) evicted.Controller.Stop();
+            if (attached.TryGetValue(oldest, out var evicted))
+            {
+                quietEnds.Add(evicted);
+                evicted.Controller.Stop();
+            }
         }
     }
 
@@ -307,12 +454,17 @@ public sealed partial class MainWindow : Window
     private void ShowEmpty()
     {
         visible = null;
+        if (lingering is { } ended)
+        {
+            ended.Surface.Post(new JsonObject { ["type"] = "dispose" });
+            lingering = null;
+        }
         applying = true;
         SessionList.SelectedItem = null;
         applying = false;
         Title = AppTitle;
         TitleText.Text = AppTitle;
-        EmptyText.Text = "Select a session";
+        EmptyText.Text = pairing is null ? "Pair with a host to see its sessions" : "Select a session";
         EmptyState.Visibility = Visibility.Visible;
         Web.Visibility = Visibility.Collapsed;
         ShowNotice();
@@ -321,11 +473,12 @@ public sealed partial class MainWindow : Window
     private Attached Attach(SessionInfo session)
     {
         var handle = session.Handle;
-        var surface = new XtermSurface(handle, paneSize, Web, DispatcherQueue,
+        var pageId = $"{handle}#{++pageIds}";
+        var surface = new XtermSurface(pageId, paneSize, Web, DispatcherQueue,
             note: message => SetNotice(handle, new Notice(InfoBarSeverity.Warning, session.Name, message)),
             healthy: () => SetNotice(handle, null));
         surface.Post(new JsonObject { ["type"] = "create" });
-        var terminal = new Attached(session, surface, new AttachController(pairing!, handle, session.IncarnationId, surface));
+        var terminal = new Attached(session, pageId, surface, new AttachController(pairing!, handle, session.IncarnationId, surface));
         attached[handle] = terminal;
         _ = RunAsync(terminal);
         return terminal;
@@ -340,21 +493,25 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { failure = error; }
         if (IsClosed) return;
 
-        if (attached.GetValueOrDefault(handle) == terminal) attached.Remove(handle);
-        recent.Remove(handle);
+        var current = attached.GetValueOrDefault(handle) == terminal;
+        if (current)
+        {
+            attached.Remove(handle);
+            recent.Remove(handle);
+        }
         // After the terminal's last output: the surface's queue keeps the order.
-        if (quietEnds.Remove(handle))
+        if (quietEnds.Remove(terminal) || !current)
         {
             terminal.Surface.Post(new JsonObject { ["type"] = "dispose" });
-            notices.Remove(handle);
-            if (visible == handle) ShowEmpty();
+            if (current && visible == handle) ShowEmpty();
         }
         else if (visible == handle)
         {
             var reason = failure?.Message ?? (exit == AttachExit.Ended ? "The session ended." : "Detached from the session.");
-            // Leave its last screen up with a note until another session is shown.
+            // Leave its last screen up with a note until another session is shown, or the host is back.
             terminal.Surface.Post(new JsonObject { ["type"] = "ended", ["text"] = reason });
-            lingering = handle;
+            lingering = terminal;
+            if (failure is not null) failedTerminal = handle;
             SetNotice(handle, failure is null
                 ? new Notice(InfoBarSeverity.Informational, terminal.Session.Name, reason)
                 : new Notice(InfoBarSeverity.Error, $"Lost {terminal.Session.Name}", reason));
@@ -367,11 +524,13 @@ public sealed partial class MainWindow : Window
         monitor?.RefreshNow();
     }
 
+    // ---- Session commands ----
+
     private void OnNewSessionClick(object sender, RoutedEventArgs e) => _ = NewSessionAsync(null);
 
     private async Task NewSessionAsync(SessionInfo? parent)
     {
-        if (monitor is null || snapshot is null) return;
+        if (monitor is null || snapshot is null || !HostConnected) return;
         // Until a default is saved, suggest what this host's sessions use: the shown session's project, and the
         // agent most of them run.
         var shown = snapshot.Sessions.FirstOrDefault(s => s.Handle == visible) ?? snapshot.Sessions.FirstOrDefault();
@@ -382,26 +541,27 @@ public sealed partial class MainWindow : Window
         await ShowDialogAsync(dialog);
         if (dialog.CreatedHandle is not { } handle) return;
         pendingSelect = handle;
-        monitor.RefreshNow();
+        monitor?.RefreshNow();
     }
 
     private void OnSessionContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
         if (args.OriginalSource is not FrameworkElement target || target.DataContext is not SessionRow { Session: { } session } row) return;
         args.Handled = true;
+        var connected = HostConnected;
         var menu = new MenuFlyout();
-        if (row.CanCreateChild) menu.Items.Add(MenuItem("Create Child…", "", () => _ = NewSessionAsync(session)));
-        menu.Items.Add(MenuItem("Rename Session…", "", () => _ = RenameAsync(row), "F2"));
-        menu.Items.Add(MenuItem("Restart Session", "", () => _ = RestartAsync(row)));
+        if (row.CanCreateChild) menu.Items.Add(MenuItem("Create Child…", "", () => _ = NewSessionAsync(session), enabled: connected));
+        menu.Items.Add(MenuItem("Rename Session…", "", () => _ = RenameAsync(row), "F2", connected));
+        menu.Items.Add(MenuItem("Restart Session", "", () => _ = RestartAsync(row), enabled: connected));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(MenuItem("Close Session…", "", () => _ = CloseAsync(row), "Del"));
+        menu.Items.Add(MenuItem("Close Session…", "", () => _ = CloseAsync(row), "Del", connected));
         if (args.TryGetPosition(target, out var point)) menu.ShowAt(target, point);
         else menu.ShowAt(target);
     }
 
-    private static MenuFlyoutItem MenuItem(string text, string glyph, Action action, string? shortcut = null)
+    private static MenuFlyoutItem MenuItem(string text, string glyph, Action action, string? shortcut = null, bool enabled = true)
     {
-        var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph } };
+        var item = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph }, IsEnabled = enabled };
         if (shortcut is not null) item.KeyboardAcceleratorTextOverride = shortcut;
         item.Click += (_, _) => action();
         return item;
@@ -410,7 +570,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Orc.app's Rename Session sheet: the full name, so a parent's name in front nests the session under it.</summary>
     private async Task RenameAsync(SessionRow row)
     {
-        if (monitor is not { } host || row.Session is not { } session) return;
+        if (monitor is not { } host || !HostConnected || row.Session is not { } session) return;
         var box = new TextBox { Header = "Name", Text = session.Name };
         var error = new InfoBar { Severity = InfoBarSeverity.Error, IsClosable = false, IsOpen = false };
         var dialog = new ContentDialog
@@ -469,14 +629,15 @@ public sealed partial class MainWindow : Window
     /// <summary>Ends the session and starts it again under its name; asks first when its agent is working.</summary>
     private async Task RestartAsync(SessionRow row)
     {
-        if (monitor is not { } host || row.Session is not { } session) return;
+        if (monitor is not { } host || !HostConnected || row.Session is not { } session) return;
         if (row.Activity == AgentActivity.Active && await ShowDialogAsync(new ContentDialog
             {
                 Title = $"Restart “{session.Name}”?",
                 Content = "The agent is working. Restarting stops its current turn; it then continues its conversation.",
                 PrimaryButtonText = "Restart Session", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
             }) != ContentDialogResult.Primary) return;
-        quietEnds.Add(session.Handle);
+        var terminal = attached.GetValueOrDefault(session.Handle);
+        if (terminal is not null) quietEnds.Add(terminal);
         try
         {
             var restarted = await SessionCommands.RestartAsync(host.RequestAsync, session.Handle);
@@ -485,14 +646,14 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            quietEnds.Remove(session.Handle);
+            if (terminal is not null) quietEnds.Remove(terminal);
             await ShowErrorAsync("Could Not Restart Session", $"Could not restart {session.Name}: {error.Message}");
         }
     }
 
     private async Task CloseAsync(SessionRow row)
     {
-        if (monitor is not { } host || row.Session is not { } session) return;
+        if (monitor is not { } host || !HostConnected || row.Session is not { } session) return;
         if (await ShowDialogAsync(new ContentDialog
             {
                 Title = $"Close “{session.Name}”?",
@@ -500,7 +661,8 @@ public sealed partial class MainWindow : Window
                     : "The agent stops. You can reopen it from Recently Closed in Orc on the host.",
                 PrimaryButtonText = "Close Session", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close
             }) != ContentDialogResult.Primary) return;
-        quietEnds.Add(session.Handle);
+        var terminal = attached.GetValueOrDefault(session.Handle);
+        if (terminal is not null) quietEnds.Add(terminal);
         try
         {
             await SessionCommands.CloseAsync(host.RequestAsync, session.Handle);
@@ -508,7 +670,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            quietEnds.Remove(session.Handle);
+            if (terminal is not null) quietEnds.Remove(terminal);
             await ShowErrorAsync("Could Not Close Session", $"Could not close {session.Name}: {error.Message}");
         }
     }
@@ -529,6 +691,8 @@ public sealed partial class MainWindow : Window
         finally { dialogOpen = false; }
     }
 
+    // ---- Notices ----
+
     private void SetNotice(string handle, Notice? notice)
     {
         if (IsClosed) return;
@@ -537,22 +701,43 @@ public sealed partial class MainWindow : Window
         if (handle == visible) ShowNotice();
     }
 
-    /// <summary>The shown terminal's notice, else the host's.</summary>
+    /// <summary>
+    /// A host problem first, since it explains every terminal's; else the shown terminal's notice. Hidden while the
+    /// Hosts page is open, which shows the host's state itself.
+    /// </summary>
     private void ShowNotice()
     {
-        var notice = (visible is null ? null : notices.GetValueOrDefault(visible)) ?? hostNotice;
+        var terminalNotice = visible is null ? null : notices.GetValueOrDefault(visible);
+        var notice = Hosts.Visibility == Visibility.Visible ? null : hostNotice ?? terminalNotice;
+        shownNotice = notice;
         NoticeBar.IsOpen = notice is not null;
         if (notice is null) return;
         NoticeBar.Severity = notice.Severity;
         NoticeBar.Title = notice.Title;
         NoticeBar.Message = notice.Message;
+        if (notice.Actions is not { Count: > 0 } actions)
+        {
+            NoticeBar.Content = null;
+            return;
+        }
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 12) };
+        foreach (var (label, run) in actions)
+        {
+            var button = new Button { Content = label };
+            button.Click += (_, _) => run();
+            buttons.Children.Add(button);
+        }
+        NoticeBar.Content = buttons;
     }
+
+    // ---- The terminal page ----
 
     private void OnWebMessage(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         if (IsClosed || JsonNode.Parse(args.WebMessageAsJson) is not JsonObject message) return;
         var id = message["id"]?.ToString();
-        var terminal = id is null ? null : attached.GetValueOrDefault(id);
+        var terminal = id is null ? null : attached.Values.FirstOrDefault(a => a.PageId == id);
+        var shown = terminal is not null && terminal.Session.Handle == visible;
         switch (message["type"]?.GetValue<string>())
         {
             case "ready":
@@ -566,13 +751,13 @@ public sealed partial class MainWindow : Window
                 break;
             case "shown":
             case "size":
-                if (terminal is null || id != visible) break;
+                if (!shown) break;
                 paneSize = ReadSize(message);
                 // Showing a terminal claims the session's size for this window, as resizing it does.
-                if (terminal.Surface.SetSize(paneSize) || message["type"]?.ToString() == "shown") terminal.Controller.ViewportChanged();
+                if (terminal!.Surface.SetSize(paneSize) || message["type"]?.ToString() == "shown") terminal.Controller.ViewportChanged();
                 break;
             case "input":
-                if (terminal is not null && id == visible) terminal.Controller.SendInput(message["data"]?.GetValue<string>() ?? "");
+                if (shown) terminal!.Controller.SendInput(message["data"]?.GetValue<string>() ?? "");
                 break;
             case "command":
                 // The window's shortcuts, pressed while the terminal has focus.
@@ -593,11 +778,6 @@ public sealed partial class MainWindow : Window
     }
 
     private static TerminalSize ReadSize(JsonObject message) => new(message["cols"]!.GetValue<int>(), message["rows"]!.GetValue<int>());
-
-    private void Page(JsonObject message)
-    {
-        if (!IsClosed) Web.CoreWebView2?.PostWebMessageAsJson(new JsonObject { ["type"] = "batch", ["items"] = new JsonArray(message) }.ToJsonString());
-    }
 
     private static async Task PasteAsync(XtermSurface surface)
     {

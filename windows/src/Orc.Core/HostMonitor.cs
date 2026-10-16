@@ -3,77 +3,130 @@ using Orc.Protocol;
 
 namespace Orc.Core;
 
+public enum HostState
+{
+    /// <summary>Trying for the first time.</summary>
+    Connecting,
+    Connected,
+    /// <summary>Was connected and lost it; trying again.</summary>
+    Reconnecting,
+    /// <summary>Several tries found nothing at the address; trying less often.</summary>
+    Unreachable,
+    /// <summary>The host refused this PC's pairing or could not prove its identity. Retrying cannot help; pairing again can.</summary>
+    Unauthorized,
+    /// <summary>The host speaks another protocol version.</summary>
+    Incompatible
+}
+
+/// <summary>The control connection's state, why it is in it, and when the next try is.</summary>
+public sealed record HostStatus(HostState State, string? Detail = null, int Failures = 0, DateTimeOffset? NextTry = null, HostInfo? Info = null)
+{
+    public bool IsConnected => State == HostState.Connected;
+}
+
 /// <summary>
 /// Keeps one control connection to the host and refreshes what Orc.app's sidebar shows, on the Mac app's schedule:
 /// every 2 seconds, terminal.list and worktree.list, then terminal.agentStatus for each running session, at most 8 at
-/// a time with a 3-second limit each (Sources/OrcApp/OrcApp.swift, Sources/OrcKit/AgentActivity.swift).
+/// a time with a 3-second limit each (Sources/OrcApp/OrcApp.swift, Sources/OrcKit/AgentActivity.swift). After a
+/// failure it retries with backoff (1 s up to 30 s); a refused pairing waits for <see cref="RetryNow"/>.
 /// </summary>
-public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null)
+public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func<int, TimeSpan>? backoff = null)
 {
     private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan IncompatibleRetry = TimeSpan.FromMinutes(1);
     private readonly TimeSpan interval = interval ?? TimeSpan.FromSeconds(2);
+    private readonly Func<int, TimeSpan> backoff = backoff ?? Backoff;
     private readonly SemaphoreSlim wake = new(0, 1);
     private RuntimeConnection? connection;
 
     /// <summary>A fresh snapshot, on a background thread.</summary>
     public event Action<HostSnapshot>? Updated;
 
-    /// <summary>The control connection's state: null when connected, otherwise why it is not.</summary>
-    public event Action<string?>? ConnectionChanged;
+    /// <summary>The control connection changed state, on a background thread.</summary>
+    public event Action<HostStatus>? StatusChanged;
 
     public Pairing Pairing => pairing;
 
-    /// <summary>Refresh now instead of at the next interval.</summary>
-    public void RefreshNow()
+    public HostStatus Status { get; private set; } = new(HostState.Connecting);
+
+    /// <summary>Try now instead of at the next interval or retry, and forget the backoff.</summary>
+    public void RetryNow()
     {
         if (wake.CurrentCount == 0) wake.Release();
     }
 
+    /// <summary>Refresh the sessions now, after a command changed them.</summary>
+    public void RefreshNow() => RetryNow();
+
     /// <summary>A request over the control connection, for commands such as creating or closing a session.</summary>
     public Task<JsonObject> RequestAsync(string method, JsonObject? parameters = null, TimeSpan? timeout = null) =>
-        (connection ?? throw new IOException("Not connected to the host.")).RequestAsync(method, parameters, timeout);
+        (connection ?? throw new HostUnreachableException("This PC isn't connected to the host right now.")).RequestAsync(method, parameters, timeout);
+
+    public static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(failures switch { <= 1 => 1, 2 => 2, 3 => 4, 4 => 8, 5 => 15, _ => 30 });
 
     public async Task RunAsync(CancellationToken stop)
     {
-        string? reported = "";
-        void Report(string? state)
-        {
-            if (state == reported) return;
-            reported = state;
-            ConnectionChanged?.Invoke(state);
-        }
-
+        var failures = 0;
+        var everConnected = false;
+        HostInfo? info = null;
+        Report(new HostStatus(HostState.Connecting), always: true);
         while (!stop.IsCancellationRequested)
         {
             try
             {
                 if (connection is null)
                 {
+                    // Trying again keeps the state the last failure set (unreachable stays unreachable), with no next try pending.
+                    if (failures > 0) Report(Status with { NextTry = null });
                     var opened = await RuntimeConnection.ConnectAsync(pairing, stop);
-                    opened.Closed += _ => { if (ReferenceEquals(connection, opened)) connection = null; };
+                    try { info = await HostPairing.CheckAsync(opened); }
+                    catch { await opened.DisposeAsync(); throw; }
+                    opened.Closed += _ =>
+                    {
+                        // Dropped while in use: say so now and try again at once, rather than at the next poll.
+                        if (Interlocked.CompareExchange(ref connection, null, opened) != opened) return;
+                        Report(Status with { State = HostState.Reconnecting, Detail = "The connection to the host dropped.", NextTry = null });
+                        RetryNow();
+                    };
                     connection = opened;
                 }
                 var snapshot = await PollAsync(connection, stop);
-                Report(null);
+                failures = 0;
+                everConnected = true;
+                Report(new HostStatus(HostState.Connected, Info: info));
                 Updated?.Invoke(snapshot);
                 await WaitAsync(interval, stop);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
             catch (Exception error)
             {
-                if (connection is { } failed)
+                if (Interlocked.Exchange(ref connection, null) is { } failed) await failed.DisposeAsync();
+                failures++;
+                var (state, delay) = error switch
                 {
-                    connection = null;
-                    await failed.DisposeAsync();
-                }
-                Report(error.Message);
-                try { await WaitAsync(RetryDelay, stop); }
+                    HostRefusedException or HostIdentityException => (HostState.Unauthorized, (TimeSpan?)null),
+                    HostIncompatibleException => (HostState.Incompatible, IncompatibleRetry),
+                    _ => (everConnected && failures <= 3 ? HostState.Reconnecting : HostState.Unreachable, backoff(failures))
+                };
+                Report(new HostStatus(state, error.Message, failures, delay is { } d ? DateTimeOffset.Now + d : null, info));
+                try { await WaitAsync(delay ?? Timeout.InfiniteTimeSpan, stop); }
                 catch (OperationCanceledException) { break; }
             }
         }
-        if (connection is { } last) await last.DisposeAsync();
-        connection = null;
+        // Cleared before disposing, so stopping is not reported as a drop.
+        if (Interlocked.Exchange(ref connection, null) is { } last) await last.DisposeAsync();
+    }
+
+    private readonly object reporting = new();
+
+    private void Report(HostStatus status, bool always = false)
+    {
+        lock (reporting)
+        {
+            if (!always && status == Status) return;
+            Status = status;
+        }
+        StatusChanged?.Invoke(status);
     }
 
     private async Task WaitAsync(TimeSpan delay, CancellationToken stop) => await wake.WaitAsync(delay, stop);

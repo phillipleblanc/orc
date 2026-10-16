@@ -164,8 +164,18 @@ public sealed class RuntimeConnectionTests
     public async Task RefusesAWrongToken()
     {
         await using var runtime = new FakeRuntime();
-        var error = await Assert.ThrowsAsync<IOException>(() => RuntimeConnection.ConnectAsync(runtime.Pairing("wrong"), TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<HostRefusedException>(() => RuntimeConnection.ConnectAsync(runtime.Pairing("wrong"), TestContext.Current.CancellationToken));
         Assert.Contains("refused", error.Message);
+    }
+
+    [Fact]
+    public async Task TellsAHostThatCannotProveItsKey()
+    {
+        await using var runtime = new FakeRuntime();
+        var otherKey = new byte[32];
+        Sodium.Keypair(otherKey, new byte[32]);
+        await Assert.ThrowsAsync<HostIdentityException>(() => RuntimeConnection.ConnectAsync(
+            runtime.Pairing() with { PublicKeyB64 = Convert.ToBase64String(otherKey) }, TestContext.Current.CancellationToken));
     }
 }
 

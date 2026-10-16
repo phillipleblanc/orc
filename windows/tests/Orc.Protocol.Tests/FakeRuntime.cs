@@ -34,6 +34,17 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public int Port { get; }
     /// <summary>What terminal.agentStatus reports for the terminal: working, permission or idle.</summary>
     public volatile string AgentState = "working";
+    /// <summary>What status.get reports: the protocol version and the grant's scope.</summary>
+    public volatile int ProtocolVersion = 3;
+    public volatile string DeviceScope = "runtime";
+    /// <summary>WebSocket connections accepted so far.</summary>
+    public int Connections;
+
+    /// <summary>Drops every open connection, as a network blip or a runtime restart would.</summary>
+    public void DropConnections()
+    {
+        foreach (var session in sessions) session.Abort();
+    }
 
     public FakeRuntime()
     {
@@ -70,6 +81,7 @@ internal sealed class FakeRuntime : IAsyncDisposable
                 continue;
             }
             var socket = (await context.AcceptWebSocketAsync(null)).WebSocket;
+            Interlocked.Increment(ref Connections);
             var session = new Session(this, socket);
             sessions.Add(session);
             _ = Task.Run(session.RunAsync);
@@ -89,6 +101,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
         private readonly SemaphoreSlim sendLock = new(1, 1);
         private E2eeChannel? channel;
         private string? multiplexId;
+
+        public void Abort() => socket.Abort();
 
         public async Task RunAsync()
         {
@@ -142,7 +156,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
                 case "status.get":
                     await ReplyAsync(id, new JsonObject
                     {
-                        ["runtimeId"] = RuntimeId, ["runtimeProtocolVersion"] = 3, ["hostPlatform"] = "darwin", ["deviceScope"] = "runtime",
+                        ["runtimeId"] = RuntimeId, ["runtimeProtocolVersion"] = runtime.ProtocolVersion, ["hostPlatform"] = "darwin",
+                        ["deviceScope"] = runtime.DeviceScope,
                         ["capabilities"] = new JsonArray("terminal.binary-stream.v1", "terminal.multiplex.v1", "orc.agents.v1")
                     });
                     break;
