@@ -29,7 +29,7 @@ import { restartSession, SessionHistory } from './history.ts'
 import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
-import { RpcError, UnixRpcServer } from './rpc-server.ts'
+import { RpcError, UnixRpcServer, type Handlers } from './rpc-server.ts'
 import { SessionStore } from './session-store.ts'
 import { PullRequestWatch } from './pull-requests/watch.ts'
 import { fetchClaudeUsage } from './usage/claude.ts'
@@ -121,40 +121,7 @@ const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) 
   }
   return null
 })
-const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
-const clientEvents = clientEventMethods(catalog, subscriptions)
-const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
-const streaming = {
-  'terminal.multiplex': terminalMultiplex(store, sizes),
-  ...createSessionStreams(runtime),
-  ...mobileTerminal.streaming,
-  ...clientEvents.streaming
-}
-const websocket = new WebSocketRpcServer({
-  port: Number(values.port ?? DEFAULT_PORT), keypair, devices, runtimeId, handlers, streaming,
-  mobileMethods: MOBILE_METHODS,
-  // Only the Orca mobile app has a chat view.
-  mobileHandlers: nativeChat.handlers,
-  mobileStreaming: nativeChat.streaming,
-  log
-})
-try {
-  await websocket.listen()
-} catch (error) {
-  if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
-  process.stderr.write(`orc-frontend: port ${websocket.port} is in use; stop whatever holds it (paired phones expect this port)\n`)
-  process.exit(1)
-}
-const websocketEndpoint = `ws://127.0.0.1:${websocket.port}`
-const chat = new ChatServer((name) => {
-  const session = store.get(name)
-  const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
-  return storage ? durableSocket(storage) : null
-})
-const chatPort = join(profile, 'chat-port')
-await chat.listen(Number(await readFile(chatPort, 'utf8').catch(() => '')) || 0)
-await writeFile(chatPort, String(chat.port), { mode: 0o600 })
-// The agents' subscription usage, for the app's sidebar. It reads the agents' own sign-ins, so only the owner asks.
+// The agents' subscription usage, for the app's sidebar. It reads the agents' own sign-ins, so only the owner's devices ask.
 const usage = new UsageService({
   claude: async () => fetchClaudeUsage(await loginEnvironment()),
   codex: async () => {
@@ -162,29 +129,8 @@ const usage = new UsageService({
     return fetchCodexUsage(env, resolveExecutable('codex', env))
   }
 })
-const rpcPath = join(profile, 'rpc.sock')
-await unlink(rpcPath).catch(() => {})
-// Pairing is administered only over the owner-authenticated local socket, never over the WebSocket.
-const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
-  ...handlers,
-  'slim.pairing.create': async (params) => {
-    const scope = params.scope === 'mobile' ? 'mobile' : params.scope === 'runtime' ? 'runtime' : null
-    if (!scope) throw new RpcError('invalid_argument', 'scope must be runtime or mobile')
-    const kinds: Record<typeof scope, DeviceKind[]> = { runtime: ['app', 'desktop'], mobile: ['phone'] }
-    if (params.kind !== undefined && !kinds[scope].includes(params.kind)) throw new RpcError('invalid_argument', `kind must be ${kinds[scope].join(' or ')} for ${scope} scope`)
-    const endpoint = typeof params.endpoint === 'string' ? params.endpoint : websocketEndpoint
-    const device = await devices.create(scope, typeof params.name === 'string' ? params.name : scope, params.kind)
-    const publicKeyB64 = Buffer.from(keypair.publicKey).toString('base64')
-    return { deviceId: device.deviceId, scope, link: pairingLink({ endpoint, deviceToken: device.token, publicKeyB64, scope, pairedDeviceId: device.deviceId }) }
-  },
-  ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
-  ...desktopPairingHandlers({ runtimeId, devices, keypair, websocket }),
-  'slim.pairing.list': () => ({ devices: devices.list() }),
-  'durable.chat': async (params) => {
-    const name = String(params.name ?? '')
-    if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
-    return { url: chat.url(name) }
-  },
+// Briefs, pull requests and usage are for the owner: served on the local socket and to runtime-scope devices, never to phones.
+const ownerHandlers: Handlers = {
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
   'brief.dismiss': async (params) => briefs.dismiss(String(params.name ?? ''), String(params.question ?? '')),
@@ -226,6 +172,65 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   'usage.read': async (params) => {
     const refresh: UsageRefresh = params.refresh === 'force' || params.refresh === 'none' ? params.refresh : 'stale'
     return { providers: await usage.read(refresh) }
+  }
+}
+const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
+const clientEvents = clientEventMethods(catalog, subscriptions)
+const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
+const streaming = {
+  'terminal.multiplex': terminalMultiplex(store, sizes),
+  ...createSessionStreams(runtime),
+  ...mobileTerminal.streaming,
+  ...clientEvents.streaming
+}
+const websocket = new WebSocketRpcServer({
+  port: Number(values.port ?? DEFAULT_PORT), keypair, devices, runtimeId, handlers, streaming,
+  ownerHandlers,
+  mobileMethods: MOBILE_METHODS,
+  // Only the Orca mobile app has a chat view.
+  mobileHandlers: nativeChat.handlers,
+  mobileStreaming: nativeChat.streaming,
+  log
+})
+try {
+  await websocket.listen()
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+  process.stderr.write(`orc-frontend: port ${websocket.port} is in use; stop whatever holds it (paired phones expect this port)\n`)
+  process.exit(1)
+}
+const websocketEndpoint = `ws://127.0.0.1:${websocket.port}`
+const chat = new ChatServer((name) => {
+  const session = store.get(name)
+  const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
+  return storage ? durableSocket(storage) : null
+})
+const chatPort = join(profile, 'chat-port')
+await chat.listen(Number(await readFile(chatPort, 'utf8').catch(() => '')) || 0)
+await writeFile(chatPort, String(chat.port), { mode: 0o600 })
+const rpcPath = join(profile, 'rpc.sock')
+await unlink(rpcPath).catch(() => {})
+// Pairing is administered only over the owner-authenticated local socket, never over the WebSocket.
+const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
+  ...handlers,
+  ...ownerHandlers,
+  'slim.pairing.create': async (params) => {
+    const scope = params.scope === 'mobile' ? 'mobile' : params.scope === 'runtime' ? 'runtime' : null
+    if (!scope) throw new RpcError('invalid_argument', 'scope must be runtime or mobile')
+    const kinds: Record<typeof scope, DeviceKind[]> = { runtime: ['app', 'desktop'], mobile: ['phone'] }
+    if (params.kind !== undefined && !kinds[scope].includes(params.kind)) throw new RpcError('invalid_argument', `kind must be ${kinds[scope].join(' or ')} for ${scope} scope`)
+    const endpoint = typeof params.endpoint === 'string' ? params.endpoint : websocketEndpoint
+    const device = await devices.create(scope, typeof params.name === 'string' ? params.name : scope, params.kind)
+    const publicKeyB64 = Buffer.from(keypair.publicKey).toString('base64')
+    return { deviceId: device.deviceId, scope, link: pairingLink({ endpoint, deviceToken: device.token, publicKeyB64, scope, pairedDeviceId: device.deviceId }) }
+  },
+  ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
+  ...desktopPairingHandlers({ runtimeId, devices, keypair, websocket }),
+  'slim.pairing.list': () => ({ devices: devices.list() }),
+  'durable.chat': async (params) => {
+    const name = String(params.name ?? '')
+    if (store.get(name)?.meta.agent !== 'durable') throw new RpcError('not_found', `${name} is not a durable agent session`)
+    return { url: chat.url(name) }
   },
   'slim.pairing.revoke': async (params) => {
     const revoked = await devices.revoke(String(params.deviceId))

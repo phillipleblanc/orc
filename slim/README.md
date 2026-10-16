@@ -304,15 +304,17 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   and `repo.add` use Orca's request and result shapes, including agent identity and status. `repo.remove` (`repo`, a
   project selector) forgets a project, and refuses with `in_use` while sessions belong to it.
   `agent.*`, `wake.*` and `history.*` implement the agent commands. `orc.phone.*`, `orc.desktop.*` and `slim.pairing.*`
-  issue and revoke access links, `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, and `brief.list`,
-  `brief.refresh`, `brief.settings` and `brief.configure` serve agents' status briefs written from their transcripts;
-  they are not served over the WebSocket. `brief.dismiss` (`name`, `question`) drops a question its person marked read
-  from the brief and keeps it, the latest only, so later briefs' prompts tell the model not to raise it again.
+  issue and revoke access links, and `durable.chat` returns a durable agent's chat URL on 127.0.0.1; these are served
+  only here. `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, `brief.*` serves
+  agents' status briefs written from their transcripts, and `pr.*` the pull requests Orc watches for them.
+  `brief.dismiss` (`name`, `question`) drops a question its person marked read from the brief and keeps it, the
+  latest only, so later briefs' prompts tell the model not to raise it again.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
-  It serves the same methods plus the streams `terminal.multiplex`, `terminal.subscribe`,
-  `session.tabs.subscribe` and `runtime.clientEvents.subscribe`, and `nativeChat.*` to mobile
-  devices only. Every streamed reply carries `streaming: true` and a stream ends with
-  `{type: "end"}`.
+  It serves the same methods except those served only on the local socket, plus the streams
+  `terminal.multiplex`, `terminal.subscribe`, `session.tabs.subscribe` and `runtime.clientEvents.subscribe`.
+  `usage.read`, `brief.*` and `pr.*` go to runtime-scope devices only (capability
+  `orc.owner-methods.v1`), and `nativeChat.*` to mobile devices only. Every streamed reply carries
+  `streaming: true` and a stream ends with `{type: "end"}`.
 - **Launching:** Orc runs `Orc.app/Contents/Resources/Runtime/orc-runtime --profile DIR` (or
   `ORC_RUNTIME_EXECUTABLE`) when no frontend serves the profile. `orc-runtime` starts this frontend on
   the bundled Node.js with the bundled holder. Orc then requests its own runtime-scope grant with

@@ -25,6 +25,8 @@ export type WebSocketOptions = {
   runtimeId: string
   handlers: Handlers
   streaming: Record<string, StreamingHandler>
+  /** Methods served to runtime-scope devices only: the owner's own computers. */
+  ownerHandlers: Handlers
   /** Methods a mobile-scope device may call. */
   mobileMethods: Set<string>
   /** Methods served to mobile-scope devices only; each must also be in `mobileMethods`. */
@@ -166,7 +168,8 @@ export class WebSocketRpcServer {
         sendJSON({ id, ok: true, streaming: true, result: { type: 'end' }, _meta: meta })
         return
       }
-      const handler = this.options.handlers[request.method] ?? (mobile ? this.options.mobileHandlers[request.method] : undefined)
+      const handler = this.options.handlers[request.method]
+        ?? (device.scope === 'runtime' ? this.options.ownerHandlers[request.method] : this.options.mobileHandlers[request.method])
       if (!handler) throw new RpcError('method_not_found', `Unknown method: ${request.method}`)
       const result = (await handler(params, context())) ?? {}
       // Orca stamps the caller's grant scope onto status replies.
