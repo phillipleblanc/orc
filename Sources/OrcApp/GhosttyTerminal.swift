@@ -270,16 +270,26 @@ struct TerminalHost: NSViewRepresentable {
     private var tracking: NSTrackingArea?
     private var detached = false
     private var shown = true
-    private var visibilityObserver: NSObjectProtocol?
+    private var focused = false
+    private var observers: [NSObjectProtocol] = []
+    /// This terminal's viewer of its session, whose `orc attach` follows the runtime's viewport ownership.
+    let viewerID = "orc-" + UUID().uuidString
+    private lazy var viewReport = TerminalViewReport(handle: session.handle, viewer: viewerID) { [weak self] owner, device in
+        self?.showOwner(owner ? nil : device)
+    }
+    private var presenceTimer: Timer?
+    private var ownerNotice: NSButton?
 
     var isDetached: Bool { detached }
 
     /// A hidden terminal stays attached and keeps its scrollback, but stops drawing and loses focus.
     func setShown(_ shown: Bool) {
+        let selected = shown && !self.shown
         self.shown = shown
         isHidden = !shown
         if !shown, let surface { ghostty_surface_set_focus(surface, false) }
         updateOcclusion()
+        reportView(selected ? .strong : nil)
     }
 
     private func updateOcclusion() {
@@ -288,6 +298,41 @@ struct TerminalHost: NSViewRepresentable {
         ghostty_surface_set_occlusion(surface, visible)
         if visible { ghostty_surface_refresh(surface) }
     }
+
+    /// On screen: selected, attached, and in a window that is not minimized, hidden or fully covered.
+    private var onScreen: Bool {
+        guard shown, !detached, surface != nil, let window else { return false }
+        return window.occlusionState.contains(.visible) && !window.isMiniaturized && !NSApplication.shared.isHidden
+    }
+
+    /// Tells the runtime whether this terminal is on screen and what the person just did with it, so the session
+    /// takes this terminal's size while the person is using it here.
+    private func reportView(_ attention: TerminalViewReport.Attention? = nil) {
+        // A terminal running another command than `orc attach` has no viewer.
+        guard surface != nil, !detached, commandOverride == nil else { return }
+        let onScreen = self.onScreen
+        viewReport.report(shown: onScreen, attention: onScreen ? attention : nil)
+        if !onScreen { showOwner(nil) }
+    }
+
+    /// Names the computer whose size the session has while this terminal shows it at that size.
+    private func showOwner(_ device: String?) {
+        guard let device, onScreen else { ownerNotice?.removeFromSuperview(); ownerNotice = nil; return }
+        let title = "Sized for \(device) · click to fit here"
+        if ownerNotice?.title == title { return }
+        ownerNotice?.removeFromSuperview()
+        let notice = NSButton(title: title, target: self, action: #selector(fitHere))
+        notice.bezelStyle = .inline
+        notice.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        notice.setAccessibilityLabel("This session is sized for \(device). Fit it to this window.")
+        notice.sizeToFit()
+        notice.frame.origin = NSPoint(x: max(8, bounds.width - notice.frame.width - 8), y: 8)
+        notice.autoresizingMask = [.minXMargin, .maxYMargin]
+        addSubview(notice)
+        ownerNotice = notice
+    }
+
+    @objc private func fitHere() { reportView(.strong) }
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
     init(session: Session, command: String? = nil) {
@@ -319,7 +364,7 @@ struct TerminalHost: NSViewRepresentable {
         // The native app owns navigation; its terminal stays bound to this session.
         // An embedded Ghostty PTY is not its parent process's Herdr pane.
         let command = commandOverride ?? ("/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
-            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch")
+            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch --client-id " + shellQuote(viewerID) + " --viewport-ownership")
         command.withCString { commandPointer in
             config.command = commandPointer
             FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in
@@ -329,17 +374,42 @@ struct TerminalHost: NSViewRepresentable {
         }
         updateSize()
         updateAppearance()
-        visibilityObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateOcclusion() }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateOcclusion(); self?.reportView() }
+            },
+            // Bringing the window to the front, or Orc, is the person turning to this terminal.
+            center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportView(.strong) }
+            },
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportView(.strong) }
+            }
+        ] + [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification].map { name in
+            center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.reportView() } }
+        } + [NSApplication.didHideNotification, NSApplication.didUnhideNotification].map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.reportView() } }
+        }
+        // Using the Mac anywhere while this terminal is on screen is presence; an idle Mac reports nothing.
+        presenceTimer = Timer.scheduledTimer(withTimeInterval: TerminalViewReport.presenceInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.onScreen, TerminalViewReport.secondsSinceInput < TerminalViewReport.presenceInterval else { return }
+                self.reportView(.presence)
+            }
         }
         if shown { window.makeFirstResponder(self) }
+        reportView(shown ? .strong : nil)
     }
     func detach() {
         detached = true; markdownPress = nil; hoveredLink = nil
-        if let visibilityObserver { NotificationCenter.default.removeObserver(visibilityObserver); self.visibilityObserver = nil }
+        observers.forEach { NotificationCenter.default.removeObserver($0) }; observers = []
+        presenceTimer?.invalidate(); presenceTimer = nil
+        showOwner(nil)
         if let surface { self.surface = nil; ghostty_surface_free(surface) }
     }
     override func layout() { super.layout(); updateSize() }
+    override func viewDidEndLiveResize() { super.viewDidEndLiveResize(); reportView(.strong) }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); updateSize() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateAppearance() }
     private func updateAppearance() {
@@ -356,9 +426,15 @@ struct TerminalHost: NSViewRepresentable {
     override func becomeFirstResponder() -> Bool {
         if let surface { ghostty_surface_set_focus(surface, true) }
         if let app = GhosttyEngine.shared.app { ghostty_app_set_focus(app, true) }
+        if !focused, NSApplication.shared.isActive { reportView(.strong) }
+        focused = true
         return true
     }
-    override func resignFirstResponder() -> Bool { if let surface { ghostty_surface_set_focus(surface, false) }; return true }
+    override func resignFirstResponder() -> Bool {
+        focused = false
+        if let surface { ghostty_surface_set_focus(surface, false) }
+        return true
+    }
     private func mods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var value: UInt32 = 0
         if flags.contains(.shift) { value |= GHOSTTY_MODS_SHIFT.rawValue }
@@ -484,6 +560,7 @@ struct TerminalHost: NSViewRepresentable {
     }
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        reportView(.strong)
         markdownPress = nil
         if event.clickCount == 1, event.modifierFlags.intersection([.shift, .control, .option]).isEmpty,
            let link = markdownLink(at: event) {
@@ -533,6 +610,7 @@ struct TerminalHost: NSViewRepresentable {
     }
     override func scrollWheel(with event: NSEvent) {
         guard let surface else { return }
+        reportView(.strong)
         ghostty_surface_mouse_scroll(surface, event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas ? 1 : 0)
     }
     func hasMarkedText() -> Bool { marked.length > 0 }

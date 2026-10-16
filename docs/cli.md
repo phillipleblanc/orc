@@ -52,7 +52,7 @@ While attached in Ghostty, press **Ctrl+'** (Control + apostrophe) to return to 
 
 When an attached session ends, `orc attach` returns to the refreshed picker automatically. Choose another running session, press **n** to create one, or **Esc** to exit. This also applies when attaching by name; ended sessions are omitted from the picker. Embedded terminals stay bound to their selected session and close their attachment when it ends.
 
-Press **Ctrl-]** to detach. Closing an inline view or the app also detaches; the agent keeps running. Attach reconnects after a transport interruption and checks that the terminal's process incarnation has not changed. Use `--no-reconnect` to exit on interruption. Read-only attachment neither sends input nor claims the terminal size.
+Press **Ctrl-]** to detach. Closing an inline view or the app also detaches; the agent keeps running. Attach reconnects after a transport interruption and checks that the terminal's process incarnation has not changed. Use `--no-reconnect` to exit on interruption. Read-only attachment neither sends input nor claims the terminal size. When a session is open on another computer too, it takes your terminal's size when you attach, type, or resize the terminal.
 
 Attach restores the agent's keyboard mode, including **Shift+Enter** for multiline input in Codex. Modified keys retain their agent-defined behavior across reconnects and session switches.
 

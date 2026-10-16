@@ -23,7 +23,11 @@ public struct InputDecoder {
     private let readOnly: Bool
     private let reconnect: Bool
     private let sessionSwitching: Bool
-    private let clientID = "orc-" + UUID().uuidString
+    private let clientID: String
+    private let viewportOwnership: Bool
+    private let reportsView: Bool
+    private var reportingView = false
+    private var reportedAttach = false
     private var connection: StreamConnection?
     private var streamID: UInt32?
     private var snapshot = Data()
@@ -55,9 +59,16 @@ public struct InputDecoder {
     private var snapshotDeadline: Task<Void, Never>?
     private var retryDelay: Task<Void, Never>?
 
-    public init(terminal: Session, readOnly: Bool = false, reconnect: Bool = true, sessionSwitching: Bool = true) {
+    /// With `clientID`, the app running this attach names its viewer and reports what is on screen (`terminal.view`);
+    /// `viewportOwnership` then opts the viewer into the runtime's viewport ownership. Without one, the attach runs in
+    /// a terminal of its own: it opts in and reports itself as looked at when it attaches and when its window resizes.
+    public init(terminal: Session, readOnly: Bool = false, reconnect: Bool = true, sessionSwitching: Bool = true,
+                clientID: String? = nil, viewportOwnership: Bool = false) {
         self.terminal = terminal; self.readOnly = readOnly; self.reconnect = reconnect
         self.sessionSwitching = sessionSwitching; self.shortcuts = AttachInput(sessionSwitching: sessionSwitching)
+        self.clientID = clientID ?? "orc-" + UUID().uuidString
+        self.viewportOwnership = !readOnly && (clientID == nil || viewportOwnership)
+        self.reportsView = !readOnly && clientID == nil
     }
     public func run() async throws -> AttachExit {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { throw OrcError("Attach needs an interactive terminal. Run it in Ghostty, or use `orc list --json`.") }
@@ -91,6 +102,7 @@ public struct InputDecoder {
                 guard capabilities.contains("terminal.binary-stream.v1"), capabilities.contains("terminal.multiplex.v1") else {
                     throw OrcError("The runtime does not advertise terminal streaming with scrollback support.")
                 }
+                reportingView = reportsView && capabilities.contains("orc.viewport-ownership.v1")
                 // Reconnecting to a replaced process must require another explicit attach.
                 let current = try await SessionService().list()
                 guard let live = current.terminals.first(where: { $0.handle == terminal.handle }), live.connected,
@@ -152,7 +164,7 @@ public struct InputDecoder {
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
             source.setEventHandler { [weak self] in
                 guard let self else { return }
-                if number == SIGWINCH { Task { await self.resize() } }
+                if number == SIGWINCH { Task { await self.resize(); await self.reportView() } }
                 else { self.stop() }
             }
             source.resume(); signalSources.append(source)
@@ -185,9 +197,16 @@ public struct InputDecoder {
     }
     private func resize() async {
         guard !readOnly, let connection, let streamID else { return }
-        // Resize alone records viewer dimensions. ClaimViewport applies them to the PTY.
+        // Resize alone records viewer dimensions. ClaimViewport applies them to the PTY, or with viewport ownership,
+        // reports the viewer's size, which the PTY takes while this viewer owns the session.
         do { try await connection.send(TerminalFrame(opcode: 14, streamID: streamID, payload: jsonData(viewport))) }
         catch { disconnected(error) }
+    }
+    /// In a terminal of its own, attaching and resizing are the person looking at this viewer.
+    private func reportView() async {
+        guard reportingView, ready, let connection else { return }
+        _ = try? await connection.request("terminal.view", ["terminal": terminal.handle, "client": ["id": clientID],
+                                                            "shown": true, "attention": "strong"])
     }
     private func event(_ value: [String: Any]) {
         guard !stopping else { return }
@@ -198,10 +217,12 @@ public struct InputDecoder {
             streamID = 1
             Task {
                 do {
+                    var capabilities = ["desktopViewportClaims": 1, "writeUnavailable": 1]
+                    if viewportOwnership { capabilities["viewportOwnership"] = 1 }
                     try await connection.send(TerminalFrame(opcode: 9, streamID: 0, payload: jsonData([
                         "streamId": 1, "terminal": terminal.handle,
                         "client": ["id": clientID, "type": "desktop"], "viewport": viewport,
-                        "capabilities": ["desktopViewportClaims": 1, "writeUnavailable": 1]])))
+                        "capabilities": capabilities])))
                 } catch {
                     if self.connection === connection { disconnected(error); connection.close() }
                 }
@@ -257,7 +278,9 @@ public struct InputDecoder {
                 output("\u{1b}[?2026l")
                 snapshot.removeAll(); collectingSnapshot = false; ready = true
                 snapshotDeadline?.cancel(); snapshotDeadline = nil
-                Task { await resize() }
+                let attaching = !reportedAttach
+                reportedAttach = true
+                Task { await resize(); if attaching { await reportView() } }
                 if !requestedScrollback, let connection, let streamID {
                     requestedScrollback = true
                     scrollbackSnapshotPending = true

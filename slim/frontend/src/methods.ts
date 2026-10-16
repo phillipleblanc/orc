@@ -5,10 +5,10 @@ import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
 import { restartSession, type SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
-import type { StreamingHandler } from './websocket-server.ts'
+import type { StreamContext, StreamingHandler } from './websocket-server.ts'
 import { rowText } from './emulator.ts'
 import { loginEnvironment, userShell } from './login-environment.ts'
-import { RpcError, type Handlers } from './rpc-server.ts'
+import { RpcError, type CallContext, type Handlers } from './rpc-server.ts'
 import type { Projects } from './projects.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
@@ -16,12 +16,14 @@ import { checkpointSamples, type TerminalSession } from './terminal-session.ts'
 import { overallState, type ProgramState } from './program-status.ts'
 import type { PullRequestWatch } from './pull-requests/watch.ts'
 import { phoneViewer, type TerminalSizes } from './terminal-sizes.ts'
+import { LOCAL_DEVICE, viewportSize } from './multiplex.ts'
+import { onlyTerminalReplies } from './terminal-replies.ts'
 import type { WakeDirectory } from './wakes.ts'
 import type { NotificationQueue } from './notifications.ts'
 import { listMcpConfigs } from './mcp-configs.ts'
 
 export const RUNTIME_PROTOCOL_VERSION = 3
-export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1']
+export const CAPABILITIES = ['terminal.binary-stream.v1', 'terminal.multiplex.v1', 'orc.agents.v1', 'orc.viewport-ownership.v1']
 
 export type Runtime = {
   runtimeId: string
@@ -61,6 +63,11 @@ function terminalStatus(state: AgentState | undefined): string | null {
 /** A program's reported state (OSC 7501) in that vocabulary: blocked and failed programs wait on their person. */
 function programStatus(state: ProgramState | null): string | null {
   return state === 'working' ? 'working' : state === 'blocked' || state === 'error' ? 'permission' : state === 'done' || state === 'idle' ? 'idle' : null
+}
+
+/** The device grant a call came over, or the local socket's name for this host. */
+function deviceName(context: CallContext): string {
+  return (context as Partial<StreamContext>).device?.name ?? LOCAL_DEVICE
 }
 
 export function createHandlers(runtime: Runtime): Handlers {
@@ -226,11 +233,18 @@ export function createHandlers(runtime: Runtime): Handlers {
       const target = session(params.terminal)
       // Typing from a phone that views the session at the desktop's size fits it to the phone again.
       if (params.client?.type === 'mobile' && params.client.id) await sizes.phoneTyped(target, phoneViewer(context.connectionId, target.handle, String(params.client.id)))
-      if (params.claimViewport && params.viewport) {
-        const size = { cols: Number(params.viewport.cols), rows: Number(params.viewport.rows) }
-        await (params.client?.type === 'mobile' ? target.resize(size.cols, size.rows) : sizes.desktopClaim(target, size, 'desktop typing'))
-      }
       const text = typeof params.text === 'string' ? params.text : ''
+      const size = params.claimViewport ? viewportSize(params.viewport) : null
+      if (size && params.client?.type === 'mobile') await target.resize(size.cols, size.rows)
+      else if (size) {
+        // Typing is looking: strong attention to a desktop viewer. A terminal answering a program's query is not.
+        const typed = !onlyTerminalReplies(text)
+        const viewer = typeof params.client?.id === 'string' && params.client.id ? params.client.id : `send:${context.connectionId}`
+        if (sizes.followsOwnership(target, viewer)) {
+          await sizes.desktopSize(target, viewer, size)
+          if (typed) await sizes.desktopAttention(target, viewer, 'strong')
+        } else if (typed) await sizes.legacyClaim(target, viewer, size, deviceName(context))
+      }
       if (!target.connected) return { send: { handle: target.handle, accepted: false, bytesWritten: 0 } }
       if (text) target.input(text)
       if (params.enter) {
@@ -238,6 +252,20 @@ export function createHandlers(runtime: Runtime): Handlers {
         target.input('\r')
       }
       return { send: { handle: target.handle, accepted: true, bytesWritten: Buffer.byteLength(text) + (params.enter ? 1 : 0) } }
+    },
+
+    // What a desktop viewer that follows viewport ownership shows: whether it is on screen, and what the person did with it.
+    'terminal.view': async (params) => {
+      const target = session(params.terminal)
+      const viewer = typeof params.client?.id === 'string' && params.client.id ? params.client.id : null
+      if (!viewer) throw new RpcError('invalid_argument', 'client.id is required')
+      if (params.attention !== undefined && params.attention !== 'strong' && params.attention !== 'presence') throw new RpcError('invalid_argument', 'attention must be strong or presence')
+      if (params.shown !== undefined && typeof params.shown !== 'boolean') throw new RpcError('invalid_argument', 'shown must be true or false')
+      if (typeof params.shown === 'boolean') await sizes.desktopShown(target, viewer, params.shown)
+      if (params.attention) await sizes.desktopAttention(target, viewer, params.attention)
+      await target.caughtUp()
+      const owner = sizes.owner(target)
+      return { owner: owner?.clientId === viewer, cols: target.cols, rows: target.rows, ownerDevice: owner ? owner.device ?? LOCAL_DEVICE : null }
     },
 
     'terminal.close': async (params) => {
@@ -354,8 +382,10 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'slim.stats': () => ({ checkpoints: checkpointSamples }),
 
-    'slim.resize': async (params) => {
-      await sizes.desktopClaim(session(params.terminal), { cols: Number(params.cols), rows: Number(params.rows) }, 'slim.resize')
+    'slim.resize': async (params, context) => {
+      const size = viewportSize(params)
+      if (!size) throw new RpcError('invalid_argument', 'cols and rows must be a size a terminal can take')
+      await sizes.legacyClaim(session(params.terminal), 'slim.resize', size, deviceName(context))
       return {}
     },
 

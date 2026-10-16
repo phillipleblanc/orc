@@ -236,6 +236,8 @@ import COrcSupport
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
             let sessionSwitching = !flag("--no-session-switch")
+            // Orc.app names the viewer of each of its terminals and reports what is on screen for it.
+            let clientID = try value("--client-id"), viewportOwnership = flag("--viewport-ownership")
             guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME] [--read-only] [--no-reconnect]") }
             let herdr = HerdrAttach.current
             let herdrChild = ProcessInfo.processInfo.environment["ORC_HERDR_ATTACH_CHILD"] == "1"
@@ -280,7 +282,8 @@ import COrcSupport
                 bridge?.start()
                 let result: AttachExit
                 do {
-                    result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching).run()
+                    result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching,
+                                                      clientID: clientID, viewportOwnership: viewportOwnership).run()
                 } catch {
                     await bridge?.stop()
                     throw error

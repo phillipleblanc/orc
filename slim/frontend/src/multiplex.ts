@@ -1,22 +1,40 @@
 import type { SessionStore } from './session-store.ts'
 import type { Subscriber, TerminalSession } from './terminal-session.ts'
-import type { TerminalSizes } from './terminal-sizes.ts'
+import type { Size, TerminalSizes } from './terminal-sizes.ts'
 import type { StreamingHandler } from './websocket-server.ts'
 import { encodeFrame, jsonPayload, Opcode, textPayloads, type TerminalFrame } from './terminal-frames.ts'
 
 const MAX_SCROLLBACK_ROWS = 5000
+/** How viewers name a desktop that connected over the local socket, which has no device grant. */
+export const LOCAL_DEVICE = 'this host'
 
-type Stream = { session: TerminalSession; subscriber: Subscriber; stopFrames: () => void }
+type Stream = { session: TerminalSession; subscriber: Subscriber; stopFrames: () => void; viewer: string; followsOwnership: boolean }
 
 /**
  * `terminal.multiplex`: many terminal subscriptions over one connection. The client subscribes with a
  * binary Subscribe frame on stream 0; each subscription then receives a snapshot followed by its
  * output, and can claim the PTY size, request a snapshot with scrollback, send input, or unsubscribe.
+ * A subscription is a desktop viewer of its session (see `TerminalSizes`), named by its client id. One
+ * that opts into viewport ownership reports its size with ClaimViewport, and its Resized frames say
+ * whether it owns the session and which device does.
  */
 export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): StreamingHandler {
   return (_params, context, emit) => new Promise<void>((resolve) => {
     const streams = new Map<number, Stream>()
     const send = (opcode: number, streamId: number, seq: number, payload?: Uint8Array) => context.sendBinary(encodeFrame(opcode, streamId, seq, payload))
+    const device = context.device.name
+    const resized = (streamId: number, stream: Pick<Stream, 'session' | 'viewer' | 'followsOwnership'>, cols: number, rows: number) => {
+      const owner = stream.followsOwnership ? sizes.owner(stream.session) : undefined
+      send(Opcode.Resized, streamId, 0, jsonPayload(owner === undefined ? { cols, rows }
+        : { cols, rows, owner: owner?.clientId === stream.viewer, ...(owner ? { ownerDevice: owner.device ?? LOCAL_DEVICE } : {}) }))
+    }
+    // Opted-in viewers learn of a new owner even when the PTY keeps its size.
+    const ownerChanged = (session: TerminalSession) => {
+      for (const [streamId, stream] of streams) {
+        if (stream.session === session && stream.followsOwnership) resized(streamId, stream, session.cols, session.rows)
+      }
+    }
+    sizes.on('owner', ownerChanged)
 
     const stop = (streamId: number) => {
       const stream = streams.get(streamId)
@@ -24,10 +42,11 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
       streams.delete(streamId)
       stream.session.unsubscribe(stream.subscriber)
       stream.stopFrames()
+      void sizes.desktopUnsubscribed(stream.session, stream.viewer).catch(() => {})
     }
 
     const subscribe = async (frame: TerminalFrame) => {
-      let request: { streamId?: number; terminal?: string; client?: { type?: string } }
+      let request: { streamId?: number; terminal?: string; client?: { id?: unknown; type?: string }; viewport?: unknown; capabilities?: { viewportOwnership?: unknown } }
       try { request = JSON.parse(frame.payload.toString('utf8')) } catch { return }
       const streamId = Number(request.streamId)
       if (!Number.isInteger(streamId) || streamId <= 0 || streams.has(streamId)) return
@@ -36,6 +55,9 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
         send(Opcode.Error, streamId, 0, jsonPayload({ code: 'terminal_not_found', message: `no running terminal ${request.terminal}` }))
         return
       }
+      const clientId = typeof request.client?.id === 'string' && request.client.id ? request.client.id : null
+      const followsOwnership = clientId !== null && request.capabilities?.viewportOwnership === 1
+      const viewer = clientId ?? `${context.connectionId}:${streamId}`
       let subscribed = false
       const subscriber: Subscriber = {
         snapshot: (screen) => {
@@ -51,7 +73,7 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
           send(Opcode.SnapshotEnd, streamId, screen.offset)
         },
         output: (bytes, offset) => send(Opcode.Output, streamId, offset, bytes),
-        resized: (cols, rows) => send(Opcode.Resized, streamId, 0, jsonPayload({ cols, rows })),
+        resized: (cols, rows) => resized(streamId, { session, viewer, followsOwnership }, cols, rows),
         exited: () => {
           emit({ type: 'end', streamId, terminal: session.handle })
           stop(streamId)
@@ -66,7 +88,7 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
             break
           case Opcode.ClaimViewport: {
             const size = parseSize(slot.payload)
-            if (size) void sizes.desktopClaim(stream.session, size, 'the desktop terminal').catch(() => {})
+            if (size) void (stream.followsOwnership ? sizes.desktopSize(stream.session, stream.viewer, size) : sizes.legacyClaim(stream.session, stream.viewer, size, device)).catch(() => {})
             break
           }
           case Opcode.SnapshotRequest: {
@@ -79,7 +101,8 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
             break
         }
       })
-      streams.set(streamId, { session, subscriber, stopFrames })
+      streams.set(streamId, { session, subscriber, stopFrames, viewer, followsOwnership })
+      void sizes.desktopSubscribed(session, viewer, { legacy: !followsOwnership, device, size: viewportSize(request.viewport) }).catch(() => {})
       // Desktop clients receive the viewport first and ask for scrollback once it is on screen.
       await session.subscribe(subscriber, 0)
     }
@@ -89,6 +112,7 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
     })
     context.onClose(() => {
       stopControl()
+      sizes.off('owner', ownerChanged)
       for (const streamId of [...streams.keys()]) stop(streamId)
       resolve()
     })
@@ -105,8 +129,13 @@ function parseObject(payload: Buffer): Record<string, unknown> {
   }
 }
 
-function parseSize(payload: Buffer): { cols: number; rows: number } | null {
-  const value = parseObject(payload)
+function parseSize(payload: Buffer): Size | null {
+  return viewportSize(parseObject(payload))
+}
+
+/** A desktop viewport, or null unless it is a size a PTY can take. */
+export function viewportSize(viewport: unknown): Size | null {
+  const value = (viewport && typeof viewport === 'object' ? viewport : {}) as Record<string, unknown>
   const cols = Number(value.cols)
   const rows = Number(value.rows)
   return Number.isInteger(cols) && Number.isInteger(rows) && cols >= 1 && cols <= 1000 && rows >= 1 && rows <= 500 ? { cols, rows } : null

@@ -87,9 +87,11 @@ struct RuntimeStarter {
         (try? Pairing.load(from: config, profile: profile)) != nil
     }
 
-    /// Orc's own device grant, issued over the owner-only local socket.
+    /// Orc's own device grant, issued over the owner-only local socket. It is named after the Mac, which other
+    /// computers viewing a session name when this Mac sizes it.
     private func createAccess(_ connection: RuntimeSocket, timeout: Int) throws {
-        let result = try LocalRPC.exchange("slim.pairing.create", ["scope": "runtime", "name": "Orc"], connection: connection, timeout: timeout)
+        let name = Host.current().localizedName ?? "Orc"
+        let result = try LocalRPC.exchange("slim.pairing.create", ["scope": "runtime", "name": name], connection: connection, timeout: timeout)
         let pairing = try Pairing.parse(result["link"] as? String ?? "")
         let endpoint = URLComponents(string: pairing.endpoint)
         guard pairing.scope == "runtime", endpoint?.host == "127.0.0.1",

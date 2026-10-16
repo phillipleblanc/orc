@@ -318,6 +318,36 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   the bundled Node.js with the bundled holder. Orc then requests its own runtime-scope grant with
   `slim.pairing.create` over the local socket.
 
+## Desktop viewers
+
+Each `terminal.multiplex` subscription is a desktop viewer of its session, named by the `client.id` of
+its Subscribe. A session's PTY takes the size of one desktop viewer, its owner: the shown viewer the
+person is looking at (`terminal-sizes.ts`).
+
+- **Shown:** a viewer is shown while its terminal is on screen. Hidden viewers never size the PTY.
+- **Attention:** strong attention (typing, clicking or scrolling in the terminal, selecting its
+  session, bringing its window to the front, resizing it) to a shown viewer makes it the owner at once.
+  Presence (input anywhere on its device while it is shown) makes it the owner once the owner has had
+  no attention for 3 seconds. An owner that is hidden or unsubscribes hands over to the shown viewer
+  with the most recent attention; with none, the PTY keeps its size.
+- **Opting in:** a Subscribe with `capabilities.viewportOwnership: 1` follows this rule (capability
+  `orc.viewport-ownership.v1`). Its ClaimViewport (opcode 14) reports its size, which the PTY takes
+  while it owns the session, and a `terminal.send` with `claimViewport` and `viewport` is strong
+  attention with its size. A new viewer starts shown. Other viewers are legacy: each claim is strong
+  attention to a shown viewer at the claimed size, so the last claim wins as before. Text that is only a
+  terminal's replies to a program's queries, or its focus reports, is neither attention nor a claim
+  (`terminal-replies.ts`), since every viewer's terminal sends them.
+- **`terminal.view`** (`terminal`, `client.id`, optional `shown` and `attention`: `strong` or
+  `presence`) reports a viewer's state; it may come before the viewer subscribes, and is kept for
+  60 seconds without a subscription, or until the session exits. It returns `owner` (whether this
+  viewer owns the session), the PTY's `cols` and `rows`, and `ownerDevice`, the owner's device grant
+  name (`this host` over the local socket), or null. It is served on the local socket and to
+  runtime-scope devices; errors are `not_found` and `invalid_argument`.
+- **Resized** (opcode 5) frames to an opted-in viewer add `owner` and `ownerDevice`, and are also sent
+  when the owner changes without a resize.
+
+Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
+
 ## Phones
 
 The unmodified Orca mobile app pairs with this runtime and shows its sessions.
@@ -338,10 +368,10 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
   `omp`, the transcript format the app can render.
 - **Terminal view:** `terminal.subscribe` with a mobile viewport resizes the PTY to it (20–240 columns,
   8–120 rows). A phone viewing a session wins over desktops: the most recent phone's size applies, and
-  a desktop's size (its window resizing, or its typing claiming the size) waits. 300 ms after the last
-  phone leaves, the latest desktop size returns, or the size from before the first phone. The terminal
-  menu's **Switch to Desktop** (`terminal.setDisplayMode`) shows the session at the desktop's size, which
-  desktops then set freely, until **Switch to Phone**, typing from the phone, or the last phone leaving.
+  the [desktop owner's](#desktop-viewers) size waits. 300 ms after the last phone leaves, the desktop
+  owner's current size returns, or the size from before the first phone. The terminal
+  menu's **Switch to Desktop** (`terminal.setDisplayMode`) shows the session at the desktop owner's size,
+  as it changes, until **Switch to Phone**, typing from the phone, or the last phone leaving.
   Output frames end on
   UTF-8 character boundaries because the app decodes each frame on its own.
 - **Chat view:** `nativeChat.*` decodes Claude, Codex and Pi transcripts into Orca's message shape
