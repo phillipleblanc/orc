@@ -14,6 +14,10 @@ drives them.
 | `tests/` | Protocol, attach and model tests against an in-process fake runtime |
 | `scripts/bootstrap-xterm.ps1` | Fetches the checksum-pinned xterm.js packages; the app build runs it when they are missing |
 
+The runtime and Orc.app changes that remote desktops need (viewport ownership between screens, pairing computers in
+Orc.app, briefs and usage over the WebSocket, notifications for more than one desktop, host files) are planned in
+[docs/plans/remote-desktops.md](../docs/plans/remote-desktops.md).
+
 ## Build and test
 
 Requires Windows 10 1809 or later and the .NET 10 SDK. The WebView2 runtime ships with Windows 11.
