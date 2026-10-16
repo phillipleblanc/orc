@@ -99,24 +99,60 @@ function create(id) {
     post({ type: 'input', id, data });
   });
   term.onResize(({ cols, rows }) => { if (id === visibleId) post({ type: 'size', id, cols, rows }); });
-  // Ctrl+Shift+C / Ctrl+Shift+V copy and paste; plain Ctrl+C and Ctrl+V belong to the program.
+
+  // Windows' clipboard keys, as Windows Terminal binds them: Ctrl+C copies a selection and otherwise stays ^C for the
+  // program; Ctrl+V pastes this PC's clipboard (the host's ^V would read the host's); Ctrl+Shift+C/V and
+  // Ctrl+Insert/Shift+Insert too. Shift+drag selects even while a program tracks the mouse.
+  const copySelection = () => {
+    if (!term.hasSelection()) return false;
+    post({ type: 'copy', id, text: term.getSelection() });
+    term.clearSelection();
+    return true;
+  };
+  const consume = (event) => { event.preventDefault(); event.stopPropagation(); return false; };
   term.attachCustomKeyEventHandler((event) => {
-    if (event.type !== 'keydown' || !event.ctrlKey || !event.shiftKey || event.altKey) return true;
-    if (event.code === 'KeyC') {
-      const selection = term.getSelection();
-      if (selection) post({ type: 'copy', id, text: selection });
-      return false;
+    if (event.type !== 'keydown' || event.altKey || event.metaKey) return true;
+    const ctrl = event.ctrlKey;
+    if (ctrl && event.code === 'KeyC' && (event.shiftKey || term.hasSelection())) {
+      copySelection();
+      return consume(event);
     }
-    if (event.code === 'KeyV') {
+    if (ctrl && !event.shiftKey && event.code === 'Insert' && term.hasSelection()) {
+      copySelection();
+      return consume(event);
+    }
+    if ((ctrl && event.code === 'KeyV') || (event.shiftKey && !ctrl && event.code === 'Insert')) {
       post({ type: 'paste', id });
-      return false;
+      return consume(event);
     }
     // The window's shortcuts, which WebView2 would otherwise keep from it.
-    if (event.code === 'KeyN') {
+    if (ctrl && event.shiftKey && event.code === 'KeyN') {
       post({ type: 'command', name: 'new-session' });
-      return false;
+      return consume(event);
     }
     return true;
+  });
+
+  // Programs copy with OSC 52 (Claude Code's selections, tmux, Neovim). Copies go to the Windows clipboard; reading it
+  // ("?") is refused, so a program on the host cannot read this PC's clipboard behind your back.
+  term.parser.registerOscHandler(52, (data) => {
+    const payload = data.slice(data.indexOf(';') + 1);
+    if (id !== visibleId || payload === '?' || payload.length === 0 || payload.length > 1 << 20) return true;
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)));
+      if (text) post({ type: 'copy', id, text });
+    } catch {
+      // Not base64: nothing to copy.
+    }
+    return true;
+  });
+
+  // Right-click opens Copy / Paste / Select All, unless the program tracks the mouse (then the click is its, and
+  // Shift+right-click opens the menu).
+  element.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if (term.modes.mouseTrackingMode !== 'none' && !event.shiftKey) return;
+    post({ type: 'menu', id, x: event.clientX, y: event.clientY, selection: term.getSelection() });
   });
   terminals.set(id, { ...entry, element });
 }
@@ -163,6 +199,11 @@ function handle(item) {
       break;
     case 'paste':
       term.paste(item.text);
+      term.focus();
+      break;
+    case 'select-all':
+      term.selectAll();
+      term.focus();
       break;
     case 'ended':
       term.write(`\r\n\x1b[0;2m${item.text}\x1b[0m\r\n`);

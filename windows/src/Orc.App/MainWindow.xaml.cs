@@ -764,12 +764,13 @@ public sealed partial class MainWindow : Window
                 if (message["name"]?.ToString() == "new-session") _ = NewSessionAsync(null);
                 break;
             case "copy":
-                var package = new DataPackage();
-                package.SetText(message["text"]?.GetValue<string>() ?? "");
-                Clipboard.SetContent(package);
+                Copy(message["text"]?.GetValue<string>() ?? "");
                 break;
             case "paste":
-                if (terminal is not null) _ = PasteAsync(terminal.Surface);
+                if (shown) _ = PasteAsync(terminal!);
+                break;
+            case "menu":
+                if (shown) ShowTerminalMenu(terminal!, message);
                 break;
             case "diag":
                 if (diagnostics) DiagnosticsLog.Append(message);
@@ -779,11 +780,40 @@ public sealed partial class MainWindow : Window
 
     private static TerminalSize ReadSize(JsonObject message) => new(message["cols"]!.GetValue<int>(), message["rows"]!.GetValue<int>());
 
-    private static async Task PasteAsync(XtermSurface surface)
+    private static void Copy(string text)
+    {
+        if (text.Length == 0) return;
+        var package = new DataPackage();
+        package.SetText(text);
+        Clipboard.SetContent(package);
+        // Keep it on the clipboard after the app exits.
+        Clipboard.Flush();
+    }
+
+    private async Task PasteAsync(Attached terminal)
     {
         var content = Clipboard.GetContent();
-        if (!content.Contains(StandardDataFormats.Text)) return;
-        // xterm.js wraps it in bracketed paste when the program asked for that.
-        surface.Post(new JsonObject { ["type"] = "paste", ["text"] = await content.GetTextAsync() });
+        if (content.Contains(StandardDataFormats.Text))
+        {
+            // xterm.js wraps it in bracketed paste when the program asked for that.
+            terminal.Surface.Post(new JsonObject { ["type"] = "paste", ["text"] = await content.GetTextAsync() });
+            return;
+        }
+        if (content.Contains(StandardDataFormats.Bitmap) || content.Contains(StandardDataFormats.StorageItems))
+            SetNotice(terminal.Session.Handle, new Notice(InfoBarSeverity.Informational, "Can't paste that here yet",
+                "Images and files on this PC can't be sent to the host's terminal yet. Text pastes work."));
+    }
+
+    /// <summary>The terminal's right-click menu: Copy, Paste, Select All.</summary>
+    private void ShowTerminalMenu(Attached terminal, JsonObject message)
+    {
+        var selection = message["selection"]?.GetValue<string>() ?? "";
+        var menu = new MenuFlyout();
+        menu.Items.Add(MenuItem("Copy", "", () => Copy(selection), "Ctrl+C", selection.Length > 0));
+        menu.Items.Add(MenuItem("Paste", "", () => _ = PasteAsync(terminal), "Ctrl+V"));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem("Select All", "", () => terminal.Surface.Post(new JsonObject { ["type"] = "select-all" })));
+        var point = new Windows.Foundation.Point(message["x"]?.GetValue<double>() ?? 0, message["y"]?.GetValue<double>() ?? 0);
+        menu.ShowAt(Web, point);
     }
 }

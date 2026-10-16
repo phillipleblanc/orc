@@ -88,3 +88,10 @@ so there Shift+Enter arrives as Enter.
 
 Typing claims the session's size for this window, as Orc.app does on the Mac, so the Mac's view of that session
 reflows to it. A read-only attach neither types nor resizes.
+
+The clipboard works as in Windows Terminal: Ctrl+C copies a selection and is otherwise ^C for the program, Ctrl+V
+pastes this PC's clipboard, and Ctrl+Shift+C/V and Ctrl+Insert/Shift+Insert work too. Programs that track the mouse,
+such as Claude Code, get the drag; hold Shift to select instead. Programs that copy with OSC 52 put text on the Windows
+clipboard; requests to read it are refused. Right-click opens Copy, Paste and Select All (Shift+right-click while a
+program tracks the mouse). Pasting images or files needs the host's attachment support
+([plan](../docs/plans/remote-desktops.md#5-host-data-for-remote-desktops)).
