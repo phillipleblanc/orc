@@ -1,11 +1,20 @@
 // The terminal surfaces: one xterm.js 6.1 terminal per attached session (the build the runtime's @xterm/headless
-// matches), with the kitty keyboard protocol on. Only the shown terminal is fitted to the pane and reports keys and
-// size; hidden ones keep their screen and scrollback. The host (MainWindow) owns the Orc protocol.
+// matches), with the kitty keyboard protocol on. Only the shown terminal reports keys and the size that fits the pane;
+// hidden ones keep their screen and scrollback. The host (MainWindow) owns the Orc protocol.
+//
+// Each terminal is drawn at its session's PTY size, so the host's output lays out as it was written. While this window
+// owns the session that is the size that fits the pane. While another screen does, the terminal sits in the pane at
+// that screen's size, its font made smaller when the size does not fit.
 'use strict';
 
 const host = window.chrome.webview;
 const post = (message) => host.postMessage(message);
 const container = document.getElementById('terminals');
+
+const BASE_FONT = 14;
+const MIN_FONT = 7;
+// xterm.js reserves this much for its scrollbar at the right of the pane.
+const SCROLLBAR = 14;
 
 // GitHub Dark, the Mac app's default without a Ghostty config.
 const theme = {
@@ -20,7 +29,7 @@ const theme = {
 const options = {
   allowProposedApi: true,
   fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
-  fontSize: 14,
+  fontSize: BASE_FONT,
   scrollback: 10000,
   cursorBlink: true,
   theme,
@@ -30,6 +39,10 @@ const options = {
 
 const terminals = new Map();
 let visibleId = null;
+// A cell at the base font, in CSS pixels, and the size that fits the pane at it: what this window asks sessions for.
+let baseCell = null;
+let fitted = null;
+let attentionAt = 0;
 
 // With ORC_DIAGNOSTICS=1 the host loads this page with ?diagnostics and logs what each wheel burst did:
 // the buffer, the mouse mode, and the reports or keys it produced (%LOCALAPPDATA%\Orc\logs\terminal.log).
@@ -62,12 +75,10 @@ if (diagnostics) {
 
 function open(element) {
   const term = new Terminal(options);
-  const fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.open(element);
-  const entry = { term, fit, renderer: 'dom' };
+  const entry = { term, element, renderer: 'dom', pty: null, queue: [], writing: 0, waiting: false };
   try {
     const webgl = new WebglAddon.WebglAddon();
     webgl.onContextLoss(() => { webgl.dispose(); entry.renderer = 'dom'; });
@@ -76,8 +87,54 @@ function open(element) {
   } catch {
     // The DOM renderer draws instead.
   }
-  fit.fit();
+  measure(term);
+  layout(entry);
   return entry;
+}
+
+const cellOf = (term) => {
+  const cell = term.dimensions?.css.cell;
+  return cell && cell.width > 0 && cell.height > 0 ? cell : null;
+};
+
+// Remembers the cell size of a terminal drawn at the base font, and with it the size that fits the pane.
+function measure(term) {
+  const cell = term?.options.fontSize === BASE_FONT ? cellOf(term) : null;
+  if (cell) baseCell = { width: cell.width, height: cell.height };
+  if (!baseCell) return;
+  fitted = {
+    cols: Math.max(2, Math.floor((container.clientWidth - SCROLLBAR) / baseCell.width)),
+    rows: Math.max(1, Math.floor(container.clientHeight / baseCell.height))
+  };
+}
+
+// Draws the terminal at its PTY's size (the size that fits, until the host says), at the base font if that fits the
+// pane and smaller if not.
+function layout(entry) {
+  const size = entry.pty ?? fitted;
+  if (!size || !baseCell) return;
+  const { term } = entry;
+  const width = container.clientWidth - SCROLLBAR;
+  const height = container.clientHeight;
+  const ratio = Math.min(1, width / (size.cols * baseCell.width), height / (size.rows * baseCell.height));
+  let font = ratio >= 1 ? BASE_FONT : Math.max(MIN_FONT, Math.floor(BASE_FONT * ratio * 2) / 2);
+  if (term.options.fontSize !== font) term.options.fontSize = font;
+  if (term.cols !== size.cols || term.rows !== size.rows) term.resize(size.cols, size.rows);
+  // Cells round to device pixels, so a smaller font is not always proportionally smaller: step down until it fits.
+  for (let cell = cellOf(term); cell && font > MIN_FONT && (size.cols * cell.width > width + 0.5 || size.rows * cell.height > height + 0.5); cell = cellOf(term)) {
+    term.options.fontSize = font = Math.max(MIN_FONT, font - 0.5);
+  }
+  measure(term);
+  // Outline a terminal sized for another screen, so its edge shows where the session's lines end.
+  entry.element.classList.toggle('foreign', Boolean(fitted && (size.cols !== fitted.cols || size.rows !== fitted.rows)));
+}
+
+// Clicking or scrolling in the shown terminal is the person using this window: it takes the session's size.
+function attention(id) {
+  const now = performance.now();
+  if (id !== visibleId || now - attentionAt < 250) return;
+  attentionAt = now;
+  post({ type: 'attention', id });
 }
 
 function create(id) {
@@ -88,6 +145,8 @@ function create(id) {
   container.appendChild(element);
   const entry = open(element);
   const { term } = entry;
+  element.addEventListener('pointerdown', () => attention(id), { capture: true });
+  element.addEventListener('wheel', () => attention(id), { capture: true, passive: true });
   term.onData((data) => {
     if (id !== visibleId) return;
     if (wheel) {
@@ -98,7 +157,6 @@ function create(id) {
     }
     post({ type: 'input', id, data });
   });
-  term.onResize(({ cols, rows }) => { if (id === visibleId) post({ type: 'size', id, cols, rows }); });
 
   // Windows' clipboard keys, as Windows Terminal binds them: Ctrl+C copies a selection and otherwise stays ^C for the
   // program; Ctrl+V pastes this PC's clipboard (the host's ^V would read the host's); Ctrl+Shift+C/V and
@@ -154,7 +212,7 @@ function create(id) {
     if (term.modes.mouseTrackingMode !== 'none' && !event.shiftKey) return;
     post({ type: 'menu', id, x: event.clientX, y: event.clientY, selection: term.getSelection() });
   });
-  terminals.set(id, { ...entry, element });
+  terminals.set(id, entry);
 }
 
 function show(id) {
@@ -162,15 +220,58 @@ function show(id) {
   for (const [key, entry] of terminals) entry.element.style.visibility = key === id ? 'visible' : 'hidden';
   const entry = terminals.get(id);
   if (!entry) return;
-  entry.fit.fit();
+  layout(entry);
   entry.term.focus();
-  post({ type: 'shown', id, cols: entry.term.cols, rows: entry.term.rows });
+  if (fitted) post({ type: 'shown', id, cols: fitted.cols, rows: fitted.rows });
   report('shown');
+}
+
+// A terminal's output and the steps between it, in order. xterm.js parses writes later, so a step waits until the
+// writes before it are parsed and holds the ones after it. It runs outside xterm.js's write callbacks: resizing inside
+// one makes xterm.js parse that write again and drop the ones after it.
+function enqueue(entry, op) {
+  entry.queue.push(op);
+  pump(entry);
+}
+
+function pump(entry) {
+  while (entry.queue.length > 0 && !entry.waiting) {
+    const op = entry.queue[0];
+    if (typeof op === 'function') {
+      if (entry.writing > 0) {
+        entry.waiting = true;
+        return;
+      }
+      entry.queue.shift();
+      op();
+      continue;
+    }
+    entry.queue.shift();
+    if (op.length === 0) continue;
+    entry.writing++;
+    entry.term.write(op, () => {
+      if (--entry.writing === 0 && entry.waiting) {
+        entry.waiting = false;
+        setTimeout(() => pump(entry));
+      }
+    });
+  }
+}
+
+// The PTY takes a new size from here on in the terminal's output: output before it is laid out at the size it was
+// written for, and output after it at this one.
+function resizeTo(entry, cols, rows) {
+  enqueue(entry, () => {
+    entry.pty = { cols, rows };
+    layout(entry);
+  });
 }
 
 function dispose(id) {
   const entry = terminals.get(id);
   if (!entry) return;
+  entry.queue.length = 0;
+  entry.waiting = true;
   entry.term.dispose();
   entry.element.remove();
   terminals.delete(id);
@@ -188,14 +289,19 @@ function handle(item) {
   const { term } = entry;
   switch (item.type) {
     case 'reset':
-      // Through the write queue, so it lands after output that arrived first. RIS, then the runtime's serialized
-      // screen, then the keyboard flags the runtime reported (as `orc attach` restores them with CSI = flags u).
-      term.write('\x1bc');
-      term.write(decode(item.data), () => { if (item.id === visibleId) report('snapshot'); });
-      if (item.flags !== null && item.flags !== undefined) term.write(`\x1b[=${item.flags}u`);
+      // In order with the output that arrived first. RIS, the size the screen was serialized at, then the runtime's
+      // serialized screen, then the keyboard flags the runtime reported (as `orc attach` restores them with CSI = flags u).
+      enqueue(entry, '\x1bc');
+      if (item.cols > 0 && item.rows > 0) resizeTo(entry, item.cols, item.rows);
+      enqueue(entry, decode(item.data));
+      enqueue(entry, () => { if (item.id === visibleId) report('snapshot'); });
+      if (item.flags !== null && item.flags !== undefined) enqueue(entry, `\x1b[=${item.flags}u`);
       break;
     case 'output':
-      term.write(decode(item.data));
+      enqueue(entry, decode(item.data));
+      break;
+    case 'pty':
+      resizeTo(entry, item.cols, item.rows);
       break;
     case 'paste':
       term.paste(item.text);
@@ -206,7 +312,7 @@ function handle(item) {
       term.focus();
       break;
     case 'ended':
-      term.write(`\r\n\x1b[0;2m${item.text}\x1b[0m\r\n`);
+      enqueue(entry, `\r\n\x1b[0;2m${item.text}\x1b[0m\r\n`);
       break;
   }
 }
@@ -223,7 +329,13 @@ new ResizeObserver(() => {
   fitTimer = setTimeout(() => {
     // A pane collapsed to nothing (the host's page over it, a minimized window) must not shrink a session on the host.
     if (container.clientWidth < 80 || container.clientHeight < 40) return;
-    terminals.get(visibleId)?.fit.fit();
+    const before = fitted;
+    const entry = terminals.get(visibleId);
+    measure(entry?.term);
+    if (entry) layout(entry);
+    if (entry && fitted && (fitted.cols !== before?.cols || fitted.rows !== before?.rows)) {
+      post({ type: 'size', id: visibleId, cols: fitted.cols, rows: fitted.rows });
+    }
   }, 40);
 }).observe(container);
 
@@ -233,6 +345,6 @@ probe.className = 'term';
 probe.style.visibility = 'hidden';
 container.appendChild(probe);
 const measured = open(probe);
-post({ type: 'ready', cols: measured.term.cols, rows: measured.term.rows });
+post({ type: 'ready', cols: fitted?.cols ?? measured.term.cols, rows: fitted?.rows ?? measured.term.rows });
 measured.term.dispose();
 probe.remove();

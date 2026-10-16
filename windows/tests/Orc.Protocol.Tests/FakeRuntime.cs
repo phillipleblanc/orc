@@ -39,6 +39,17 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public volatile string DeviceScope = "runtime";
     /// <summary>WebSocket connections accepted so far.</summary>
     public int Connections;
+    /// <summary>Capabilities status.get reports besides terminal streaming.</summary>
+    public string[] Capabilities = ["orc.agents.v1"];
+    /// <summary>terminal.view requests, in order, and what they are answered with.</summary>
+    public ConcurrentQueue<string> Views { get; } = new();
+    public JsonObject ViewReply = new() { ["owner"] = false, ["cols"] = 120, ["rows"] = 40, ["ownerDevice"] = "Studio" };
+
+    /// <summary>Sends every subscribed viewer a Resized frame with <paramref name="payload"/>.</summary>
+    public async Task ResizedAsync(JsonObject payload)
+    {
+        foreach (var session in sessions) await session.ResizedAsync(payload);
+    }
 
     /// <summary>Drops every open connection, as a network blip or a runtime restart would.</summary>
     public void DropConnections()
@@ -145,6 +156,12 @@ internal sealed class FakeRuntime : IAsyncDisposable
             await StreamEventAsync(new JsonObject { ["type"] = "end", ["streamId"] = 1, ["terminal"] = Handle });
         }
 
+        public async Task ResizedAsync(JsonObject payload)
+        {
+            if (multiplexId is null || socket.State != WebSocketState.Open) return;
+            await FrameAsync(Opcode.Resized, 0, Encoding.UTF8.GetBytes(payload.ToJsonString()));
+        }
+
         private async Task OnRequestAsync(JsonObject request)
         {
             var id = request["id"]?.GetValue<string>();
@@ -158,8 +175,13 @@ internal sealed class FakeRuntime : IAsyncDisposable
                     {
                         ["runtimeId"] = RuntimeId, ["runtimeProtocolVersion"] = runtime.ProtocolVersion, ["hostPlatform"] = "darwin",
                         ["deviceScope"] = runtime.DeviceScope,
-                        ["capabilities"] = new JsonArray("terminal.binary-stream.v1", "terminal.multiplex.v1", "orc.agents.v1")
+                        ["capabilities"] = new JsonArray(new[] { "terminal.binary-stream.v1", "terminal.multiplex.v1" }.Concat(runtime.Capabilities)
+                            .Select(c => (JsonNode?)JsonValue.Create(c)).ToArray())
                     });
+                    break;
+                case "terminal.view":
+                    runtime.Views.Enqueue(parameters.ToJsonString());
+                    await ReplyAsync(id, (JsonObject)runtime.ViewReply.DeepClone());
                     break;
                 case "terminal.list":
                     await ReplyAsync(id, new JsonObject

@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
@@ -30,6 +31,7 @@ public sealed partial class MainWindow : Window
 {
     private const int MaxAttached = 10;
     private const string AppTitle = "Orc";
+    private static readonly TimeSpan PresenceInterval = TimeSpan.FromSeconds(2);
     private static readonly Color Green = Color.FromArgb(255, 0x3f, 0xb9, 0x50);
     private static readonly Color Red = Color.FromArgb(255, 0xf8, 0x51, 0x49);
 
@@ -59,6 +61,7 @@ public sealed partial class MainWindow : Window
     private bool pageReady;
     private bool applying;
     private bool dialogOpen;
+    private bool minimized;
     private string? visible;
     private string? pendingShow;
     private string? pendingSelect;
@@ -114,9 +117,29 @@ public sealed partial class MainWindow : Window
             else if (visible is not null) notices.Remove(visible);
             shownNotice = null;
         };
+        // The shown terminal's session takes this window's size while the person is using it here (slim/README.md,
+        // "Desktop viewers"): bringing the window forward is strong attention, minimizing hides the terminal, and input
+        // anywhere on this PC while it is on screen is presence, reported every two seconds.
+        Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) ReportViews(ViewAttention.Strong); };
+        AppWindow.Changed += (_, _) =>
+        {
+            var now = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+            if (now == minimized) return;
+            minimized = now;
+            ReportViews();
+        };
+        var presence = DispatcherQueue.CreateTimer();
+        presence.Interval = PresenceInterval;
+        presence.Tick += (_, _) =>
+        {
+            if (TerminalOnScreen && IdleTime < PresenceInterval) attached.GetValueOrDefault(visible!)?.Controller.ReportView(true, ViewAttention.Presence);
+        };
+        presence.Start();
+
         Closed += (_, _) =>
         {
             closing.Cancel();
+            presence.Stop();
             foreach (var terminal in attached.Values) terminal.Controller.Stop();
         };
         _ = InitializeAsync();
@@ -137,6 +160,27 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hwnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint Size;
+        public uint Time;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
+
+    /// <summary>How long since the last keyboard or pointer input anywhere on this PC.</summary>
+    private static TimeSpan IdleTime
+    {
+        get
+        {
+            var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+            return GetLastInputInfo(ref info) ? TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.Time)) : TimeSpan.MaxValue;
+        }
+    }
 
     private void AddListAccelerator(VirtualKey key, Action<SessionRow> action)
     {
@@ -279,6 +323,8 @@ public sealed partial class MainWindow : Window
         Hosts.ShowHost(pairing, monitor?.Status);
         Hosts.Visibility = Visibility.Visible;
         NoticeBar.IsOpen = false;
+        // The page covers the terminal, so this window no longer sizes its session.
+        ReportViews();
     }
 
     private void PairAgain()
@@ -292,6 +338,7 @@ public sealed partial class MainWindow : Window
         if (pairing is null) return;
         Hosts.Visibility = Visibility.Collapsed;
         ShowNotice();
+        ReportViews(ViewAttention.Strong);
         if (visible is not null) Web.Focus(FocusState.Programmatic);
         else SessionList.Focus(FocusState.Programmatic);
     }
@@ -436,6 +483,8 @@ public sealed partial class MainWindow : Window
         Title = $"{session.Name} – {AppTitle}";
         TitleText.Text = Title;
         ShowNotice();
+        // Selecting a session is turning to it: the others are hidden, and this one takes its session's size.
+        ReportViews(ViewAttention.Strong);
 
         // Keep the ten most recently shown terminals attached.
         while (recent.Count > MaxAttached)
@@ -468,6 +517,7 @@ public sealed partial class MainWindow : Window
         EmptyState.Visibility = Visibility.Visible;
         Web.Visibility = Visibility.Collapsed;
         ShowNotice();
+        ReportViews();
     }
 
     private Attached Attach(SessionInfo session)
@@ -476,12 +526,69 @@ public sealed partial class MainWindow : Window
         var pageId = $"{handle}#{++pageIds}";
         var surface = new XtermSurface(pageId, paneSize, Web, DispatcherQueue,
             note: message => SetNotice(handle, new Notice(InfoBarSeverity.Warning, session.Name, message)),
-            healthy: () => SetNotice(handle, null));
+            healthy: () => SetNotice(handle, null),
+            resized: _ => { if (handle == visible) ShowOwner(); });
         surface.Post(new JsonObject { ["type"] = "create" });
-        var terminal = new Attached(session, pageId, surface, new AttachController(pairing!, handle, session.IncarnationId, surface));
+        var controller = new AttachController(pairing!, handle, session.IncarnationId, surface);
+        // Hidden until Show says otherwise, so a terminal attached behind another never sizes its session.
+        controller.ReportView(false);
+        var terminal = new Attached(session, pageId, surface, controller);
         attached[handle] = terminal;
         _ = RunAsync(terminal);
         return terminal;
+    }
+
+    /// <summary>The shown terminal is on screen: selected, not covered by the Hosts page, in a window that is not minimized.</summary>
+    private bool TerminalOnScreen => visible is not null && attached.ContainsKey(visible) && Web.Visibility == Visibility.Visible
+        && Hosts.Visibility != Visibility.Visible && !minimized && !IsClosed;
+
+    /// <summary>
+    /// Tells the host which of this window's terminals is on screen, with any attention the person just gave it; hosts
+    /// without viewport ownership ignore it.
+    /// </summary>
+    private void ReportViews(ViewAttention? attention = null)
+    {
+        var onScreen = TerminalOnScreen;
+        foreach (var terminal in attached.Values)
+        {
+            var shown = onScreen && terminal.Session.Handle == visible;
+            terminal.Controller.ReportView(shown, shown ? attention : null);
+        }
+        ShowOwner();
+    }
+
+    /// <summary>Names the screen whose size the shown session has, while it is not this window.</summary>
+    private void ShowOwner()
+    {
+        var pty = visible is not null && TerminalOnScreen ? attached.GetValueOrDefault(visible)?.Surface.Pty : null;
+        if (pty is not { Owner: false, OwnerDevice: { } device })
+        {
+            OwnerNotice.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var name = DeviceName(device);
+        OwnerNoticeText.Text = $"Sized for {name} · Fit here";
+        ToolTipService.SetToolTip(OwnerNotice, $"This session is sized for {name}. Select to fit it to this window.");
+        AutomationProperties.SetName(OwnerNotice, $"This session is sized for {name}. Fit it to this window.");
+        OwnerNotice.Visibility = Visibility.Visible;
+    }
+
+    private void OnFitHere(object sender, RoutedEventArgs e)
+    {
+        if (visible is not null) attached.GetValueOrDefault(visible)?.Controller.ReportView(true, ViewAttention.Strong);
+        Web.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>
+    /// A device grant's name as people know it. Orc's own grant on the host was named "Orc" before it took the Mac's
+    /// name, and the host's own `orc attach` connects as "this host": both are the host itself.
+    /// </summary>
+    private string DeviceName(string device)
+    {
+        if (device is not ("Orc" or "this host")) return device;
+        var host = pairing?.EndpointUri.Host ?? "";
+        if (host.Length == 0 || Uri.CheckHostName(host) is UriHostNameType.IPv4 or UriHostNameType.IPv6) return "the host";
+        return host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ? host[..^".local".Length] : host;
     }
 
     private async Task RunAsync(Attached terminal)
@@ -498,6 +605,7 @@ public sealed partial class MainWindow : Window
         {
             attached.Remove(handle);
             recent.Remove(handle);
+            ShowOwner();
         }
         // After the terminal's last output: the surface's queue keeps the order.
         if (quietEnds.Remove(terminal) || !current)
@@ -753,8 +861,15 @@ public sealed partial class MainWindow : Window
             case "size":
                 if (!shown) break;
                 paneSize = ReadSize(message);
-                // Showing a terminal claims the session's size for this window, as resizing it does.
-                if (terminal!.Surface.SetSize(paneSize) || message["type"]?.ToString() == "shown") terminal.Controller.ViewportChanged();
+                // The size that fits the pane: a host with viewport ownership gives it to the session while this window
+                // owns it, and resizing the window is the person using it. Older hosts take every claim, so showing a
+                // terminal claims the session's size for this window, as resizing it does.
+                var resized = terminal!.Surface.SetSize(paneSize);
+                if (resized || message["type"]?.ToString() == "shown") terminal.Controller.ViewportChanged();
+                if (resized && message["type"]?.ToString() == "size") terminal.Controller.ReportView(TerminalOnScreen, ViewAttention.Strong);
+                break;
+            case "attention":
+                if (shown && TerminalOnScreen) terminal!.Controller.ReportView(true, ViewAttention.Strong);
                 break;
             case "input":
                 if (shown) terminal!.Controller.SendInput(message["data"]?.GetValue<string>() ?? "");

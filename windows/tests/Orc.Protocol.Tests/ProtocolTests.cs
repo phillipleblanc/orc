@@ -250,6 +250,73 @@ public sealed class AttachControllerTests
         Assert.Equal(AttachExit.Ended, await replaced.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task FollowsViewportOwnership()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [AttachController.ViewportOwnershipCapability] };
+        using var stop = new CancellationTokenSource();
+        var surface = new RecordingSurface();
+        var controller = new AttachController(runtime.Pairing(), FakeRuntime.Handle, "inc-1", surface);
+        // Attached behind another terminal: hidden before it subscribes.
+        controller.ReportView(false);
+        var run = controller.RunAsync(stop.Token);
+        Assert.True(await Eventually(() => runtime.SnapshotRequests == 1));
+        Assert.True(controller.FollowsOwnership);
+        var first = JsonNode.Parse(Assert.Single(runtime.Views))!;
+        Assert.Equal(controller.ClientId, first["client"]?["id"]?.ToString());
+        Assert.False(first["shown"]!.GetValue<bool>());
+        Assert.Null(first["attention"]);
+        Assert.True(runtime.Subscribes.TryPeek(out var subscribe));
+        Assert.Equal(1, JsonNode.Parse(subscribe)!["capabilities"]?["viewportOwnership"]?.GetValue<int>());
+        // The reply says who sizes the session.
+        Assert.True(await Eventually(() => surface.Sizes.Contains(new PtySize(120, 40, false, "Studio"))));
+
+        // Selected: shown, with strong attention, reported once however often it is repeated at once.
+        controller.ReportView(true, ViewAttention.Strong);
+        controller.ReportView(true, ViewAttention.Strong);
+        Assert.True(await Eventually(() => runtime.Views.Count == 2));
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        var selected = JsonNode.Parse(runtime.Views.Last())!;
+        Assert.Equal(2, runtime.Views.Count);
+        Assert.True(selected["shown"]!.GetValue<bool>());
+        Assert.Equal("strong", selected["attention"]?.ToString());
+
+        // Presence is reported as presence; a hidden terminal reports no attention.
+        controller.ReportView(true, ViewAttention.Presence);
+        Assert.True(await Eventually(() => runtime.Views.Count == 3 && runtime.Views.Last().Contains("\"presence\"")));
+        controller.ReportView(false, ViewAttention.Strong);
+        Assert.True(await Eventually(() => runtime.Views.Count == 4));
+        Assert.Null(JsonNode.Parse(runtime.Views.Last())!["attention"]);
+
+        // Resized frames carry the owner; the PTY's size follows the owner's.
+        await runtime.ResizedAsync(new JsonObject { ["cols"] = 100, ["rows"] = 30, ["owner"] = true, ["ownerDevice"] = "EPYC-WINDOWS" });
+        Assert.True(await Eventually(() => surface.Sizes.LastOrDefault() == new PtySize(100, 30, true, "EPYC-WINDOWS")));
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AnOlderHostGetsNoViewReports()
+    {
+        await using var runtime = new FakeRuntime();
+        using var stop = new CancellationTokenSource();
+        var surface = new RecordingSurface();
+        var controller = new AttachController(runtime.Pairing(), FakeRuntime.Handle, "inc-1", surface);
+        controller.ReportView(true, ViewAttention.Strong);
+        var run = controller.RunAsync(stop.Token);
+        Assert.True(await Eventually(() => runtime.SnapshotRequests == 1));
+        controller.ReportView(false);
+        Assert.False(controller.FollowsOwnership);
+        Assert.True(runtime.Subscribes.TryPeek(out var subscribe));
+        Assert.Null(JsonNode.Parse(subscribe)!["capabilities"]?["viewportOwnership"]);
+        // Its Resized frames have the size alone.
+        await runtime.ResizedAsync(new JsonObject { ["cols"] = 90, ["rows"] = 20 });
+        Assert.True(await Eventually(() => surface.Sizes.Contains(new PtySize(90, 20))));
+        Assert.Empty(runtime.Views);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
     private static async Task<bool> Eventually(Func<bool> condition, int timeoutMs = 5000)
     {
         for (var waited = 0; waited < timeoutMs; waited += 20)
@@ -263,11 +330,14 @@ public sealed class AttachControllerTests
     private sealed class RecordingSurface : ITerminalSurface
     {
         private readonly StringBuilder output = new();
+        private readonly List<PtySize> sizes = [];
         public List<TerminalSnapshot> Resets { get; } = [];
         public TerminalSize Size { get; set; } = new(100, 30);
         public string Text { get { lock (output) return output.ToString(); } }
+        public PtySize[] Sizes { get { lock (sizes) return sizes.ToArray(); } }
         public void Reset(TerminalSnapshot snapshot) { lock (Resets) Resets.Add(snapshot); }
         public void Write(ReadOnlySpan<byte> bytes) { lock (output) output.Append(Encoding.UTF8.GetString(bytes)); }
+        public void Resized(PtySize size) { lock (sizes) sizes.Add(size); }
         public void Note(string message) { }
     }
 }

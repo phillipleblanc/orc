@@ -86,8 +86,14 @@ The app's terminals receive the runtime's bytes directly, so the kitty keyboard 
 Code arrives as `ESC[13;2u`. `orcspike attach` runs inside a Windows console, and ConPTY does not pass that protocol,
 so there Shift+Enter arrives as Enter.
 
-Typing claims the session's size for this window, as Orc.app does on the Mac, so the Mac's view of that session
-reflows to it. A read-only attach neither types nor resizes.
+A session has the size of the screen you are looking at (slim/README.md, "Desktop viewers"). The app tells the host
+which terminal is on screen: the selected one, unless the window is minimized or the Host page covers it. Selecting a
+session, bringing the window forward, clicking, scrolling, typing or resizing gives the session this window's size
+at once; using the PC while its terminal is on screen takes it back once the other screen has been idle for 3
+seconds. Terminals are always drawn at the session's size, so while the Mac sizes a session it sits in the pane at
+the Mac's size, outlined, and with a smaller font when that size does not fit; "Sized for NAME · Fit here" gives it
+this window's size. Hosts without viewport ownership take every claim, so there typing and showing a terminal claim
+its size. A read-only attach neither types nor resizes.
 
 The clipboard works as in Windows Terminal: Ctrl+C copies a selection and is otherwise ^C for the program, Ctrl+V
 pastes this PC's clipboard, and Ctrl+Shift+C/V and Ctrl+Insert/Shift+Insert work too. Programs that track the mouse,

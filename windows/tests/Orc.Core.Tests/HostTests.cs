@@ -92,13 +92,14 @@ public sealed class HostMonitorTests
     [Fact]
     public async Task RetryingAnAbsentHostStaysUnreachable()
     {
-        var pairing = new Pairing($"ws://localhost:{FreePort()}", "token", RandomKey(), "runtime", null);
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        // 127.0.0.1 rather than localhost: Windows takes two seconds to refuse each loopback address it tries.
+        var pairing = new Pairing($"ws://127.0.0.1:{FreePort()}", "token", RandomKey(), "runtime", null);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var monitor = new HostMonitor(pairing, backoff: Quick);
         var states = new Recorder<HostStatus>();
         monitor.StatusChanged += states.Add;
         var run = monitor.RunAsync(stop.Token);
-        Assert.True(await Eventually(() => states.All.Count(s => s.State == HostState.Unreachable && s.NextTry is not null) >= 3));
+        Assert.True(await Eventually(() => states.All.Count(s => s.State == HostState.Unreachable && s.NextTry is not null) >= 3, timeoutMs: 15000));
         var afterFirstFailure = states.All.SkipWhile(s => s.State != HostState.Unreachable).ToList();
         Assert.DoesNotContain(afterFirstFailure, s => s.State == HostState.Connecting);
         stop.Cancel();
@@ -167,7 +168,8 @@ public sealed class HostPairingTests
     {
         await using var runtime = new FakeRuntime();
         var info = await HostPairing.VerifyAsync(runtime.Pairing(), TestContext.Current.CancellationToken);
-        Assert.Equal(new HostInfo("darwin", 3, "runtime"), info);
+        Assert.Equal(new HostInfo("darwin", 3, "runtime", new HashSet<string> { "terminal.binary-stream.v1", "terminal.multiplex.v1", "orc.agents.v1" }), info);
+        Assert.False(info.Has(HostInfo.ViewportOwnership));
     }
 
     [Fact]

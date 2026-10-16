@@ -4,9 +4,29 @@ using Orc.Protocol;
 namespace Orc.Core;
 
 /// <summary>What a host says about itself once this PC is connected to it.</summary>
-public sealed record HostInfo(string Platform, int ProtocolVersion, string Scope)
+public sealed record HostInfo(string Platform, int ProtocolVersion, string Scope, IReadOnlySet<string>? Capabilities = null)
 {
+    /// <summary>The host shows its sessions at the size of the screen the person is looking at (`terminal.view`).</summary>
+    public const string ViewportOwnership = "orc.viewport-ownership.v1";
+    /// <summary>`orc pair-computer` makes pairing links for computers.</summary>
+    public const string DesktopPairing = "orc.desktop-pairing.v1";
+    /// <summary>Briefs, pull requests and usage are served to this PC.</summary>
+    public const string OwnerMethods = "orc.owner-methods.v1";
+    /// <summary>`notify.since` reads `orc notify` messages through this PC's own cursor.</summary>
+    public const string NotifyCursor = "orc.notify-cursor.v1";
+    /// <summary>Notes, files, attachments, folders and the New Session defaults on the host's disk.</summary>
+    public const string HostData = "orc.host-data.v1";
+
     public string PlatformName => Platform switch { "darwin" => "macOS", "linux" => "Linux", "win32" => "Windows", _ => Platform };
+
+    public bool Has(string capability) => Capabilities?.Contains(capability) == true;
+
+    public bool Equals(HostInfo? other) => other is not null && Platform == other.Platform && ProtocolVersion == other.ProtocolVersion
+        && Scope == other.Scope && (Capabilities ?? EmptySet).SetEquals(other.Capabilities ?? EmptySet);
+
+    public override int GetHashCode() => HashCode.Combine(Platform, ProtocolVersion, Scope, Capabilities?.Count ?? 0);
+
+    private static readonly HashSet<string> EmptySet = [];
 }
 
 /// <summary>Pairing with a host: checking a link works before it is saved, and the command that makes one on the host.</summary>
@@ -27,13 +47,13 @@ public static class HostPairing
     {
         var status = await connection.RequestAsync("status.get");
         var version = status["runtimeProtocolVersion"] is JsonValue v && v.TryGetValue(out int number) ? number : 0;
-        var capabilities = (status["capabilities"] as JsonArray ?? new JsonArray()).Select(c => c?.ToString()).ToHashSet();
+        var capabilities = (status["capabilities"] as JsonArray ?? new JsonArray()).Select(c => c?.ToString()).OfType<string>().ToHashSet();
         if (version != RuntimeProtocolVersion || !RequiredCapabilities.All(capabilities.Contains))
             throw new HostIncompatibleException($"The host runs Orc protocol {version}; this app needs {RuntimeProtocolVersion}. Update Orc on the host or this app.");
         var scope = status["deviceScope"]?.ToString() ?? "runtime";
         if (scope != "runtime")
             throw new HostRefusedException("This pairing only lets a phone view and type. Pair with a link made for a computer.");
-        return new HostInfo(status["hostPlatform"]?.ToString() ?? "unknown", version, scope);
+        return new HostInfo(status["hostPlatform"]?.ToString() ?? "unknown", version, scope, capabilities);
     }
 
     /// <summary>

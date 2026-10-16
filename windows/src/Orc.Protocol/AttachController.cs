@@ -14,15 +14,31 @@ public readonly record struct TerminalSize(int Cols, int Rows)
 public sealed record TerminalSnapshot(byte[] Data, int Cols, int Rows, int? KittyKeyboardFlags, bool IsScrollbackReplay);
 
 /// <summary>
+/// The size of a session's PTY. For a viewer that follows viewport ownership, also whether this viewer owns the
+/// session (the PTY takes its size) and the device grant name of the viewer that does, if any; both are null from a
+/// host without viewport ownership.
+/// </summary>
+public sealed record PtySize(int Cols, int Rows, bool? Owner = null, string? OwnerDevice = null);
+
+/// <summary>
+/// What the person did with a shown viewer: <see cref="Strong"/> acts on it (selecting its session, bringing its window
+/// forward, clicking, scrolling, typing, resizing); <see cref="Presence"/> is input anywhere on this PC while it is shown.
+/// </summary>
+public enum ViewAttention { Strong, Presence }
+
+/// <summary>
 /// What draws a terminal. The attach controller owns the Orc protocol; a surface only shows bytes. The console spike
-/// implements it on a Windows console; the app will implement it on xterm.js (and possibly Ghostty later).
+/// implements it on a Windows console; the app implements it on xterm.js (and possibly Ghostty later).
 /// </summary>
 public interface ITerminalSurface
 {
+    /// <summary>The size this surface wants: the PTY takes it while this viewer owns the session.</summary>
     TerminalSize Size { get; }
-    /// <summary>Replace the screen with a snapshot, then restore the kitty keyboard flags it reports.</summary>
+    /// <summary>Replace the screen with a snapshot taken at its size, then restore the kitty keyboard flags it reports.</summary>
     void Reset(TerminalSnapshot snapshot);
     void Write(ReadOnlySpan<byte> output);
+    /// <summary>The PTY changed size, or its owner changed; output from here on is laid out for this size.</summary>
+    void Resized(PtySize size) { }
     void Note(string message);
 }
 
@@ -32,15 +48,29 @@ public enum AttachExit { Detached, Ended }
 /// Attaches one terminal over <c>terminal.multiplex</c>, as Sources/OrcKit/TerminalAttach.swift does: subscribe as a
 /// desktop client, replay the viewport snapshot, then ask once for 5000 rows of scrollback; type with
 /// <c>terminal.send</c> claiming the viewport; claim the size again on every resize; reconnect after drops.
+/// <para>
+/// On a host with viewport ownership (<c>orc.viewport-ownership.v1</c>) the viewer opts in: its claims only report its
+/// size, and <see cref="ReportView"/> tells the host whether it is on screen and what the person did with it
+/// (<c>terminal.view</c>), as Orc.app's TerminalViewReport does. The host gives the session the size of the shown
+/// viewer the person is using; <see cref="ITerminalSurface.Resized"/> says which one that is.
+/// </para>
 /// </summary>
 public sealed class AttachController(Pairing pairing, string handle, string? incarnationId, ITerminalSurface surface, bool readOnly = false)
 {
+    public const string ViewportOwnershipCapability = "orc.viewport-ownership.v1";
     private const int MaxQueuedInputBytes = 256 * 1024;
     private const int MaxSnapshotBytes = 8 * 1024 * 1024;
     private const int MaxAttempts = 5;
+    /// <summary>The same attention repeated this soon (scrolling, clicking) is reported once.</summary>
+    private static readonly TimeSpan RepeatInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly string clientId = "orc-win-" + Guid.NewGuid();
     private readonly object gate = new();
+
+    // What the person sees of this viewer, kept across reconnects, and what is still to be reported.
+    private bool viewShown = true;
+    private ViewAttention? pendingAttention;
+    private (ViewAttention Attention, long At)? lastAttention;
     private readonly Queue<string> inputQueue = new();
     private readonly SemaphoreSlim draining = new(1, 1);
     private readonly List<double> echoSamples = [];
@@ -58,11 +88,22 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
     private int snapshotCols, snapshotRows;
     private bool requestedScrollback, scrollbackPending, replayingScrollback;
     private int? activeKeyboardFlags;
+    private bool followsOwnership;
+    private bool viewing;
+    private bool? reportedShown;
+    private int resizedFrames;
+    private Task viewSending = Task.CompletedTask;
     private readonly MemoryStream snapshot = new();
     private readonly HashSet<byte> unknownOpcodes = [];
 
     private volatile bool stopping;
     private volatile bool ended;
+
+    /// <summary>This viewer's id on the host, the same across reconnects.</summary>
+    public string ClientId => clientId;
+
+    /// <summary>Whether the connected host gives the session the size of the viewer the person is looking at.</summary>
+    public bool FollowsOwnership { get { lock (gate) return followsOwnership; } }
 
     /// <summary>Milliseconds from sending input to the next output frame, one sample per keystroke burst.</summary>
     public IReadOnlyList<double> EchoSamples { get { lock (gate) return echoSamples.ToArray(); } }
@@ -89,6 +130,7 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
                 var capabilities = (status["capabilities"] as JsonArray)?.Select(value => value?.GetValue<string>()).ToHashSet() ?? [];
                 if (!capabilities.Contains("terminal.binary-stream.v1") || !capabilities.Contains("terminal.multiplex.v1"))
                     throw new InvalidOperationException("The runtime does not advertise terminal multiplex streaming.");
+                lock (gate) followsOwnership = !readOnly && capabilities.Contains(ViewportOwnershipCapability);
 
                 // Reattaching to a replaced process must take another explicit attach.
                 var list = await current.RequestAsync("terminal.list");
@@ -99,6 +141,15 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
                     ended = true;
                     throw new InvalidOperationException("The original terminal exited or was replaced. Run `orcspike list` to choose a session.");
                 }
+
+                // Before subscribing, so a hidden terminal that reconnects is hidden from the start and never sizes its session.
+                Task initialView;
+                lock (gate)
+                {
+                    viewing = followsOwnership;
+                    initialView = FlushView();
+                }
+                await initialView;
 
                 await current.SubscribeAsync("terminal.multiplex", new JsonObject(), "orc-stream", OnStreamEvent);
                 connectedOnce = true;
@@ -153,10 +204,76 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
         _ = DrainInputAsync();
     }
 
-    /// <summary>The surface changed size: claim the PTY for it, as a desktop does on SIGWINCH.</summary>
+    /// <summary>
+    /// The surface changed size: claim the PTY for it, as a desktop does on SIGWINCH. With viewport ownership this only
+    /// reports the size, which the PTY takes while this viewer owns the session.
+    /// </summary>
     public void ViewportChanged()
     {
         if (!readOnly) _ = SendFrameAsync(Opcode.ClaimViewport, () => Encoding.UTF8.GetBytes(surface.Size.ToJson().ToJsonString()));
+    }
+
+    /// <summary>
+    /// Whether the terminal is on screen, and any attention the person just gave it. Reported to the host in order
+    /// when it follows viewport ownership; kept until the next connection while there is none, and ignored by hosts
+    /// without it. A hidden viewer has no attention.
+    /// </summary>
+    public void ReportView(bool shown, ViewAttention? attention = null)
+    {
+        if (readOnly) return;
+        lock (gate)
+        {
+            var changed = shown != viewShown;
+            viewShown = shown;
+            if (!shown) attention = null;
+            var now = Stopwatch.GetTimestamp();
+            if (attention is { } repeated && !changed && lastAttention is { } last && last.Attention == repeated
+                && Stopwatch.GetElapsedTime(last.At, now) < RepeatInterval) attention = null;
+            if (attention is { } given)
+            {
+                lastAttention = (given, now);
+                if (pendingAttention != ViewAttention.Strong) pendingAttention = given;
+            }
+            else if (!shown) pendingAttention = null;
+            _ = FlushView();
+        }
+    }
+
+    /// <summary>Sends what the host has not heard of this viewer yet, after any report still in flight. Holds the gate.</summary>
+    private Task FlushView()
+    {
+        if (!viewing || stopping || connection is not { } current || (reportedShown == viewShown && pendingAttention is null)) return viewSending;
+        var request = new JsonObject
+        {
+            ["terminal"] = handle, ["client"] = new JsonObject { ["id"] = clientId }, ["shown"] = viewShown
+        };
+        if (pendingAttention is { } attention) request["attention"] = attention == ViewAttention.Strong ? "strong" : "presence";
+        reportedShown = viewShown;
+        pendingAttention = null;
+        return viewSending = SendViewAsync(viewSending, current, request, resizedFrames);
+    }
+
+    private async Task SendViewAsync(Task previous, RuntimeConnection current, JsonObject request, int framesAtSend)
+    {
+        await previous;
+        JsonObject result;
+        // A host restarting leaves the session's size as it was; the next connection reports the view again.
+        try { result = await current.RequestAsync("terminal.view", request, TimeSpan.FromSeconds(3)); }
+        catch (Exception) { return; }
+        lock (gate)
+        {
+            // A Resized frame that arrived meanwhile is at least as recent as this reply.
+            if (connection != current || resizedFrames != framesAtSend || stopping) return;
+            if (ReadPtySize(result) is { } size) surface.Resized(size);
+        }
+    }
+
+    private static PtySize? ReadPtySize(JsonObject value)
+    {
+        if (value["cols"] is not JsonValue c || !c.TryGetValue(out int cols) || value["rows"] is not JsonValue r || !r.TryGetValue(out int rows)) return null;
+        bool? owner = value["owner"] is JsonValue o && o.TryGetValue(out bool owns) ? owns : null;
+        var device = value["ownerDevice"] is JsonValue d && d.TryGetValue(out string? name) ? name : null;
+        return new PtySize(cols, rows, owner, device);
     }
 
     public void Stop()
@@ -251,7 +368,9 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
             ["streamId"] = 1, ["terminal"] = handle,
             ["client"] = new JsonObject { ["id"] = clientId, ["type"] = "desktop" },
             ["viewport"] = size.ToJson(),
-            ["capabilities"] = new JsonObject { ["desktopViewportClaims"] = 1, ["writeUnavailable"] = 1 }
+            ["capabilities"] = FollowsOwnership
+                ? new JsonObject { ["desktopViewportClaims"] = 1, ["writeUnavailable"] = 1, ["viewportOwnership"] = 1 }
+                : new JsonObject { ["desktopViewportClaims"] = 1, ["writeUnavailable"] = 1 }
         }.ToJsonString()), controlStream: true);
     }
 
@@ -316,7 +435,8 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
                         if (!replayingScrollback || activeKeyboardFlags is null) activeKeyboardFlags = snapshotKeyboardFlags;
                         surface.Reset(new TerminalSnapshot(snapshot.ToArray(), snapshotCols, snapshotRows, activeKeyboardFlags, replayingScrollback));
                         ready = true;
-                        // A read-only viewer never sizes the PTY, as `orc attach --read-only` doesn't.
+                        // A read-only viewer never sizes the PTY, as `orc attach --read-only` doesn't. With viewport
+                        // ownership this reports the size, which the PTY takes only while this viewer owns the session.
                         if (!readOnly) _ = SendFrameAsync(Opcode.ClaimViewport, () => Encoding.UTF8.GetBytes(surface.Size.ToJson().ToJsonString()));
                         if (!requestedScrollback)
                         {
@@ -328,6 +448,9 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
                         }
                         break;
                     case Opcode.Resized:
+                        resizedFrames++;
+                        if (JsonNode.Parse(frame.Payload.Span) is JsonObject resized && ReadPtySize(resized) is { } size) surface.Resized(size);
+                        break;
                     case Opcode.Metadata:
                         break;
                     case Opcode.Error:
@@ -362,6 +485,7 @@ public sealed class AttachController(Pairing pairing, string handle, string? inc
             requestedScrollback = false; scrollbackPending = false; replayingScrollback = false;
             activeKeyboardFlags = null; snapshotUnavailable = false; snapshotKeyboardFlags = null;
             echoStartedAt = 0;
+            followsOwnership = false; viewing = false; reportedShown = null; viewSending = Task.CompletedTask;
         }
     }
 

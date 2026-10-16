@@ -10,9 +10,6 @@ $packages = @(
     @{ Name = 'xterm';           Url = 'https://registry.npmjs.org/@xterm/xterm/-/xterm-6.1.0-beta.302.tgz';
        Integrity = 'yTlcgFDNe0ZE7U1RA1JX9oZkVOE8gKvLLh55tMHrS3/ZHkJCOWHlC0mFt3GYyWChSQ1XF+VY0iIme7ZktSaMRA==';
        Files = @('lib/xterm.js', 'css/xterm.css', 'LICENSE') },
-    @{ Name = 'addon-fit';       Url = 'https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.12.0-beta.299.tgz';
-       Integrity = 'LnofeCMLCf4e3eHN6qz27OdDgcNVh/L2oMqCHHgKraNTCGyKmf1BFWQczFF4PEg63LQvNFiItK62YOQhzDyHMw==';
-       Files = @('lib/addon-fit.js') },
     @{ Name = 'addon-unicode11'; Url = 'https://registry.npmjs.org/@xterm/addon-unicode11/-/addon-unicode11-0.10.0-beta.299.tgz';
        Integrity = 'BShRMWsKqoHs9fm0L96zjC4Du5L19bvmdZffm5LPKLbVWUAZj7cjjbpXuFU9FsITIJlvjTqeNfq1vulv60zRDA==';
        Files = @('lib/addon-unicode11.js') },

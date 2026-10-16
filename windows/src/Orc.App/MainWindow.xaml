@@ -118,6 +118,14 @@
                         <TextBlock x:Name="EmptyText" Text="Select a session" Foreground="#8b949e" HorizontalAlignment="Center"
                                    Style="{StaticResource BodyTextBlockStyle}" />
                     </StackPanel>
+                    <!-- Shown while another screen sizes the session; selecting it gives the session this window's size. -->
+                    <Button x:Name="OwnerNotice" Visibility="Collapsed" Click="OnFitHere" Margin="12" Padding="10,5"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE9A6;" FontSize="14" />
+                            <TextBlock x:Name="OwnerNoticeText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <local:HostsPage x:Name="Hosts" Visibility="Collapsed" />
                     <InfoBar x:Name="NoticeBar" Margin="12" VerticalAlignment="Top" IsOpen="False" IsClosable="True" />
                 </Grid>
