@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Orc.Protocol\Orc.Protocol.csproj" />
+    <ProjectReference Include="..\Orc.Core\Orc.Core.csproj" />
     <Content Include="web\**\*" Exclude="web\vendor\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

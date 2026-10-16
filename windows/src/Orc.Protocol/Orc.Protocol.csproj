@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Orc.Protocol.Tests" />
+    <!-- Its tests share the fake runtime, which holds a keypair the way the runtime does. -->
+    <InternalsVisibleTo Include="Orc.Core.Tests" />
   </ItemGroup>
 
   <ItemGroup>

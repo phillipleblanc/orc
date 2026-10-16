@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Orc.Protocol\Orc.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\Orc.Core\Orc.Core.csproj" />
   </ItemGroup>
 
 </Project>

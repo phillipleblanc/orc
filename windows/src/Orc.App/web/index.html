@@ -2,15 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Orc terminal</title>
+  <title>Orc terminals</title>
   <link rel="stylesheet" href="vendor/xterm.css">
   <style>
     html, body { margin: 0; height: 100%; background: #0d1117; overflow: hidden; }
-    #terminal { position: absolute; inset: 6px 4px 4px 8px; }
+    #terminals { position: absolute; inset: 6px 4px 4px 8px; }
+    .term { position: absolute; inset: 0; }
+    #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+             color: #6e7681; font: 14px "Segoe UI", sans-serif; }
   </style>
 </head>
 <body>
-  <div id="terminal"></div>
+  <div id="terminals"></div>
+  <div id="empty">Select a session</div>
   <script src="vendor/xterm.js"></script>
   <script src="vendor/addon-fit.js"></script>
   <script src="vendor/addon-unicode11.js"></script>

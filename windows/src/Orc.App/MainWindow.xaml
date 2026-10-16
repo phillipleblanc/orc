@@ -2,26 +2,67 @@
     x:Class="Orc.Win.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Orc for Windows (spike)">
+    Title="Orc">
 
-    <Grid Background="#0d1117">
+    <Grid RequestedTheme="Dark" Background="#0d1117">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="300" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Spacing="8" Padding="8" Background="#161b22">
-            <ComboBox x:Name="Sessions" MinWidth="360" PlaceholderText="Session on the host" />
-            <Button x:Name="AttachButton" Content="Attach" Click="OnAttachClick" />
-            <CheckBox x:Name="ReadOnlyBox" Content="Read-only" />
-            <Button x:Name="RefreshButton" Content="Refresh" Click="OnRefreshClick" />
-            <TextBlock x:Name="HostText" VerticalAlignment="Center" Foreground="#8b949e" />
-        </StackPanel>
+        <Grid Background="#010409" BorderBrush="#30363d" BorderThickness="0,0,1,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <StackPanel Padding="16,12,12,8" Spacing="2">
+                <TextBlock Text="Orc" FontSize="16" FontWeight="SemiBold" />
+                <TextBlock x:Name="HostText" FontSize="12" Foreground="#8b949e" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <ListView x:Name="SessionList" Grid.Row="1" SelectionMode="Single" SelectionChanged="OnSessionSelected">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="0,5" ColumnSpacing="8" ToolTipService.ToolTip="{Binding StatusLabel}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Width="12" Height="12" VerticalAlignment="Center">
+                                <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" Visibility="{Binding DotVisibility}" />
+                                <ProgressRing Width="12" Height="12" MinWidth="12" MinHeight="12" Foreground="#d29922"
+                                              IsActive="{Binding IsActive}" Visibility="{Binding RingVisibility}" />
+                                <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="#0d1117" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
+                            </Grid>
+                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Grid.Row="1" Text="{Binding Detail}" FontSize="12" Foreground="#8b949e"
+                                       TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+                <ListView.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" Foreground="#8b949e" />
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </ListView.GroupStyle>
+            </ListView>
+        </Grid>
 
-        <WebView2 x:Name="Web" Grid.Row="1" />
+        <WebView2 x:Name="Web" Grid.Column="1" />
 
-        <Grid Grid.Row="2" Padding="8,4" Background="#161b22" ColumnSpacing="16">
+        <Grid Grid.Row="1" Grid.ColumnSpan="2" Padding="12,4" Background="#161b22" ColumnSpacing="16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />

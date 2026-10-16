@@ -6,16 +6,19 @@ using Orc.Protocol;
 namespace Orc.Win;
 
 /// <summary>
-/// ITerminalSurface on xterm.js in WebView2. Calls arrive on the connection's thread; they are queued in order and
-/// posted to the page as one batch per dispatcher turn, with consecutive output merged.
+/// ITerminalSurface on one xterm.js terminal in the shared WebView2 page, addressed by the session's handle. Calls
+/// arrive on the connection's thread; they are queued in order and posted as one batch per dispatcher turn, with
+/// consecutive output merged.
 /// </summary>
-internal sealed class XtermSurface(WebView2 web, DispatcherQueue dispatcher, Action<string> note) : ITerminalSurface
+internal sealed class XtermSurface(string id, TerminalSize initial, WebView2 web, DispatcherQueue dispatcher, Action<string> note) : ITerminalSurface
 {
     private readonly object gate = new();
     private readonly JsonArray pending = [];
     private readonly MemoryStream output = new();
-    private TerminalSize size = new(120, 40);
+    private TerminalSize size = initial;
     private bool scheduled;
+
+    public string Id => id;
 
     public TerminalSize Size { get { lock (gate) return size; } }
 
@@ -32,20 +35,12 @@ internal sealed class XtermSurface(WebView2 web, DispatcherQueue dispatcher, Act
 
     public void Reset(TerminalSnapshot snapshot)
     {
-        lock (gate)
+        Post(new JsonObject
         {
-            TakeOutput();
-            pending.Add(new JsonObject
-            {
-                ["type"] = "reset", ["data"] = Convert.ToBase64String(snapshot.Data),
-                ["flags"] = snapshot.KittyKeyboardFlags, ["cols"] = snapshot.Cols, ["rows"] = snapshot.Rows
-            });
-            Schedule();
-        }
+            ["type"] = "reset", ["data"] = Convert.ToBase64String(snapshot.Data), ["flags"] = snapshot.KittyKeyboardFlags
+        });
         var flags = snapshot.KittyKeyboardFlags is { } f ? $"kitty keyboard flags {f}" : "no kitty keyboard flags";
-        Note(snapshot.IsScrollbackReplay
-            ? $"Attached; scrollback loaded ({snapshot.Cols}×{snapshot.Rows} at the host, {flags})."
-            : $"Attached ({snapshot.Cols}×{snapshot.Rows} at the host, {flags}); loading scrollback…");
+        Note(snapshot.IsScrollbackReplay ? $"attached, scrollback loaded ({flags})" : $"attached at {snapshot.Cols}×{snapshot.Rows} ({flags}); loading scrollback…");
     }
 
     public void Write(ReadOnlySpan<byte> bytes)
@@ -59,9 +54,10 @@ internal sealed class XtermSurface(WebView2 web, DispatcherQueue dispatcher, Act
 
     public void Note(string message) => dispatcher.TryEnqueue(() => note(message));
 
-    /// <summary>Posts a message after everything already queued.</summary>
+    /// <summary>Posts a message for this terminal after everything already queued for it.</summary>
     public void Post(JsonObject message)
     {
+        message["id"] = id;
         lock (gate)
         {
             TakeOutput();
@@ -80,7 +76,7 @@ internal sealed class XtermSurface(WebView2 web, DispatcherQueue dispatcher, Act
     private void TakeOutput()
     {
         if (output.Length == 0) return;
-        pending.Add(new JsonObject { ["type"] = "output", ["data"] = Convert.ToBase64String(output.GetBuffer(), 0, (int)output.Length) });
+        pending.Add(new JsonObject { ["type"] = "output", ["id"] = id, ["data"] = Convert.ToBase64String(output.GetBuffer(), 0, (int)output.Length) });
         output.SetLength(0);
     }
 

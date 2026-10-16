@@ -8,9 +8,10 @@ drives them.
 | Path | What |
 |---|---|
 | `src/Orc.Protocol` | `E2eeChannel` (libsodium, the same calls as `Sources/COrcSupport/support.c`), `TerminalFrame`, `RuntimeConnection`, `Pairing`, and `AttachController`, which owns the attach protocol and draws through `ITerminalSurface` |
-| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface` |
+| `src/Orc.Core` | The client model: sessions, projects and activity as the Mac app derives them, sidebar sections, and `HostMonitor`, which refreshes them on Orc.app's schedule |
+| `src/Orc.App` | The WinUI 3 app (`Orc.exe`): the host's sessions by project with their activity lights, beside the selected session's terminal (xterm.js 6.1 in WebView2 with the kitty keyboard protocol, as the `ITerminalSurface`); the ten most recently shown terminals stay attached |
 | `tools/OrcSpike` | `orcspike`, a console client for probing, pairing and attaching from a terminal |
-| `tests/Orc.Protocol.Tests` | Protocol and attach tests against an in-process fake runtime |
+| `tests/` | Protocol, attach and model tests against an in-process fake runtime |
 | `scripts/bootstrap-xterm.ps1` | Fetches the checksum-pinned xterm.js packages; the app build runs it when they are missing |
 
 ## Build and test
@@ -48,6 +49,7 @@ Then, on Windows:
 orcspike probe ws://MAC_LAN_IP:6768 PUBLIC_KEY   # optional: reachability and E2EE interop, no credential
 orcspike pair                                     # paste the link at the hidden prompt
 orcspike list
+orcspike sidebar                                  # sessions by project with their activity
 orcspike ping 50
 orcspike attach NAME                              # Ctrl-] detaches
 orcspike endpoint ws://NEW_IP:6768                # follow a new DHCP lease; the key stays pinned

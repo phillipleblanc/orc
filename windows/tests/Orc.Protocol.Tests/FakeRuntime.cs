@@ -30,6 +30,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public ConcurrentQueue<string> Subscribes { get; } = new();
     public int SnapshotRequests;
     public int Port { get; }
+    /// <summary>What terminal.agentStatus reports for the terminal: working, permission or idle.</summary>
+    public volatile string AgentState = "working";
 
     public FakeRuntime()
     {
@@ -151,6 +153,18 @@ internal sealed class FakeRuntime : IAsyncDisposable
                             ["incarnationId"] = "inc-1", ["worktreeId"] = "local::/Users/me/proj", ["worktreePath"] = "/Users/me/proj",
                             ["agentIdentity"] = "claude"
                         })
+                    });
+                    break;
+                case "worktree.list":
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["worktrees"] = new JsonArray(new JsonObject { ["id"] = "local::/Users/me/proj", ["path"] = "/Users/me/proj", ["displayName"] = "proj", ["hostId"] = "local" })
+                    });
+                    break;
+                case "terminal.agentStatus":
+                    await ReplyAsync(id, new JsonObject
+                    {
+                        ["agentStatus"] = new JsonObject { ["handle"] = parameters["terminal"]?.ToString(), ["isRunningAgent"] = true, ["status"] = runtime.AgentState }
                     });
                     break;
                 case "terminal.send":

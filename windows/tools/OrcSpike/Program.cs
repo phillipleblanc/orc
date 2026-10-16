@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Orc.Core;
 using Orc.Protocol;
 using Orc.Spike;
 
@@ -12,6 +13,7 @@ const string Usage = """
       orcspike pair                       Paste an orca://pair link (runtime scope) at a hidden prompt; verifies, then saves
       orcspike status                     The runtime's status.get
       orcspike list                       Sessions on the host
+      orcspike sidebar                    Sessions by project with their activity, as the app's sidebar shows them
       orcspike ping [COUNT]               Connection setup time and RPC round trips
       orcspike attach SESSION [--read-only]  Attach in this console (Windows Terminal recommended); Ctrl-] detaches
       orcspike send SESSION TEXT [--enter]   Type into a session
@@ -27,6 +29,7 @@ try
         "pair" => await PairAsync(),
         "status" => await StatusAsync(),
         "list" => await ListAsync(),
+        "sidebar" => await SidebarAsync(),
         "ping" => await PingAsync(args.Length > 1 ? int.Parse(args[1]) : 20),
         "attach" when args.Length >= 2 => await AttachAsync(args[1], args.Contains("--read-only")),
         "send" when args.Length >= 3 => await SendAsync(args[1], args[2], args.Contains("--enter")),
@@ -118,6 +121,34 @@ static async Task<int> ListAsync()
     foreach (var row in rows) Console.WriteLine(string.Join("  ", row.Select((cell, i) => cell.PadRight(widths[i]))).TrimEnd());
     return 0;
 }
+
+static async Task<int> SidebarAsync()
+{
+    var monitor = new HostMonitor(PairingStore.Load());
+    using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+    var first = new TaskCompletionSource<HostSnapshot>();
+    monitor.Updated += snapshot => first.TrySetResult(snapshot);
+    monitor.ConnectionChanged += state => { if (state is not null) first.TrySetException(new IOException(state)); };
+    var run = monitor.RunAsync(stop.Token);
+    var snapshot = await first.Task.WaitAsync(stop.Token);
+    stop.Cancel();
+    await run;
+    foreach (var section in SessionSections.Build(snapshot.Sessions, snapshot.Projects))
+    {
+        Console.WriteLine($"{section.Title}  {section.Sessions.Count}");
+        foreach (var session in section.Sessions)
+            Console.WriteLine($"  {Light(snapshot.ActivityOf(session))} {session.Name,-26} {session.Detail}");
+    }
+    return 0;
+}
+
+static string Light(AgentActivity activity) => activity switch
+{
+    AgentActivity.Idle => "idle   ",
+    AgentActivity.Active => "active ",
+    AgentActivity.NeedsAttention => "needs !",
+    _ => "-      "
+};
 
 static async Task<int> PingAsync(int count)
 {
