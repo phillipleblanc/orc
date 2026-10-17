@@ -30,6 +30,16 @@ dotnet test --solution Orc.Windows.slnx -c Release
 The app is `src\Orc.App\bin\Release\net10.0-windows10.0.26100.0\win-x64\Orc.exe`. It is unpackaged and carries
 the Windows App SDK runtime with it.
 
+To install it for your Windows user, in `%LOCALAPPDATA%\Programs\Orc` with a Start menu shortcut, run this (again to
+update, with Orc closed):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+To uninstall, delete that folder and `Orc.lnk` in the Start menu's Programs folder; `%LOCALAPPDATA%\Orc` holds the
+pairing and settings.
+
 ## Pair with a host
 
 The app opens on its Host page when nothing is paired; later, click the host under **Sessions**. On the Mac, choose
