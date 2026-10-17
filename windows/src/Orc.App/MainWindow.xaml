@@ -62,8 +62,12 @@
                         <FontIcon Glyph="&#xE710;" FontSize="14" />
                     </Button>
                 </Grid>
-                <ListView x:Name="SessionList" Grid.Row="1" SelectionMode="Single" SelectionChanged="OnSessionSelected"
-                          ContextRequested="OnSessionContextRequested" AutomationProperties.Name="Sessions">
+                <!-- Sessions are dragged within their project, top-level among top-level and children among siblings, as in Orc.app. -->
+                <Grid x:Name="SessionListHost" Grid.Row="1">
+                <ListView x:Name="SessionList" SelectionMode="Single" SelectionChanged="OnSessionSelected"
+                          ContextRequested="OnSessionContextRequested" AutomationProperties.Name="Sessions"
+                          CanDragItems="True" AllowDrop="True" DragItemsStarting="OnDragStarting" DragOver="OnDragOver"
+                          Drop="OnDrop" DragLeave="OnDragLeave" DragItemsCompleted="OnDragCompleted">
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <Grid Padding="0,5" ColumnSpacing="10" Margin="{Binding Indent}" ToolTipService.ToolTip="{Binding StatusLabel}"
@@ -85,6 +89,8 @@
                                                VerticalAlignment="Center" Visibility="{Binding GlyphVisibility}" />
                                     <FontIcon Glyph="&#xEA8F;" FontSize="13" FontWeight="SemiBold" Foreground="#58a6ff"
                                               Visibility="{Binding BellVisibility}" />
+                                    <FontIcon Glyph="&#xE7ED;" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                              Visibility="{Binding MutedVisibility}" />
                                 </Grid>
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="NoWrap"
                                            TextTrimming="CharacterEllipsis" />
@@ -110,6 +116,11 @@
                         </GroupStyle>
                     </ListView.GroupStyle>
                 </ListView>
+                    <Canvas IsHitTestVisible="False">
+                        <Rectangle x:Name="DropLine" Height="2" RadiusX="1" RadiusY="1" Visibility="Collapsed"
+                                   Fill="{ThemeResource AccentFillColorDefaultBrush}" />
+                    </Canvas>
+                </Grid>
                 <local:UsagePanel x:Name="Usage" Grid.Row="2" />
             </Grid>
 

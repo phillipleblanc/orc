@@ -258,3 +258,166 @@ public sealed class HostDataTests
         Assert.Empty(runtime.Calls);
     }
 }
+
+/// <summary>Sources/OrcKit/SessionSidebarOrder.swift's behavior, ported from Tests/OrcKitTests/SessionSidebarOrderTests.swift.</summary>
+public sealed class SidebarOrderTests
+{
+    private static readonly HashSet<string> None = [];
+
+    private static SessionInfo Session(string handle, string? name = null, string project = "project") =>
+        new(handle, name ?? handle, project, "/code/" + project, true, "pi", handle, null);
+
+    private static readonly SessionHierarchy Hierarchy =
+        new([Session("a"), Session("a-one"), Session("a-two"), Session("b"), Session("b-one"), Session("c")]);
+
+    private static string[] Ids(SidebarOrder order, IReadOnlySet<string>? collapsed = null, SessionHierarchy? hierarchy = null) =>
+        order.Rows(hierarchy ?? Hierarchy, collapsed ?? None).Select(r => r.Session.Handle).ToArray();
+
+    [Fact]
+    public void TopLevelSessionsMoveBothWaysAndKeepTheirChildren()
+    {
+        var order = new SidebarOrder();
+        Assert.Equal(["a", "a-one", "a-two", "b", "b-one", "c"], Ids(order));
+        Assert.True(order.Move(5, 0, order.Rows(Hierarchy, None)));
+        Assert.Equal(["c", "a", "a-one", "a-two", "b", "b-one"], Ids(order));
+        order.Move(1, 6, order.Rows(Hierarchy, None));
+        Assert.Equal(["c", "b", "b-one", "a", "a-one", "a-two"], Ids(order));
+        order.Move(0, 3, order.Rows(Hierarchy, None));
+        Assert.Equal(["b", "b-one", "c", "a", "a-one", "a-two"], Ids(order));
+    }
+
+    [Fact]
+    public void ChildrenMoveOnlyAmongTheirSiblings()
+    {
+        var order = new SidebarOrder();
+        order.Move(1, 3, order.Rows(Hierarchy, None));
+        Assert.Equal(["a", "a-two", "a-one", "b", "b-one", "c"], Ids(order));
+        order.Move(2, 1, order.Rows(Hierarchy, None));
+        Assert.Equal(["a", "a-one", "a-two", "b", "b-one", "c"], Ids(order));
+        var before = order.Keys.ToArray();
+        foreach (var destination in new[] { 0, 4, 5, 6 })
+        {
+            Assert.False(order.Move(1, destination, order.Rows(Hierarchy, None)));
+            Assert.Equal(before, order.Keys);
+        }
+        // A top-level session cannot split another's children.
+        Assert.False(order.Move(5, 2, order.Rows(Hierarchy, None)));
+    }
+
+    [Fact]
+    public void ACollapsedParentMovesWithItsHiddenChildren()
+    {
+        var order = new SidebarOrder();
+        order.Move(2, 1, order.Rows(Hierarchy, None));
+        var collapsed = order.Rows(Hierarchy, new HashSet<string> { "a", "b" });
+        Assert.Equal(["a", "b", "c"], collapsed.Select(r => r.Session.Handle));
+        Assert.True(collapsed[0].HasChildren);
+        order.Move(0, 3, collapsed);
+        Assert.Equal(["b", "b-one", "c", "a", "a-two", "a-one"], Ids(order));
+        Assert.Equal(["b", "b-one", "c", "a"], Ids(order, new HashSet<string> { "a" }));
+    }
+
+    [Theory]
+    [InlineData(6, 0)]
+    [InlineData(0, -1)]
+    [InlineData(0, 7)]
+    [InlineData(0, 0)]
+    [InlineData(0, 3)]
+    [InlineData(1, 1)]
+    [InlineData(1, 2)]
+    [InlineData(5, 6)]
+    public void InvalidAndNoOpMovesChangeNothing(int index, int destination)
+    {
+        var order = new SidebarOrder();
+        Assert.False(order.Move(index, destination, order.Rows(Hierarchy, None)));
+        Assert.Empty(order.Keys);
+    }
+
+    [Fact]
+    public void TheOrderOutlivesNewHandlesAndAbsentSessions()
+    {
+        var a = Session("old-a", "Alpha");
+        var b = Session("old-b", "Beta");
+        var c = Session("c");
+        var order = new SidebarOrder();
+        order.Move(1, 0, order.Rows(new SessionHierarchy([a, b, c]), None));
+        var saved = order.Keys.ToArray();
+        Assert.Empty(order.Rows(new SessionHierarchy([]), None));
+        Assert.Equal(["old-a", "c"], Ids(order, hierarchy: new SessionHierarchy([c, a])));
+        Assert.Equal(["new-b", "old-a", "c", "new"], Ids(order, hierarchy: new SessionHierarchy([Session("new"), c, a, Session("new-b", "Beta")])));
+        Assert.Equal(saved, order.Keys);
+        var rows = order.Rows(new SessionHierarchy([c, a, Session("new-b", "Alpha-review")]), None);
+        Assert.Equal(["old-a", "new-b", "c"], rows.Select(r => r.Session.Handle));
+        Assert.Equal("old-a", rows[1].ParentHandle);
+    }
+
+    [Fact]
+    public void StepsOnePlaceAmongSiblings()
+    {
+        var rows = new SidebarOrder().Rows(Hierarchy, None);
+        Assert.Null(SidebarOrder.Step(0, -1, rows));
+        Assert.Equal(5, SidebarOrder.Step(0, 1, rows));
+        Assert.Equal(6, SidebarOrder.Step(3, 1, rows));
+        Assert.Null(SidebarOrder.Step(5, 1, rows));
+        // A child steps among its siblings only.
+        Assert.Null(SidebarOrder.Step(2, 1, rows));
+        Assert.Null(SidebarOrder.Step(1, -1, rows));
+        Assert.Equal(3, SidebarOrder.Step(1, 1, rows));
+        var order = new SidebarOrder();
+        Assert.True(order.Move(1, SidebarOrder.Step(1, 1, rows)!.Value, rows));
+        Assert.Equal(["a", "a-two", "a-one", "b", "b-one", "c"], Ids(order));
+    }
+
+    [Fact]
+    public void KeepsItsPlaceWhenRenamedAndRoundTrips()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"orc-order-{Guid.NewGuid():N}.json");
+        try
+        {
+            var order = new SidebarOrder();
+            order.Move(5, 0, order.Rows(Hierarchy, None));
+            Assert.True(order.Rename("c", "z"));
+            Assert.True(order.Save(file));
+            Assert.Equal(order.Keys, SidebarOrder.Load(file).Keys);
+            Assert.Equal("z", SidebarOrder.Load(file).Keys[0]);
+            File.WriteAllText(file, "not json");
+            Assert.Empty(SidebarOrder.Load(file).Keys);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public void SectionsFollowTheirFirstSession()
+    {
+        var sessions = new[] { Session("a", project: "one"), Session("b", project: "two"), Session("c", project: "one") };
+        var order = new SidebarOrder();
+        Assert.Equal(["one", "two"], SessionSections.Build(sessions, [], order).Select(s => s.Id));
+        order.Move(1, 0, order.Rows(new SessionHierarchy(sessions), None));
+        Assert.Equal(["two", "one"], SessionSections.Build(sessions, [], order).Select(s => s.Id));
+    }
+}
+
+public sealed class MuteTests
+{
+    [Fact]
+    public void MutesFollowRenamesArePrunedAndKept()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"orc-mutes-{Guid.NewGuid():N}.json");
+        try
+        {
+            var mutes = SessionMutes.Load(file);
+            mutes.Set(true, "fix-auth");
+            mutes.Set(true, "docs");
+            Assert.True(SessionMutes.Load(file).IsMuted("fix-auth"));
+            mutes.Rename("fix-auth", "fix-login");
+            Assert.False(mutes.IsMuted("fix-auth"));
+            Assert.True(mutes.IsMuted("fix-login"));
+            mutes.Prune(new HashSet<string> { "fix-login" });
+            Assert.False(SessionMutes.Load(file).IsMuted("docs"));
+            mutes.Set(false, "fix-login");
+            Assert.False(SessionMutes.Load(file).IsMuted("fix-login"));
+            Assert.Contains("\"names\"", File.ReadAllText(file));
+        }
+        finally { File.Delete(file); }
+    }
+}

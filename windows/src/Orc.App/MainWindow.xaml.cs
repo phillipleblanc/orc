@@ -15,6 +15,7 @@ using Microsoft.Web.WebView2.Core;
 using Orc.Core;
 using Orc.Protocol;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using Windows.Graphics;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -44,6 +45,13 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, SessionRow> rows = [];
     private readonly HashSet<string> listed = [];
     private readonly HashSet<string> collapsedParents = [];
+    private readonly SessionMutes mutes = SessionMutes.Load();
+    // Where sessions were dragged, for this host; and each section's rows as last laid out, which drags move within.
+    private SidebarOrder order = new();
+    private string? orderFile;
+    private Dictionary<string, IReadOnlyList<SidebarRow>> sectionRows = [];
+    private SessionRow? dragging;
+    private (string Section, int Index, int Destination)? dropTarget;
     // Attached terminals by session handle; each attachment has its own page id, so a late end never touches its successor.
     private readonly Dictionary<string, Attached> attached = [];
     private readonly Dictionary<string, Notice> notices = [];
@@ -106,6 +114,8 @@ public sealed partial class MainWindow : Window
         Root.KeyboardAccelerators.Add(newSession);
         AddListAccelerator(VirtualKey.F2, row => _ = RenameAsync(row));
         AddListAccelerator(VirtualKey.Delete, row => _ = CloseAsync(row));
+        AddListAccelerator(VirtualKey.Up, row => MoveSession(row, -1), VirtualKeyModifiers.Menu);
+        AddListAccelerator(VirtualKey.Down, row => MoveSession(row, 1), VirtualKeyModifiers.Menu);
 
         Hosts.ShowDialog = ShowDialogAsync;
         Hosts.Paired += (paired, _) => Adopt(paired);
@@ -213,9 +223,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void AddListAccelerator(VirtualKey key, Action<SessionRow> action)
+    private void AddListAccelerator(VirtualKey key, Action<SessionRow> action, VirtualKeyModifiers modifiers = VirtualKeyModifiers.None)
     {
-        var accelerator = new KeyboardAccelerator { Key = key, ScopeOwner = SessionList };
+        var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers, ScopeOwner = SessionList };
         accelerator.Invoked += (_, e) =>
         {
             if (SessionList.SelectedItem is not SessionRow row) return;
@@ -265,6 +275,8 @@ public sealed partial class MainWindow : Window
         pairing = next;
         var host = new HostMonitor(next) { NotificationCursor = SavedCursor() };
         monitor = host;
+        orderFile = SidebarOrder.FileFor(next);
+        order = SidebarOrder.Load(orderFile);
         hostStop = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);
         host.Updated += update => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) Apply(update); });
         host.StatusChanged += status => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) ShowHostState(status); });
@@ -294,6 +306,9 @@ public sealed partial class MainWindow : Window
         listed.Clear();
         shape = [];
         collapsedParents.Clear();
+        order = new SidebarOrder();
+        orderFile = null;
+        sectionRows = [];
         notices.Clear();
         hostNotice = null;
         pendingSelect = null;
@@ -395,7 +410,7 @@ public sealed partial class MainWindow : Window
     {
         snapshot = update;
         Review(update);
-        var sections = SessionSections.Build(update.Sessions, update.Projects);
+        var sections = SessionSections.Build(update.Sessions, update.Projects, order);
         // A child about to be selected is shown even when its parent is collapsed.
         if (pendingSelect is { } wanted)
             foreach (var section in sections)
@@ -403,7 +418,8 @@ public sealed partial class MainWindow : Window
                     collapsedParents.Remove(parent.Handle);
         collapsedParents.RemoveWhere(handle => update.Sessions.All(s => s.Handle != handle));
 
-        var layout = sections.Select(section => (Section: section, Rows: section.Hierarchy.Rows(collapsedParents))).ToList();
+        var layout = sections.Select(section => (Section: section, Rows: order.Rows(section.Hierarchy, collapsedParents))).ToList();
+        sectionRows = layout.ToDictionary(l => l.Section.Id, l => l.Rows);
         var nextShape = layout.Select(l => l.Section.Id + ":" + string.Join(",", l.Rows.Select(r => r.Session.Handle))).ToList();
         applying = true;
         try
@@ -423,8 +439,8 @@ public sealed partial class MainWindow : Window
                 var (section, sectionRows) = layout[i];
                 groups[i].Title = $"{section.Title}  {section.Sessions.Count}";
                 foreach (var row in sectionRows)
-                    rows[row.Session.Handle].Update(row.Session, ActivityOf(row.Session), update.DetailOf(row.Session), section.Hierarchy, row,
-                        collapsedParents.Contains(row.Session.Handle));
+                    rows[row.Session.Handle].Update(row.Session, ActivityOf(row.Session), mutes.IsMuted(row.Session.Name), update.DetailOf(row.Session),
+                        section.Hierarchy, row, collapsedParents.Contains(row.Session.Handle));
             }
         }
         finally { applying = false; }
@@ -499,6 +515,113 @@ public sealed partial class MainWindow : Window
         if (!applying && SessionList.SelectedItem is SessionRow row) Show(row.Handle);
     }
 
+    // ---- Sidebar order ----
+
+    /// <summary>The section a session's row is in, that section's rows, and the row's place among them.</summary>
+    private (string Section, IReadOnlyList<SidebarRow> Rows, int Index)? Locate(string handle)
+    {
+        foreach (var (section, list) in sectionRows)
+            for (var i = 0; i < list.Count; i++)
+                if (list[i].Session.Handle == handle) return (section, list, i);
+        return null;
+    }
+
+    private bool CanStep(SessionRow row, int direction) => Locate(row.Handle) is { } at && SidebarOrder.Step(at.Index, direction, at.Rows) is not null;
+
+    /// <summary>Alt+Up and Alt+Down, and the menu's Move Up and Move Down: one place among the session's siblings.</summary>
+    private void MoveSession(SessionRow row, int direction)
+    {
+        if (Locate(row.Handle) is not { } at || SidebarOrder.Step(at.Index, direction, at.Rows) is not { } destination) return;
+        Reorder(at.Index, destination, at.Rows);
+        if (SessionList.ContainerFromItem(row) is ListViewItem item) item.Focus(FocusState.Keyboard);
+    }
+
+    private void Reorder(int index, int destination, IReadOnlyList<SidebarRow> list)
+    {
+        if (snapshot is null || !order.Move(index, destination, list)) return;
+        if (orderFile is not null && !order.Save(orderFile))
+            SetNotice(visible ?? "", new Notice(InfoBarSeverity.Warning, "Couldn't save the sidebar order", "The new order lasts until Orc closes."));
+        Apply(snapshot);
+    }
+
+    private void OnDragStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        if (e.Items.Count != 1 || e.Items[0] is not SessionRow row || Locate(row.Handle) is null)
+        {
+            e.Cancel = true;
+            return;
+        }
+        dragging = row;
+        e.Data.RequestedOperation = DataPackageOperation.Move;
+        e.Data.SetText(row.Session?.Name ?? row.Handle);
+    }
+
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        dropTarget = DropTargetAt(e.GetPosition(SessionListHost).Y);
+        e.AcceptedOperation = dropTarget is null ? DataPackageOperation.None : DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    private void OnDrop(object sender, DragEventArgs e)
+    {
+        var target = dropTarget;
+        EndDrag();
+        if (target is { } t && sectionRows.TryGetValue(t.Section, out var list)) Reorder(t.Index, t.Destination, list);
+    }
+
+    private void OnDragLeave(object sender, DragEventArgs e)
+    {
+        dropTarget = null;
+        DropLine.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnDragCompleted(ListViewBase sender, DragItemsCompletedEventArgs args) => EndDrag();
+
+    private void EndDrag()
+    {
+        dragging = null;
+        dropTarget = null;
+        DropLine.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Where the dragged session would go with the pointer at <paramref name="y"/>: between two of its siblings in its
+    /// own project, as in Orc.app, with the insertion line drawn there. Null anywhere else, or where it already is.
+    /// </summary>
+    private (string Section, int Index, int Destination)? DropTargetAt(double y)
+    {
+        DropLine.Visibility = Visibility.Collapsed;
+        if (dragging is null || Locate(dragging.Handle) is not { } source) return null;
+        var (section, list, index) = source;
+        var bounds = new List<(int Index, Rect Rect)>();
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (rows.GetValueOrDefault(list[i].Session.Handle) is not { } item || SessionList.ContainerFromItem(item) is not ListViewItem container
+                || container.ActualHeight <= 0) continue;
+            bounds.Add((i, container.TransformToVisual(SessionListHost).TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight))));
+        }
+        if (bounds.Count == 0 || y < bounds[0].Rect.Top - 6 || y > bounds[^1].Rect.Bottom + 6) return null;
+        var destination = bounds[^1].Index + 1;
+        foreach (var (at, rect) in bounds)
+        {
+            if (y >= rect.Top + rect.Height / 2) continue;
+            destination = at;
+            break;
+        }
+        // Only a move that changes the order: between siblings, and not where it already is.
+        if (!new SidebarOrder(order.Keys).Move(index, destination, list)) return null;
+        var lineY = bounds.FirstOrDefault(b => b.Index == destination) is { Rect.Height: > 0 } next ? next.Rect.Top
+            : bounds.LastOrDefault(b => b.Index < destination).Rect.Bottom;
+        var indent = list[index].ParentHandle is null ? 12 : 34;
+        DropLine.Width = Math.Max(0, bounds[0].Rect.Width - indent - 12);
+        Canvas.SetLeft(DropLine, bounds[0].Rect.Left + indent);
+        Canvas.SetTop(DropLine, lineY - 1);
+        DropLine.Visibility = Visibility.Visible;
+        return (section, index, destination);
+    }
+
     private void OnToggleChildren(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not SessionRow row) return;
@@ -518,10 +641,11 @@ public sealed partial class MainWindow : Window
     private void Review(HostSnapshot update)
     {
         var completed = review.Update(update.Sessions, update.ActivityOf);
+        _ = PruneMutesAsync(update);
         foreach (var session in completed)
         {
-            // The person is looking at it here: nothing to tell them.
-            if (session.Handle == visible && windowActive && TerminalOnScreen) continue;
+            // Muted, or the person is looking at it here: nothing to tell them.
+            if (mutes.IsMuted(session.Name) || (session.Handle == visible && windowActive && TerminalOnScreen)) continue;
             var project = Project.LastComponent(session.WorktreePath);
             if (session.Agent is null && session.Program?.Lead is { } program)
                 notifier.Show(session.Name, $"{program.App ?? "Program"} is done", program.Msg ?? program.Title ?? $"Finished in {project}.", session.Handle);
@@ -551,11 +675,48 @@ public sealed partial class MainWindow : Window
         if (!windowActive || !TerminalOnScreen || snapshot?.Sessions.FirstOrDefault(s => s.Handle == visible) is not { } session || !review.MarkRead(session)) return;
         if (!save) return;
         review.Save();
-        rows.GetValueOrDefault(session.Handle)?.SetActivity(ActivityOf(session));
+        rows.GetValueOrDefault(session.Handle)?.SetActivity(ActivityOf(session), mutes.IsMuted(session.Name));
         UpdateBadge();
     }
 
-    private void UpdateBadge() => notifier.SetBadge(snapshot?.Sessions.Count(s => ActivityOf(s) is AgentActivity.Unread or AgentActivity.Notified) ?? 0);
+    /// <summary>Sessions with something to review; a muted one only while it shows a notification.</summary>
+    private void UpdateBadge() => notifier.SetBadge(snapshot?.Sessions.Count(s => ActivityOf(s) switch
+    {
+        AgentActivity.Notified => true,
+        AgentActivity.Unread => !mutes.IsMuted(s.Name),
+        _ => false
+    }) ?? 0);
+
+    private void SetMuted(SessionInfo session, bool muted)
+    {
+        mutes.Set(muted, session.Name);
+        rows.GetValueOrDefault(session.Handle)?.SetActivity(ActivityOf(session), muted);
+        UpdateBadge();
+    }
+
+    private DateTimeOffset mutesPrunedAt;
+    private string mutesPrunedFor = "";
+
+    /// <summary>
+    /// As Orc.app does: forgets mutes of names no running or recently closed session has, so a later session that
+    /// reuses a name does not start muted. Checked when the sessions change, at most every 30 seconds.
+    /// </summary>
+    private async Task PruneMutesAsync(HostSnapshot update)
+    {
+        var names = string.Join("\n", update.Sessions.Select(s => s.Name).Order());
+        if (monitor is not { } host || (names == mutesPrunedFor && DateTimeOffset.Now - mutesPrunedAt < TimeSpan.FromSeconds(30))) return;
+        mutesPrunedFor = names;
+        mutesPrunedAt = DateTimeOffset.Now;
+        try
+        {
+            var closed = await host.RequestAsync("history.list");
+            var kept = update.Sessions.Select(s => s.Name).Concat((closed["sessions"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(s => s["name"]?.ToString() ?? "")).ToHashSet();
+            if (monitor == host) mutes.Prune(kept);
+        }
+        // Without the closed sessions, nothing is forgotten.
+        catch (Exception error) when (error is RpcException or IOException or TimeoutException) { }
+    }
 
     /// <summary>A notification was selected: Orc comes forward with its session.</summary>
     private void OpenFromNotification(string handle)
@@ -837,6 +998,13 @@ public sealed partial class MainWindow : Window
         if (row.CanCreateChild) menu.Items.Add(MenuItem("Create Child…", "", () => _ = NewSessionAsync(session), enabled: connected));
         menu.Items.Add(MenuItem("Rename Session…", "", () => _ = RenameAsync(row), "F2", connected));
         menu.Items.Add(MenuItem("Restart Session", "", () => _ = RestartAsync(row), enabled: connected));
+        // As in Orc.app, an agent's notifications can be muted.
+        if (session.Agent is not null)
+            menu.Items.Add(row.Muted ? MenuItem("Unmute Notifications", "\uEA8F", () => SetMuted(session, false))
+                : MenuItem("Mute Notifications", "\uE7ED", () => SetMuted(session, true)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MenuItem("Move Up", "\uE74A", () => MoveSession(row, -1), "Alt+Up", CanStep(row, -1)));
+        menu.Items.Add(MenuItem("Move Down", "\uE74B", () => MoveSession(row, 1), "Alt+Down", CanStep(row, 1)));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MenuItem("Close Session…", "", () => _ = CloseAsync(row), "Del", connected));
         if (args.TryGetPosition(target, out var point)) menu.ShowAt(target, point);
@@ -891,7 +1059,11 @@ public sealed partial class MainWindow : Window
             Validate();
             try
             {
-                await SessionCommands.RenameAsync(host.RequestAsync, session.Handle, box.Text.Trim());
+                var name = box.Text.Trim();
+                await SessionCommands.RenameAsync(host.RequestAsync, session.Handle, name);
+                // Its place in the sidebar and a mute go with it.
+                if (order.Rename(session.Name, name) && orderFile is not null) order.Save(orderFile);
+                mutes.Rename(session.Name, name);
                 dialog.Hide();
                 host.RefreshNow();
             }

@@ -126,18 +126,22 @@ public sealed record SessionSection(string Id, string Title, string Path, IReadO
 public static class SessionSections
 {
     /// <summary>
-    /// A section per project that has sessions, placed where its first session is in the session order; a folder
-    /// outside every project gets a section of its own. Two sections with the same name show their paths.
+    /// A section per project that has sessions, placed where its first session is in the sidebar's order (by name
+    /// among ties); a folder outside every project gets a section of its own. Two sections with the same name show
+    /// their paths.
     /// </summary>
-    public static IReadOnlyList<SessionSection> Build(IReadOnlyList<SessionInfo> sessions, IReadOnlyList<Project> projects)
+    public static IReadOnlyList<SessionSection> Build(IReadOnlyList<SessionInfo> sessions, IReadOnlyList<Project> projects, SidebarOrder? order = null)
     {
         var byId = projects.ToDictionary(p => p.Id);
+        var firstRow = new Dictionary<string, int>();
+        var rows = (order ?? new SidebarOrder()).Rows(new SessionHierarchy(sessions), new HashSet<string>());
+        for (var i = 0; i < rows.Count; i++) firstRow.TryAdd(rows[i].Session.WorktreeId, i);
         var groups = sessions.GroupBy(s => s.WorktreeId).Select(group =>
         {
             var project = byId.GetValueOrDefault(group.Key);
             var path = project?.Path ?? group.First().WorktreePath;
             return (Id: group.Key, Name: project?.Name ?? Project.LastComponent(path), Path: path, Sessions: group.ToList());
-        }).ToList();
+        }).OrderBy(g => firstRow.GetValueOrDefault(g.Id, int.MaxValue)).ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         var duplicateNames = groups.GroupBy(g => g.Name).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
         return groups.Select(g => new SessionSection(g.Id, duplicateNames.Contains(g.Name) ? $"{g.Name} · {g.Path}" : g.Name, g.Path, g.Sessions)).ToList();
     }

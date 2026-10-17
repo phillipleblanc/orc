@@ -45,6 +45,7 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
     private string name = "";
     private string detail = "";
     private AgentActivity activity = AgentActivity.Unknown;
+    private bool muted;
     private bool isChild;
     private bool hasChildren;
     private bool collapsed;
@@ -65,23 +66,28 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
     public string ChevronGlyph => collapsed ? "" : "";
     public string ChevronLabel => collapsed ? "Show child sessions" : "Hide child sessions";
 
-    public bool IsActive => activity == AgentActivity.Active;
+    public bool IsActive => activity == AgentActivity.Active && !ShowsMuted;
     private bool HasBell => activity is AgentActivity.Unread or AgentActivity.Notified;
+    /// <summary>A muted session shows a muted bell instead of its activity, unless it sent a notification (AgentActivityIndicator.swift).</summary>
+    private bool ShowsMuted => muted && activity != AgentActivity.Notified;
+    public bool Muted => muted;
     public Visibility RingVisibility => IsActive ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility DotVisibility => IsActive || HasBell ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility GlyphVisibility => activity == AgentActivity.NeedsAttention ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility DotVisibility => IsActive || HasBell || ShowsMuted ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility GlyphVisibility => activity == AgentActivity.NeedsAttention && !ShowsMuted ? Visibility.Visible : Visibility.Collapsed;
     /// <summary>A finished turn or a notification not yet viewed, as Orc.app's blue bell.</summary>
-    public Visibility BellVisibility => HasBell ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BellVisibility => HasBell && !ShowsMuted ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MutedVisibility => ShowsMuted ? Visibility.Visible : Visibility.Collapsed;
     public Brush StatusBrush => activity switch
     {
         AgentActivity.Idle => Green,
         AgentActivity.NeedsAttention => Orange,
         _ => Gray
     };
-    public string StatusLabel => activity.Label();
+    public string StatusLabel => muted ? $"Notifications muted · {activity.Label()}" : activity.Label();
     public string AccessibleName => $"{Session?.Name ?? name}, {StatusLabel}";
 
-    public void Update(SessionInfo session, AgentActivity nextActivity, string detail, SessionHierarchy hierarchy, SidebarRow row, bool isCollapsed)
+    public void Update(SessionInfo session, AgentActivity nextActivity, bool isMuted, string detail, SessionHierarchy hierarchy, SidebarRow row,
+        bool isCollapsed)
     {
         Session = session;
         CanCreateChild = row.ParentHandle is null && hierarchy.CanCreateChild(session);
@@ -90,16 +96,17 @@ public sealed class SessionRow(string handle) : INotifyPropertyChanged
         if (isChild != (row.ParentHandle is not null)) { isChild = !isChild; Changed(nameof(Indent)); }
         if (hasChildren != row.HasChildren) { hasChildren = row.HasChildren; Changed(nameof(ChevronVisibility)); }
         if (collapsed != isCollapsed) { collapsed = isCollapsed; Changed(nameof(ChevronGlyph), nameof(ChevronLabel)); }
-        SetActivity(nextActivity);
+        SetActivity(nextActivity, isMuted);
         Changed(nameof(AccessibleName));
     }
 
-    public void SetActivity(AgentActivity next)
+    public void SetActivity(AgentActivity next, bool isMuted)
     {
-        if (activity == next) return;
+        if (activity == next && muted == isMuted) return;
         activity = next;
-        Changed(nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(BellVisibility), nameof(StatusBrush),
-            nameof(StatusLabel), nameof(AccessibleName));
+        muted = isMuted;
+        Changed(nameof(IsActive), nameof(RingVisibility), nameof(DotVisibility), nameof(GlyphVisibility), nameof(BellVisibility), nameof(MutedVisibility),
+            nameof(StatusBrush), nameof(StatusLabel), nameof(AccessibleName));
     }
 
     private void Set(ref string field, string value, [CallerMemberName] string? property = null)
