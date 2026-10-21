@@ -3,6 +3,7 @@ import type { AgentMonitor, AgentState } from './agent-monitor.ts'
 import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
+import type { RexSync } from './rex.ts'
 import { restartSession, type SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
 import type { StreamContext, StreamingHandler } from './websocket-server.ts'
@@ -40,6 +41,8 @@ export type Runtime = {
   history: SessionHistory
   catalog: Catalog
   subscriptions: ConnectionSubscriptions
+  /** The Rex server `orc rex start` linked, kept in sync with the sessions. */
+  rex?: RexSync
 }
 
 // Orca waits this long after typing a message before pressing Enter, so the program has read the text.
@@ -113,6 +116,7 @@ export function createHandlers(runtime: Runtime): Handlers {
     if (launch) {
       const created = await agents.launch({ agent: launch.agent, args: launch.args, mcp, name, cwd, project: project ? projects.worktreeId(project) : undefined,
         cols: Number(params.cols ?? 120), rows: Number(params.rows ?? 40) })
+      await runtime.rex?.adopt(created, params.rexTab)
       return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
     }
     const argv: string[] = Array.isArray(params.argv) ? params.argv.map(String)
@@ -127,6 +131,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       project: (project ?? projects.containing(cwd))?.id,
       parent: typeof params.parent === 'string' ? params.parent : undefined
     })
+    await runtime.rex?.adopt(created, params.rexTab)
     return { terminal: { handle: created.handle, title: created.meta.name, worktreeId: worktreeFor(created).id } }
   }
 

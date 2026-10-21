@@ -125,8 +125,10 @@ import COrcSupport
             if let customCommand, customCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 throw OrcError("--command requires a non-empty command.")
             }
+            // Attached in a Rex tab, the session takes the tab's name and keeps the tab.
+            let attaching = !json && isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1
             let created = try await createSession(using: service, type: type, name: requestedName,
-                project: requestedProject, command: customCommand, mcp: mcp)
+                project: requestedProject, command: customCommand, mcp: mcp, rexTab: attaching ? RexTab.current() : nil)
             if json { try emit(["handle": created.handle, "name": created.name, "type": created.type, "project": created.project,
                                "attachCommand": "orc attach \(shellQuote(created.name))"]) }
             else {
@@ -259,7 +261,7 @@ import COrcSupport
                         continue
                     case .create:
                         print("[orc] Creating a session…")
-                        let created = try await createSession(using: service)
+                        let created = try await createSession(using: service, rexTab: RexTab.current())
                         print("Created \(created.name) (\(created.type), \(created.project))\norc attach \(shellQuote(created.name))")
                         selector = created.handle
                         continue
@@ -396,14 +398,14 @@ import COrcSupport
             switch action {
             case "start":
                 let environment = ProcessInfo.processInfo.environment
-                guard let rex = rexCommand(environment) else {
+                guard let rex = RexTab.command(environment) else {
                     throw OrcError("Run `orc rex start` in a Rex terminal, or put Rex's `rex` command on your PATH.")
                 }
                 let result = try await LocalRPC.call("orc.rex.start", ["rex": rex, "server": environment["REX_SERVER"] ?? NSNull(),
                     "orc": RuntimeBootstrap.executable.path, "config": environment["ORC_CONFIG_DIR"] ?? NSNull()], timeout: 120)
                 if json { try emit(result) } else {
-                    print("Rex shows \(count(result["sessions"], "Orc session")) as tabs in \(count(result["projects"], "Rex session")), one per project. "
-                          + "Orc keeps them in sync until `orc rex stop`.")
+                    print("Rex shows \(count(result["sessions"], "Orc session")) in \(count(result["projects"], "Rex session")), one per project with a tab for each "
+                          + "session. Orc keeps them in sync until `orc rex stop`.")
                     for error in result["errors"] as? [String] ?? [] { print("Not synced: \(safe(error))") }
                 }
             case "stop":
@@ -436,7 +438,8 @@ import COrcSupport
         }
     }
     @MainActor private static func createSession(using service: SessionService, type requestedType: SessionType? = nil,
-        name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil, mcp: [String] = []
+        name requestedName: String? = nil, project requestedProject: String? = nil, command: String? = nil, mcp: [String] = [],
+        rexTab: RexTab? = nil
     ) async throws -> (handle: String, name: String, type: String, project: String) {
         let config = try requestedType == nil || requestedProject == nil ? OrcConfiguration.load() : OrcConfiguration()
         let type = requestedType ?? config.defaultSessionType
@@ -446,16 +449,18 @@ import COrcSupport
         else {
             let listing = try await service.list()
             guard !listing.truncated else { throw OrcError("The runtime returned an incomplete session list. Supply a name with `orc new --name NAME`.") }
-            name = try SessionCreationDefaults.name(excluding: Set(listing.terminals.map(\.name)))
+            let taken = Set(listing.terminals.map(\.name))
+            if let tabName = rexTab?.name, Session.isValidName(tabName), !taken.contains(tabName) { name = tabName }
+            else {
+                name = try SessionCreationDefaults.name(excluding: taken)
+                if let tabName = rexTab?.name {
+                    let reason = taken.contains(tabName) ? "a session already has that name" : "it is not a session name"
+                    try? writeAll(STDERR_FILENO, Data("[orc] Named the session \(name): \(reason) for the Rex tab's name \"\(safe(tabName))\".\n".utf8))
+                }
+            }
         }
-        let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command, mcp: mcp)
+        let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command, mcp: mcp, rexTab: rexTab)
         return (handle, name, command == nil ? type.rawValue : "custom", project.name)
-    }
-    /// Rex's `rex` command: the one a Rex terminal names in REX_BIN_DIR, else the first on PATH.
-    static func rexCommand(_ environment: [String: String]) -> String? {
-        let directories = [environment["REX_BIN_DIR"]].compactMap { $0 } + (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        return directories.map { URL(fileURLWithPath: $0).appendingPathComponent("rex").path }
-            .first { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }
     }
     static func safe(_ text: String) -> String { String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }) }
     static let help = """

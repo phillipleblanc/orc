@@ -19,7 +19,8 @@ process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
   const map = {}, projects = {}
   for (const session of args.clear ? [] : args.sessions) {
     projects[session.project.id] = { session: 'session:' + session.project.id, name: session.project.name }
-    map[session.handle] = { session: 'session:' + session.project.id, window: 'window:' + session.handle, name: session.name, project: session.project.id }
+    map[session.handle] = args.map[session.handle] ? { ...args.map[session.handle], name: session.name }
+      : { session: 'session:' + session.project.id, window: 'window:' + session.handle, name: session.name, project: session.project.id }
   }
   const closed = args.clear ? Object.values(args.map).map((tab) => tab.name) : []
   const removed = args.clear ? Object.values(args.projects).map((project) => project.name) : []
@@ -67,6 +68,18 @@ process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
   const program = join(profile, 'rex-programs', 'claude')
   assert.equal((await synced()).at(-1).sessions[0].command[3], program)
   assert.equal(await readlink(program), process.execPath)
+
+  // `orc new` in a Rex tab of the user's own: that tab becomes the session's, if it is on the linked server.
+  const mine = { session: 'session:mine', window: 'window:mine', server: 'unix:///tmp/rex.sock' }
+  const adopted = (await rpc('terminal.create', { name: 'adopted', cwd: profile, argv: ['/bin/sh', '-c', 'exec cat'], rexTab: mine })).terminal
+  const elsewhere = (await rpc('terminal.create', { name: 'elsewhere', cwd: profile, argv: ['/bin/sh', '-c', 'exec cat'], rexTab: { ...mine, window: 'window:other', server: 'unix:///other.sock' } })).terminal
+  await until(async () => (await lastNames())?.includes('elsewhere'), 5000, 'a sync with the new sessions')
+  const map = (await synced()).at(-1).map
+  assert.deepEqual(map[adopted.handle], { session: 'session:mine', window: 'window:mine', name: 'adopted', project: map[adopted.handle].project, adopted: true })
+  assert.equal(map[elsewhere.handle], undefined, 'a tab on another Rex server is not adopted')
+  await rpc('terminal.close', { terminal: adopted.handle })
+  await rpc('terminal.close', { terminal: elsewhere.handle })
+  await until(async () => (await lastNames())?.join() === 'three', 5000, 'a sync without them')
   assert.equal((await rpc('orc.rex.status')).syncing, true)
   await assert.rejects(rpc('orc.rex.clear'), { code: 'conflict' }, 'clearing waits for the sync to stop')
 

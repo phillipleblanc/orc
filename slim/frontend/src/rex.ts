@@ -17,7 +17,8 @@ const AGENT_PROGRAMS: Record<string, string> = { claude: 'claude', codex: 'codex
 
 /** How to reach a Rex server, as `orc rex start` found it in the Rex terminal it ran in. */
 export type RexLink = { rex: string; server: string | null; orc: string; config: string | null }
-type RexTab = { session: string; window: string; name: string; project: string }
+/** A tab showing an Orc session: one the sync made, or, `adopted`, the user's own in which `orc new` started it. */
+type RexTab = { session: string; window: string; name: string; project: string; adopted?: boolean }
 type RexProject = { session: string; name: string }
 type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[] }
 type SyncSession = { handle: string; name: string; cwd: string; command: string[]; project: { id: string; name: string } }
@@ -85,6 +86,20 @@ export class RexSync {
     })
   }
 
+  /**
+   * Records that `tab`, the Rex tab `orc new` ran in, now shows `session`, so syncs relabel it with the session's name
+   * rather than make another tab, and leave it open when the session ends. Its map changes before any sync can start.
+   */
+  async adopt(session: TerminalSession, tab: unknown): Promise<void> {
+    const state = this.state
+    if (!state?.syncing || !tab || typeof tab !== 'object') return
+    const { session: rexSession, window, server } = tab as Record<string, unknown>
+    if (typeof rexSession !== 'string' || typeof window !== 'string' || (server ?? null) !== state.link.server) return
+    for (const [handle, entry] of Object.entries(state.map)) if (entry.window === window) delete state.map[handle]
+    state.map[session.handle] = { session: rexSession, window, name: session.meta.name, project: this.options.catalog.worktreeFor(session).id, adopted: true }
+    await this.save(state)
+  }
+
   status(): Record<string, unknown> {
     return {
       syncing: this.state?.syncing ?? false, server: this.state?.link.server ?? null, sessions: Object.keys(this.state?.map ?? {}).length,
@@ -120,9 +135,10 @@ export class RexSync {
 
   /** Runs the script with `sessions`, or to `clear`, and keeps what it made unless the link changed meanwhile. */
   private async run(state: RexState, sessions: SyncSession[], clear: boolean): Promise<RexSyncResult> {
+    const sent = state.map
     let output: Record<string, unknown>
     try {
-      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: state.map, projects: state.projects, dismissed: state.dismissed, clear })))
+      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: sent, projects: state.projects, dismissed: state.dismissed, clear })))
     } catch (error) {
       const message = (error as Error).message
       if (message !== this.lastError) this.options.log(`rex sync failed: ${message}`)
@@ -132,7 +148,9 @@ export class RexSync {
     const result = { created: strings(output.created), renamed: strings(output.renamed), closed: strings(output.closed), removed: strings(output.removed),
       kept: strings(output.kept), errors: strings(output.errors) }
     if (this.state === state) {
-      state.map = record(output.map) as Record<string, RexTab>
+      // A tab adopted while the script ran is kept.
+      const adopted = Object.entries(state.map).filter(([handle, tab]) => tab.adopted && !(handle in sent))
+      state.map = { ...record(output.map) as Record<string, RexTab>, ...Object.fromEntries(adopted) }
       state.projects = record(output.projects) as Record<string, RexProject>
       state.dismissed = strings(output.dismissed)
       await this.save(state)

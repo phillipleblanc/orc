@@ -116,7 +116,7 @@ const notifications = new NotificationQueue()
 // The Rex server `orc rex start` linked, kept in sync with these sessions.
 const rex = new RexSync({ profile, store, catalog, log })
 await rex.load()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions }
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions, rex }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {

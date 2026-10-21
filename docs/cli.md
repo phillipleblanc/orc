@@ -70,4 +70,6 @@ Run **`orc rex start`** in a [Rex](https://www.superlogical.com/rex) terminal to
 
 A Rex tab leaves its session's size alone until you type in it; typing sizes the session to the tab, as it does in Orc. Each tab reports its session's status, as [attaching](#attaching) does in any terminal that shows program status.
 
+Run **`orc new`** in a Rex tab you named, and the session takes the tab's name, unless you pass `--name` or a session already has it. While Orc syncs, that tab becomes the session's tab: no second tab is made for it, it takes the session's name, including when you rename the session or when you hadn't named the tab, and it stays open when the session ends. The picker's **n** does the same.
+
 Rex picks a tab's icon from the program running in it, so an agent's tab runs `orc attach` under the agent's command name, `claude`, `codex` or `pi`, for Rex to show that agent's icon. The names are links to `orc` in the runtime profile's `rex-programs` folder, which is not on your PATH, so your own `claude`, `codex` and `pi` are unchanged. Tabs made before keep their icon until `orc rex clear` and `orc rex start` remake them.

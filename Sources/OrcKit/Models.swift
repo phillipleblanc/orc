@@ -126,10 +126,12 @@ public struct SessionService {
     public func removeProject(_ project: Workspace) async throws {
         _ = try await LocalRPC.call("repo.remove", ["repo": "id:" + project.id])
     }
-    public func create(name: String, worktree: String, command: String?, mcp: [String] = []) async throws -> String {
+    /// With `rexTab`, the Rex tab the session is about to be attached in, which the runtime's Rex sync then keeps as the session's tab.
+    public func create(name: String, worktree: String, command: String?, mcp: [String] = [], rexTab: RexTab? = nil) async throws -> String {
         var params: [String: Any] = ["title": try validatedName(name), "worktree": worktree, "clientMutationId": UUID().uuidString]
         if let command, !command.isEmpty { params["command"] = command }
         if !mcp.isEmpty { params["mcp"] = mcp }
+        if let rexTab { params["rexTab"] = rexTab.parameters }
         let response = try await LocalRPC.call("terminal.create", params, timeout: 60)
         guard let handle = (response["terminal"] as? [String: Any])?["handle"] as? String else {
             throw OrcError("The runtime did not return the created session. Check `orc list` before retrying.")

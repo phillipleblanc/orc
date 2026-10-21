@@ -3,7 +3,8 @@
 -- it with `rex do rex-sync.lua --json --args -` (see rex.ts).
 --
 -- rex.args: `sessions`, the running Orc sessions ({handle, name, cwd, command, project = {id, name}}); `map`, the
--- tab made for each Orc session, by handle ({session, window, name, project}); `projects`, the Rex session made for
+-- tab made for each Orc session, by handle ({session, window, name, project, adopted}), where an adopted tab is one
+-- of the user's own in which `orc new` started the session; `projects`, the Rex session made for
 -- each project, by project id ({session, name}); `dismissed`, the handles of Orc sessions whose tab or project
 -- session was closed in Rex, which stay out of Rex until `orc rex start` runs again; and `clear`, true to close
 -- everything in `map` and forget every project, as `orc rex clear` does.
@@ -51,6 +52,8 @@ for handle, entry in pairs(args.map or {}) do
     local view = call("session.attach", { session_id = entry.session }).view or {}
     local window = find_window(view, entry.window)
     if not session then
+      -- A tab of the user's own stays when its session ends.
+      if entry.adopted then return end
       if window then call("session.close_window", { session_id = entry.session, window_id = entry.window }) end
       touched[entry.session] = view.label or entry.name
       table.insert(result.closed, entry.name)
@@ -61,7 +64,7 @@ for handle, entry in pairs(args.map or {}) do
         call("session.set_window_label", { session_id = entry.session, window_id = entry.window, label = session.name })
         table.insert(result.renamed, session.name)
       end
-      result.map[handle] = { session = entry.session, window = entry.window, name = session.name, project = entry.project }
+      result.map[handle] = { session = entry.session, window = entry.window, name = session.name, project = entry.project, adopted = entry.adopted }
     end
   end)
   -- Kept, so a later sync retries it rather than making a second tab or leaving one behind.

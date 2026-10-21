@@ -412,7 +412,9 @@ worktree), labeled with its name, with a tab per Orc session, labeled with the s
 linked `orc`: Rex picks a tab's icon from its program's path and argv0. The script's client gives the tab up, so
 the app showing it sizes it. It relabels renamed sessions and projects, closes the tabs of ended
 sessions, and removes a Rex session it made or closed a tab in once no windows are left in it. A tab or project
-session closed in Rex leaves its Orc sessions dismissed until the next `orc.rex.start`. A clear closes every tab
+session closed in Rex leaves its Orc sessions dismissed until the next `orc.rex.start`. A `terminal.create` with `rexTab` (`session`, `window`, `server`), which `orc new` sends from a Rex
+tab it attaches in, adopts that tab as the session's when its server is the linked one: syncs relabel it and make
+no other tab, and leave it open when the session ends. A clear closes every tab
 the sync made and removes their Rex sessions once empty, reporting those that other tabs keep open. A failed sync
 is logged once per distinct error and reported as `lastError`; the next change retries.
 
