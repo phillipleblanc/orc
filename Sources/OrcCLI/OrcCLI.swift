@@ -388,6 +388,35 @@ import COrcSupport
                     }
                 }
             }
+        case "rex":
+            let action = options.first
+            if action != nil { options.removeFirst() }
+            guard options.isEmpty, [nil, "start", "stop"].contains(action) else { throw OrcError("Usage: orc rex [start | stop] [--json]") }
+            switch action {
+            case "start":
+                let environment = ProcessInfo.processInfo.environment
+                guard let rex = rexCommand(environment) else {
+                    throw OrcError("Run `orc rex start` in a Rex terminal, or put Rex's `rex` command on your PATH.")
+                }
+                let result = try await LocalRPC.call("orc.rex.start", ["rex": rex, "server": environment["REX_SERVER"] ?? NSNull(),
+                    "orc": RuntimeBootstrap.executable.path, "config": environment["ORC_CONFIG_DIR"] ?? NSNull()], timeout: 120)
+                if json { try emit(result) } else {
+                    let count = result["sessions"] as? Int ?? 0
+                    print("Rex shows \(count) Orc session\(count == 1 ? "" : "s"), each as a Rex session of its own. Orc keeps them in sync until `orc rex stop`.")
+                    for error in result["errors"] as? [String] ?? [] { print("Not synced: \(safe(error))") }
+                }
+            case "stop":
+                let result = try await LocalRPC.call("orc.rex.stop")
+                if json { try emit(result) }
+                else { print(result["stopped"] as? Bool == true ? "Orc no longer syncs sessions to Rex; the Rex sessions it made stay." : "Orc was not syncing sessions to Rex.") }
+            default:
+                let result = try await LocalRPC.call("orc.rex.status")
+                if json { try emit(result) }
+                else if result["linked"] as? Bool == true {
+                    print("Orc keeps \(result["sessions"] as? Int ?? 0) sessions in sync with Rex. `orc rex stop` stops.")
+                    if let error = result["lastError"] as? String { print("Last sync: \(safe(error))") }
+                } else { print("Orc is not syncing sessions to Rex. Run `orc rex start` in a Rex terminal.") }
+            }
         case "status":
             guard options.isEmpty else { throw OrcError("Usage: orc status [--json]") }
             let result = try await LocalRPC.call("status.get")
@@ -411,6 +440,12 @@ import COrcSupport
         }
         let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command, mcp: mcp)
         return (handle, name, command == nil ? type.rawValue : "custom", project.name)
+    }
+    /// Rex's `rex` command: the one a Rex terminal names in REX_BIN_DIR, else the first on PATH.
+    static func rexCommand(_ environment: [String: String]) -> String? {
+        let directories = [environment["REX_BIN_DIR"]].compactMap { $0 } + (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        return directories.map { URL(fileURLWithPath: $0).appendingPathComponent("rex").path }
+            .first { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }
     }
     static func safe(_ text: String) -> String { String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }) }
     static let help = """
@@ -446,6 +481,9 @@ import COrcSupport
                    [--name NAME] [--rotate] [--link | --json]
     orc computers [--json]                   List computer grants and network addresses
     orc computers revoke DEVICE_ID [--json]  Revoke a computer's access
+    orc rex start [--json]                   In Rex: show each session as a Rex session, kept in sync
+    orc rex stop [--json]                    Stop syncing sessions to Rex
+    orc rex [--json]                         Whether sessions are synced to Rex
     orc status [--json]                      Start the runtime if needed and report it
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.

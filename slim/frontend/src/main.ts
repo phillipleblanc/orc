@@ -20,6 +20,7 @@ import { createHandlers, createSessionStreams } from './methods.ts'
 import { MOBILE_METHODS } from './mobile-methods.ts'
 import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
+import { rexHandlers, RexSync } from './rex.ts'
 import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
@@ -112,6 +113,9 @@ const subscriptions = new ConnectionSubscriptions()
 const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
 const sizes = new TerminalSizes(log)
 const notifications = new NotificationQueue()
+// The Rex server `orc rex start` linked, kept in sync with these sessions.
+const rex = new RexSync({ profile, store, catalog, log })
+await rex.load()
 const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
@@ -229,6 +233,7 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   },
   ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
   ...desktopPairingHandlers({ runtimeId, devices, keypair, websocket }),
+  ...rexHandlers(rex),
   'slim.pairing.list': () => ({ devices: devices.list() }),
   'durable.chat': async (params) => {
     const name = String(params.name ?? '')

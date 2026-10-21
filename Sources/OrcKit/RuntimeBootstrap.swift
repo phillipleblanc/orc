@@ -6,6 +6,8 @@ import COrcSupport
 
 /// Reuses the selected profile's runtime, or starts the bundled one headlessly.
 public enum RuntimeBootstrap {
+    /// This program's executable, the app itself or its bundled CLI, with symlinks resolved.
+    public static var executable: URL { RuntimeStarter.currentExecutable }
     public static func ensureRunning() async throws -> RuntimeMetadata {
         try await Task.detached {
             let connection = try RuntimeStarter().connect(timeout: 3)

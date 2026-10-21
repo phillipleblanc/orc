@@ -147,6 +147,7 @@ export class SessionStore extends EventEmitter {
     session.relocate(target, name)
     this.sessions.set(name, session)
     await writeFile(join(target, 'meta.json'), JSON.stringify(session.meta, null, 2), { mode: 0o600 })
+    this.emit('renamed', session)
   }
 
   /**
