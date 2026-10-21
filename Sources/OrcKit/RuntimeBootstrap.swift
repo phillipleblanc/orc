@@ -1,4 +1,5 @@
 import Foundation
+import CoreServices
 import CryptoKit
 import Darwin
 import COrcSupport
@@ -148,16 +149,23 @@ struct RuntimeStarter {
         }
         let executable = try resolveExecutable()
         try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let app = try runtimeApp()
         let log = Darwin.open(state.appendingPathComponent("backend.log").path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard log >= 0 else { throw startupError("Cannot open the runtime log") }
         defer { Darwin.close(log) }
-        let arguments = [executable.path, "--profile", profile.path]
+        // macOS finds an app's permissions through Launch Services, which knows a copy only once it is registered.
+        if let app, case let status = LSRegisterURL(app as CFURL, true), status != noErr {
+            let warning = "orc: cannot register \(app.path) with Launch Services (error \(status)); sessions may not reach the local network\n"
+            _ = warning.withCString { Darwin.write(log, $0, strlen($0)) }
+        }
+        let runtime = [executable.path, "--profile", profile.path]
+        let arguments = app.map { [$0.appendingPathComponent("Contents/MacOS/Orc Runtime").path, "--"] + runtime } ?? runtime
         let env = launchEnvironment().map { $0.key + "=" + $0.value }
         let argv = arguments.map { strdup($0) } + [nil]
         let envp = env.map { strdup($0) } + [nil]
         defer { for pointer in argv + envp { free(pointer) } }
         var pid: Int32 = 0
-        let status = orc_spawn_backend(executable.path, argv, envp, profile.path, log, log, &pid)
+        let status = orc_spawn_backend(arguments[0], argv, envp, profile.path, log, log, app == nil ? 0 : 1, &pid)
         guard status == 0 else { throw startupError("Could not launch the runtime: \(String(cString: strerror(status)))") }
         // Reap our child without holding a thread for the lifetime of the runtime.
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global(qos: .utility))
@@ -184,6 +192,46 @@ struct RuntimeStarter {
             throw OrcError("The bundled runtime is missing from \(launcher.path). Reinstall Orc.")
         }
         return launcher
+    }
+
+    /// Orc Runtime.app, which the bundled runtime runs under with responsibility disclaimed, so that macOS
+    /// attributes its privacy permissions, such as Local Network, and those of every session to that app rather
+    /// than to whichever Orc client started the runtime. A runtime started from `ORC_RUNTIME_EXECUTABLE` runs
+    /// without it, as the client's child.
+    private func runtimeApp() throws -> URL? {
+        if let override = environment["ORC_RUNTIME_EXECUTABLE"], !override.isEmpty { return nil }
+        let source = try Self.hostBundle(executable: hostExecutable).appendingPathComponent("Contents/Helpers/Orc Runtime.helper")
+        guard FileManager.default.isExecutableFile(atPath: source.appendingPathComponent("Contents/MacOS/Orc Runtime").path) else {
+            throw OrcError("Orc Runtime is missing from \(source.path). Reinstall Orc.")
+        }
+        return try Self.installRuntimeApp(source, in: profile)
+    }
+
+    /// Copies Orc Runtime.app to `runtime-apps/DIGEST/` in the profile, named for its contents. A copy is never
+    /// replaced or removed: macOS attributes every session to the copy its runtime ran under, for as long as the
+    /// session runs.
+    static func installRuntimeApp(_ source: URL, in profile: URL) throws -> URL {
+        let manager = FileManager.default
+        var hash = SHA256()
+        for path in try manager.subpathsOfDirectory(atPath: source.path).sorted() {
+            let file = source.appendingPathComponent(path)
+            guard (try manager.attributesOfItem(atPath: file.path))[.type] as? FileAttributeType == .typeRegular else { continue }
+            hash.update(data: Data(path.utf8 + [0]))
+            hash.update(data: try Data(contentsOf: file))
+        }
+        let digest = hash.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
+        let directory = profile.appendingPathComponent("runtime-apps/" + digest)
+        let app = directory.appendingPathComponent("Orc Runtime.app")
+        guard !manager.fileExists(atPath: app.path) else { return app }
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temporary = directory.appendingPathComponent(".Orc Runtime.app.\(getpid()).tmp")
+        try? manager.removeItem(at: temporary)
+        try manager.copyItem(at: source, to: temporary)
+        do { try manager.moveItem(at: temporary, to: app) } catch {
+            try? manager.removeItem(at: temporary)
+            guard manager.fileExists(atPath: app.path) else { throw error }
+        }
+        return app
     }
 
     func launchEnvironment() -> [String: String] {

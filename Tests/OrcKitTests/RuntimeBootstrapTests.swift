@@ -31,6 +31,28 @@ final class RuntimeBootstrapTests: XCTestCase {
         }
     }
 
+    func testRuntimeAppCopiesAreNamedForTheirContentsAndNeverReplaced() throws {
+        let root = try temporary(), profile = root.appendingPathComponent("profile")
+        let source = root.appendingPathComponent("Orc Runtime.helper")
+        let executable = source.appendingPathComponent("Contents/MacOS/Orc Runtime")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("first".utf8).write(to: executable)
+        try Data("<plist/>".utf8).write(to: source.appendingPathComponent("Contents/Info.plist"))
+        let first = try RuntimeStarter.installRuntimeApp(source, in: profile)
+        XCTAssertEqual(first.lastPathComponent, "Orc Runtime.app")
+        XCTAssertEqual(first.deletingLastPathComponent().deletingLastPathComponent().path, profile.appendingPathComponent("runtime-apps").path)
+        XCTAssertEqual(try Data(contentsOf: first.appendingPathComponent("Contents/MacOS/Orc Runtime")), Data("first".utf8))
+        XCTAssertEqual(try RuntimeStarter.installRuntimeApp(source, in: profile).path, first.path)
+
+        try Data("second".utf8).write(to: executable)
+        let second = try RuntimeStarter.installRuntimeApp(source, in: profile)
+        XCTAssertNotEqual(second.path, first.path)
+        XCTAssertEqual(try Data(contentsOf: second.appendingPathComponent("Contents/MacOS/Orc Runtime")), Data("second".utf8))
+        XCTAssertEqual(try Data(contentsOf: first.appendingPathComponent("Contents/MacOS/Orc Runtime")), Data("first".utf8),
+                       "a copy that sessions may run under is never replaced")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: second.deletingLastPathComponent().path), ["Orc Runtime.app"])
+    }
+
     func testRuntimeDoesNotInheritSessionIdentityOrNodeMode() {
         let profile = URL(fileURLWithPath: "/tmp/orc-runtime-test")
         let starter = RuntimeStarter(profile: profile, environment: [

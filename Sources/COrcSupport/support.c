@@ -12,11 +12,19 @@
 
 int orc_executable_path(char *buffer, uint32_t capacity) { return _NSGetExecutablePath(buffer, &capacity); }
 
-int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int stdout_fd, int log_fd, int *pid) {
+// Makes the child responsible for itself: macOS then attributes its privacy permissions, and those of its
+// descendants, to the child's own app instead of to the process that spawned it.
+int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attrs, int disclaim) __attribute__((weak_import));
+
+int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int stdout_fd, int log_fd, int disclaim, int *pid) {
     posix_spawnattr_t attrs;
     posix_spawn_file_actions_t actions;
     int result = posix_spawnattr_init(&attrs);
     if (result) return result;
+    if (disclaim && responsibility_spawnattrs_setdisclaim && (result = responsibility_spawnattrs_setdisclaim(&attrs, 1))) {
+        posix_spawnattr_destroy(&attrs);
+        return result;
+    }
     result = posix_spawn_file_actions_init(&actions);
     if (result) { posix_spawnattr_destroy(&attrs); return result; }
     // A separate session survives the app/CLI and its terminal.

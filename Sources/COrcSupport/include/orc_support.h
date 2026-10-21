@@ -3,7 +3,7 @@
 #include <stdint.h>
 int orc_connect_unix(const char *path, int timeout_seconds);
 int orc_executable_path(char *buffer, uint32_t capacity);
-int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int stdout_fd, int log_fd, int *pid);
+int orc_spawn_backend(const char *executable, char *const argv[], char *const envp[], const char *cwd, int stdout_fd, int log_fd, int disclaim, int *pid);
 uint64_t orc_process_start_time(int pid);
 int orc_crypto_keypair(uint8_t *public_key, uint8_t *secret_key);
 int orc_crypto_shared(uint8_t *shared, const uint8_t *public_key, const uint8_t *secret_key);

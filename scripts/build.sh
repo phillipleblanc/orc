@@ -53,6 +53,15 @@ cp slim/frontend/package.json slim/frontend/package-lock.json "$ORC_RUNTIME/fron
 rsync -a slim/frontend/src/ "$ORC_RUNTIME/frontend/src/"
 rsync -a --delete slim/frontend/build/ "$ORC_RUNTIME/frontend/build/"
 npm --prefix "$ORC_RUNTIME/frontend" ci --omit=dev --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
+# Orc Runtime, the app the runtime runs under. Its extension keeps Launch Services from registering this copy;
+# Orc registers the copies it makes in each runtime profile. A fixed output name keeps the build reproducible.
+ORC_RUNTIME_APP="$ORC_APP/Contents/Helpers/Orc Runtime.helper"
+mkdir -p "$ORC_RUNTIME_APP/Contents/MacOS" "$ORC_RUNTIME_APP/Contents/Resources"
+clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=14.0 -o "$ORC_RUNTIME_APP/Contents/MacOS/Orc Runtime" slim/runtime-app/main.c
+cp slim/runtime-app/Info.plist "$ORC_RUNTIME_APP/Contents/Info.plist"
+cp "dist/icon/$ORC_ICON_NAME.icns" "$ORC_RUNTIME_APP/Contents/Resources/"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string $ORC_ICON_NAME" "$ORC_RUNTIME_APP/Contents/Info.plist"
+codesign --force --sign - "$ORC_RUNTIME_APP"
 codesign --force --sign - "$ORC_RUNTIME/orc-holder"
 codesign --verify --strict "$ORC_RUNTIME/node"
 codesign --force --sign - "$ORC_APP/Contents/Resources/orc"

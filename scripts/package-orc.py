@@ -19,6 +19,7 @@ import time
 
 RUNTIME = Path("Contents/Resources/Runtime")
 EXECUTABLES = [Path("Contents/MacOS/Orc"), Path("Contents/Resources/orc"),
+               Path("Contents/Helpers/Orc Runtime.helper/Contents/MacOS/Orc Runtime"),
                RUNTIME / "orc-runtime", RUNTIME / "node", RUNTIME / "orc-holder"]
 FILES = [RUNTIME / "frontend/src/main.ts", RUNTIME / "frontend/node_modules/@xterm/headless/package.json"]
 

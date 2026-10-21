@@ -33,3 +33,7 @@ A restart ends every session. The next time Orc or `orc` starts the runtime, the
 ## Runtime access
 
 The first time Orc starts or reaches a runtime, it requests its own access grant over the runtime's owner-only local socket and saves it in `~/.config/orc/connection.json` with owner-only permissions. The saved connection is bound to its runtime profile and server key.
+
+## Permissions
+
+The runtime runs as its own app, **Orc Runtime**, so macOS asks about Orc Runtime, not Orc, when a program in a session needs a permission. Allow it to find devices on your local network so that agents can reach model servers and other machines there. The choice applies to every session, whichever of Orc, `orc` or an agent started the runtime, and lasts across Orc updates. It is listed under Local Network in System Settings → Privacy & Security.

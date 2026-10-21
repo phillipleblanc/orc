@@ -100,7 +100,7 @@ flowchart LR
         runtime["orca-runtime.json · rpc.sock · frontend.lock · boot.json"]
         identity["orca-e2ee-keypair.json · orca-devices.json"]
         projects["projects.json"]
-        binaries["holders/HASH/orc-holder"]
+        binaries["holders/HASH/orc-holder<br/>runtime-apps/HASH/Orc Runtime.app"]
         hookFiles["agent-hooks/HASH/<br/>orc-agent-hook · claude-settings.json · orc-agent-status.ts"]
         wakeLogs["wake-logs/ID.log · ID.exit"]
         ended["ended/NAME.TIME/"]
@@ -111,6 +111,12 @@ flowchart LR
     frontendProcess --> profileFiles
     agentProcess --> eventFiles
 ```
+
+Clients start the frontend through a copy of Orc Runtime.app in `runtime-apps/HASH/`, registered with
+Launch Services and spawned with responsibility disclaimed. macOS attributes the privacy permissions of
+the frontend, its holders and their programs, such as Local Network, to that app, whichever client started
+the frontend. A copy is never replaced, so a session keeps an identity macOS recognizes for as long as it
+runs.
 
 The session directory's name is the session's identity. A holder writes only its socket and its own
 records, relative to a descriptor for the directory, so renaming the directory does not disturb it.
@@ -249,9 +255,9 @@ flowchart TB
         same -- no --> approximate["Replay the serialized screen once"]
     end
 
-    subgraph holderUpgrade["Holder upgrade"]
-        install["Install the new holder under holders/NEW_HASH"] --> newSessions["New sessions start on it"]
-        install --> oldSessions["Existing sessions keep the binary they started with"]
+    subgraph holderUpgrade["Holder or Orc Runtime upgrade"]
+        install["Install the new holder under holders/NEW_HASH,<br/>or Orc Runtime under runtime-apps/NEW_HASH"] --> newSessions["New sessions start on it"]
+        install --> oldSessions["Existing sessions keep the binary and app they started with"]
     end
 ```
 

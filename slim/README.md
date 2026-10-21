@@ -18,6 +18,9 @@ holder × N (Swift, one per session)   PTY, child process, raw output since the 
   terminal output. Stopping a holder ends its session; nothing else does.
 - **Frontend** (`frontend/`): rebuilds its view of every session from the holders whenever it starts.
   Killing or upgrading it does not affect running programs.
+- **Orc Runtime** (`runtime-app/`): the app the frontend runs under, so that macOS attributes the privacy
+  permissions of the runtime and every session, such as Local Network, to one app of its own rather than
+  to whichever client started the runtime. Its executable runs the frontend as its child.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has diagrams of the processes, on-disk state, output and checkpoint
 flow, frontend start, upgrades and failure behavior.
