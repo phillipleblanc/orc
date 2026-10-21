@@ -398,18 +398,21 @@ Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
 
 `orc rex start`, run in a Rex terminal, links the runtime to that Rex server with `orc.rex.start` (`rex`, the
 absolute path of Rex's CLI from `REX_BIN_DIR` or PATH; `server`, from `REX_SERVER`; `orc`, the CLI's own path;
-`config`, from `ORC_CONFIG_DIR`). `orc.rex.stop` unlinks it and `orc.rex.status` reports it; all three are on the
-local socket only. The link, and the Rex session and tab made for each Orc session by handle, are kept in
-`rex.json` in the profile (`rex.ts`).
+`config`, from `ORC_CONFIG_DIR`). `orc.rex.stop` stops syncing, `orc.rex.clear` then removes what the sync made,
+and `orc.rex.status` reports it; all four are on the local socket only. The link, the Rex session made for each
+project and the tab made for each Orc session, by handle, are kept in `rex.json` in the profile (`rex.ts`),
+through a stop until a clear.
 
-While linked, the runtime syncs when it starts, when linked, and 300 ms after a session is added, renamed or
+While syncing, the runtime syncs when it starts, when linked, and 300 ms after a session is added, renamed or
 ends, one sync at a time. A sync runs `rex --autostart=false [-S server] do rex-sync.lua --json --args -` with the
-running sessions, the map and the dismissed sessions on stdin. The script makes one Rex session per Orc session,
-labeled with its name, whose tab runs `orc attach NAME --no-session-switch --client-id rex-HANDLE
---viewport-ownership` and is given up by the script's client, so the app showing it sizes it. It relabels
-renamed sessions; for ended ones it closes their tab, and their Rex session once nothing else is in it. A Rex
-session or tab closed in Rex leaves its Orc session dismissed until the next `orc.rex.start`. A failed sync is
-logged once per distinct error and reported as `lastError`; the next change retries.
+running sessions and what earlier syncs made on stdin. The script keeps one Rex session per project (a session's
+worktree), labeled with its name, with a tab per Orc session, labeled with the session's name, that runs
+`orc attach NAME --no-session-switch --client-id rex-HANDLE --viewport-ownership`; the script's client gives the
+tab up, so the app showing it sizes it. It relabels renamed sessions and projects, closes the tabs of ended
+sessions, and removes a Rex session it made or closed a tab in once no windows are left in it. A tab or project
+session closed in Rex leaves its Orc sessions dismissed until the next `orc.rex.start`. A clear closes every tab
+the sync made and removes their Rex sessions once empty, reporting those that other tabs keep open. A failed sync
+is logged once per distinct error and reported as `lastError`; the next change retries.
 
 ## Phones
 

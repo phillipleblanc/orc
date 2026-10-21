@@ -391,7 +391,8 @@ import COrcSupport
         case "rex":
             let action = options.first
             if action != nil { options.removeFirst() }
-            guard options.isEmpty, [nil, "start", "stop"].contains(action) else { throw OrcError("Usage: orc rex [start | stop] [--json]") }
+            guard options.isEmpty, [nil, "start", "stop", "clear"].contains(action) else { throw OrcError("Usage: orc rex [start | stop | clear] [--json]") }
+            func count(_ value: Any?, _ noun: String) -> String { let n = value as? Int ?? 0; return "\(n) \(noun)\(n == 1 ? "" : "s")" }
             switch action {
             case "start":
                 let environment = ProcessInfo.processInfo.environment
@@ -401,20 +402,29 @@ import COrcSupport
                 let result = try await LocalRPC.call("orc.rex.start", ["rex": rex, "server": environment["REX_SERVER"] ?? NSNull(),
                     "orc": RuntimeBootstrap.executable.path, "config": environment["ORC_CONFIG_DIR"] ?? NSNull()], timeout: 120)
                 if json { try emit(result) } else {
-                    let count = result["sessions"] as? Int ?? 0
-                    print("Rex shows \(count) Orc session\(count == 1 ? "" : "s"), each as a Rex session of its own. Orc keeps them in sync until `orc rex stop`.")
+                    print("Rex shows \(count(result["sessions"], "Orc session")) as tabs in \(count(result["projects"], "Rex session")), one per project. "
+                          + "Orc keeps them in sync until `orc rex stop`.")
                     for error in result["errors"] as? [String] ?? [] { print("Not synced: \(safe(error))") }
                 }
             case "stop":
                 let result = try await LocalRPC.call("orc.rex.stop")
                 if json { try emit(result) }
-                else { print(result["stopped"] as? Bool == true ? "Orc no longer syncs sessions to Rex; the Rex sessions it made stay." : "Orc was not syncing sessions to Rex.") }
+                else { print(result["stopped"] as? Bool == true ? "Orc no longer syncs sessions to Rex. Its Rex sessions stay; `orc rex clear` removes them." : "Orc was not syncing sessions to Rex.") }
+            case "clear":
+                let result = try await LocalRPC.call("orc.rex.clear", timeout: 120)
+                if json { try emit(result) } else {
+                    print("Closed \(count((result["closed"] as? [String])?.count, "tab")) and removed \(count((result["removed"] as? [String])?.count, "Rex session")).")
+                    for name in result["kept"] as? [String] ?? [] { print("Kept \(safe(name)): other tabs are open in it.") }
+                    for error in result["errors"] as? [String] ?? [] { print("Not removed: \(safe(error))") }
+                }
             default:
                 let result = try await LocalRPC.call("orc.rex.status")
                 if json { try emit(result) }
-                else if result["linked"] as? Bool == true {
-                    print("Orc keeps \(result["sessions"] as? Int ?? 0) sessions in sync with Rex. `orc rex stop` stops.")
+                else if result["syncing"] as? Bool == true {
+                    print("Orc keeps \(count(result["sessions"], "session")) in sync with Rex. `orc rex stop` stops.")
                     if let error = result["lastError"] as? String { print("Last sync: \(safe(error))") }
+                } else if (result["sessions"] as? Int ?? 0) + (result["projects"] as? Int ?? 0) > 0 {
+                    print("Orc stopped syncing sessions to Rex; the Rex sessions it made remain. `orc rex clear` removes them, `orc rex start` resumes.")
                 } else { print("Orc is not syncing sessions to Rex. Run `orc rex start` in a Rex terminal.") }
             }
         case "status":
@@ -481,8 +491,9 @@ import COrcSupport
                    [--name NAME] [--rotate] [--link | --json]
     orc computers [--json]                   List computer grants and network addresses
     orc computers revoke DEVICE_ID [--json]  Revoke a computer's access
-    orc rex start [--json]                   In Rex: show each session as a Rex session, kept in sync
+    orc rex start [--json]                   In Rex: show each project's sessions as tabs, kept in sync
     orc rex stop [--json]                    Stop syncing sessions to Rex
+    orc rex clear [--json]                   Once stopped, remove the Rex sessions the sync made
     orc rex [--json]                         Whether sessions are synced to Rex
     orc status [--json]                      Start the runtime if needed and report it
 

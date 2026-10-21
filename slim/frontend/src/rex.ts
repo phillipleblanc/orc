@@ -15,16 +15,19 @@ const SYNC_TIMEOUT_MS = 60_000
 
 /** How to reach a Rex server, as `orc rex start` found it in the Rex terminal it ran in. */
 export type RexLink = { rex: string; server: string | null; orc: string; config: string | null }
-type RexEntry = { session: string; window: string; name: string }
-type RexState = { link: RexLink; map: Record<string, RexEntry>; dismissed: string[] }
-export type RexSyncResult = { created: string[]; renamed: string[]; closed: string[]; errors: string[] }
+type RexTab = { session: string; window: string; name: string; project: string }
+type RexProject = { session: string; name: string }
+type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[] }
+type SyncSession = { handle: string; name: string; cwd: string; command: string[]; project: { id: string; name: string } }
+export type RexSyncResult = { created: string[]; renamed: string[]; closed: string[]; removed: string[]; kept: string[]; errors: string[] }
 
 /**
  * Keeps a Rex server in sync with this runtime's sessions once `orc rex start` links it: one Rex session per Orc
- * session, labeled with its name, whose tab runs `orc attach` for it as a viewer that leaves the session's size alone
- * until someone types there. It syncs when linked, when the frontend starts, and when a session is added, renamed
+ * project, labeled with the project's name, with a tab for each of its Orc sessions, labeled with the session's
+ * name, that runs `orc attach` for it as a viewer that leaves the session's size alone until someone types there. It syncs when linked, when the frontend starts, and when a session is added, renamed
  * or ends, by running `rex-sync.lua` with Rex's own CLI. A Rex session or tab closed in Rex stays out of Rex until
- * `orc rex start` runs again. The link, and the Rex session and tab made for each Orc session, are kept in
+ * `orc rex start` runs again. `orc rex stop` stops syncing and keeps the Rex sessions; `orc rex clear` then removes
+ * them. The link, the Rex session made for each project and the tab made for each Orc session are kept in
  * `rex.json` in the profile.
  */
 export class RexSync {
@@ -44,68 +47,90 @@ export class RexSync {
   private get file(): string { return join(this.options.profile, 'rex.json') }
 
   async load(): Promise<void> {
-    this.state = await readFile(this.file, 'utf8').then((text) => JSON.parse(text) as RexState, () => null)
+    this.state = await readFile(this.file, 'utf8').then((text) => ({ syncing: true, projects: {}, ...JSON.parse(text) }) as RexState, () => null)
     this.schedule()
   }
 
   /** Links a Rex server, brings back every Orc session closed in Rex, and syncs now. */
   async start(link: RexLink): Promise<RexSyncResult> {
     const same = this.state?.link.server === link.server
-    this.state = { link, map: same ? this.state!.map : {}, dismissed: [] }
+    this.state = { link, syncing: true, map: same ? this.state!.map : {}, projects: same ? this.state!.projects : {}, dismissed: [] }
     await this.save(this.state)
-    return this.sync()
+    return this.enqueue(() => this.syncOnce())
   }
 
-  /** Stops syncing. The Rex sessions made so far stay. */
+  /** Stops syncing, keeping the Rex sessions made so far and what they are, for `clear`. */
   async stop(): Promise<boolean> {
-    const linked = this.state !== null
-    this.state = null
+    if (!this.state?.syncing) return false
+    this.state.syncing = false
     if (this.timer) clearTimeout(this.timer)
-    await rm(this.file, { force: true })
-    return linked
+    await this.save(this.state)
+    return true
+  }
+
+  /** Once stopped, removes the Rex sessions the sync made, except ones with other tabs open in them, and forgets the link. */
+  clear(): Promise<RexSyncResult> {
+    if (this.state?.syncing) throw new RpcError('conflict', 'Orc is syncing sessions to Rex; run `orc rex stop` first')
+    return this.enqueue(async () => {
+      const state = this.state
+      if (!state || this.state?.syncing) return emptyResult()
+      const result = Object.keys(state.map).length || Object.keys(state.projects).length ? await this.run(state, [], true) : emptyResult()
+      if (Object.keys(state.map).length === 0 && Object.keys(state.projects).length === 0) {
+        this.state = null
+        await rm(this.file, { force: true })
+      }
+      return result
+    })
   }
 
   status(): Record<string, unknown> {
     return {
-      linked: this.state !== null, server: this.state?.link.server ?? null, sessions: Object.keys(this.state?.map ?? {}).length,
+      syncing: this.state?.syncing ?? false, server: this.state?.link.server ?? null, sessions: Object.keys(this.state?.map ?? {}).length,
+      projects: Object.keys(this.state?.projects ?? {}).length,
       lastSyncAt: this.lastSyncAt, lastError: this.lastError
     }
   }
 
   private schedule(): void {
-    if (!this.state) return
+    if (!this.state?.syncing) return
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => { this.timer = null; this.sync().catch(() => {}) }, SYNC_DELAY_MS)
+    this.timer = setTimeout(() => { this.timer = null; this.enqueue(() => this.syncOnce()).catch(() => {}) }, SYNC_DELAY_MS)
     this.timer.unref()
   }
 
-  /** Runs one sync after any already under way. */
-  private sync(): Promise<RexSyncResult> {
-    const run = this.queue.then(() => this.syncOnce())
+  /** Runs `work` after any sync or clear already under way. */
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work)
     this.queue = run.catch(() => {})
     return run
   }
 
   private async syncOnce(): Promise<RexSyncResult> {
     const state = this.state
-    if (!state) return { created: [], renamed: [], closed: [], errors: [] }
-    const sessions = this.options.store.list().filter((session) => session.connected).map((session) => ({
-      handle: session.handle, name: session.meta.name, cwd: this.options.catalog.worktreeFor(session).path,
-      command: attachCommand(state.link, this.options.profile, session)
-    }))
+    if (!state?.syncing) return emptyResult()
+    return this.run(state, this.options.store.list().filter((session) => session.connected).map((session) => {
+      const worktree = this.options.catalog.worktreeFor(session)
+      return { handle: session.handle, name: session.meta.name, cwd: worktree.path, command: attachCommand(state.link, this.options.profile, session),
+        project: { id: worktree.id, name: worktree.name } }
+    }), false)
+  }
+
+  /** Runs the script with `sessions`, or to `clear`, and keeps what it made unless the link changed meanwhile. */
+  private async run(state: RexState, sessions: SyncSession[], clear: boolean): Promise<RexSyncResult> {
     let output: Record<string, unknown>
     try {
-      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: state.map, dismissed: state.dismissed })))
+      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: state.map, projects: state.projects, dismissed: state.dismissed, clear })))
     } catch (error) {
       const message = (error as Error).message
       if (message !== this.lastError) this.options.log(`rex sync failed: ${message}`)
       this.lastError = message
       throw new RpcError('rex_unavailable', message)
     }
-    const result = { created: strings(output.created), renamed: strings(output.renamed), closed: strings(output.closed), errors: strings(output.errors) }
-    // A stop, or a start with another server, during the sync leaves its outcome unrecorded.
+    const result = { created: strings(output.created), renamed: strings(output.renamed), closed: strings(output.closed), removed: strings(output.removed),
+      kept: strings(output.kept), errors: strings(output.errors) }
     if (this.state === state) {
-      state.map = output.map && typeof output.map === 'object' && !Array.isArray(output.map) ? output.map as Record<string, RexEntry> : {}
+      state.map = record(output.map) as Record<string, RexTab>
+      state.projects = record(output.projects) as Record<string, RexProject>
       state.dismissed = strings(output.dismissed)
       await this.save(state)
     }
@@ -120,6 +145,15 @@ export class RexSync {
     await writeFile(temporary, JSON.stringify(state, null, 2), { mode: 0o600 })
     await rename(temporary, this.file)
   }
+}
+
+function emptyResult(): RexSyncResult {
+  return { created: [], renamed: [], closed: [], removed: [], kept: [], errors: [] }
+}
+
+/** A JSON object, which Lua writes as an empty array when it has no keys. */
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 /** A viewer of `session` in its Rex tab. */
@@ -172,6 +206,7 @@ export function rexHandlers(sync: RexSync): Handlers {
       return { ...(await sync.start(link)), ...sync.status() }
     },
     'orc.rex.stop': async () => ({ stopped: await sync.stop() }),
+    'orc.rex.clear': async () => ({ ...(await sync.clear()), ...sync.status() }),
     'orc.rex.status': () => sync.status()
   }
 }
