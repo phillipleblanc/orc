@@ -407,8 +407,10 @@ While syncing, the runtime syncs when it starts, when linked, and 300 ms after a
 ends, one sync at a time. A sync runs `rex --autostart=false [-S server] do rex-sync.lua --json --args -` with the
 running sessions and what earlier syncs made on stdin. The script keeps one Rex session per project (a session's
 worktree), labeled with its name, with a tab per Orc session, labeled with the session's name, that runs
-`orc attach NAME --no-session-switch --client-id rex-HANDLE --viewport-ownership`; the script's client gives the
-tab up, so the app showing it sizes it. It relabels renamed sessions and projects, closes the tabs of ended
+`orc attach NAME --no-session-switch --client-id rex-HANDLE --viewport-ownership`, started directly
+(`login: false`) and, for an agent, through `rex-programs/claude`, `codex` or `pi` in the profile, symlinks to the
+linked `orc`: Rex picks a tab's icon from its program's path and argv0. The script's client gives the tab up, so
+the app showing it sizes it. It relabels renamed sessions and projects, closes the tabs of ended
 sessions, and removes a Rex session it made or closed a tab in once no windows are left in it. A tab or project
 session closed in Rex leaves its Orc sessions dismissed until the next `orc.rex.start`. A clear closes every tab
 the sync made and removes their Rex sessions once empty, reporting those that other tabs keep open. A failed sync

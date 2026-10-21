@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import { destroyProfile, Frontend, makeProfile, sleep, until } from './harness.ts'
@@ -57,11 +57,16 @@ process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
   await rpc('terminal.close', { terminal: 'one' })
   await until(async () => (await lastNames())?.join() === 'three', 5000, 'a sync without the ended session')
 
-  // A new frontend picks up the link and syncs.
+  // A new frontend picks up the link and syncs. An agent's tab starts `orc` under the agent's name, for Rex's icon.
   const before = (await synced()).length
   await frontend.kill('SIGTERM')
+  const meta = join(profile, 'sessions', 'three', 'meta.json')
+  await writeFile(meta, JSON.stringify({ ...JSON.parse(await readFile(meta, 'utf8')), agent: 'claude' }))
   frontend = await Frontend.start(profile)
   await until(async () => (await synced()).length > before, 5000, 'a sync when the frontend starts')
+  const program = join(profile, 'rex-programs', 'claude')
+  assert.equal((await synced()).at(-1).sessions[0].command[3], program)
+  assert.equal(await readlink(program), process.execPath)
   assert.equal((await rpc('orc.rex.status')).syncing, true)
   await assert.rejects(rpc('orc.rex.clear'), { code: 'conflict' }, 'clearing waits for the sync to stop')
 

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Catalog } from './catalog.ts'
@@ -12,6 +12,8 @@ const SCRIPT = fileURLToPath(new URL('./rex-sync.lua', import.meta.url))
 // Sessions often come and go together, as when a computer restart restores them.
 const SYNC_DELAY_MS = 300
 const SYNC_TIMEOUT_MS = 60_000
+// Rex picks a tab's icon from the name its program was started by; an agent's tab starts `orc` under the agent's.
+const AGENT_PROGRAMS: Record<string, string> = { claude: 'claude', codex: 'codex', pi: 'pi', durable: 'pi' }
 
 /** How to reach a Rex server, as `orc rex start` found it in the Rex terminal it ran in. */
 export type RexLink = { rex: string; server: string | null; orc: string; config: string | null }
@@ -108,6 +110,7 @@ export class RexSync {
   private async syncOnce(): Promise<RexSyncResult> {
     const state = this.state
     if (!state?.syncing) return emptyResult()
+    await this.linkPrograms(state.link)
     return this.run(state, this.options.store.list().filter((session) => session.connected).map((session) => {
       const worktree = this.options.catalog.worktreeFor(session)
       return { handle: session.handle, name: session.meta.name, cwd: worktree.path, command: attachCommand(state.link, this.options.profile, session),
@@ -140,6 +143,20 @@ export class RexSync {
     return result
   }
 
+  /** `rex-programs/NAME` in the profile, a symlink to `orc` for each agent's name. */
+  private async linkPrograms(link: RexLink): Promise<void> {
+    const directory = join(this.options.profile, 'rex-programs')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    for (const name of new Set(Object.values(AGENT_PROGRAMS))) {
+      const path = join(directory, name)
+      if (await readlink(path).catch(() => null) === link.orc) continue
+      const temporary = `${path}.${process.pid}.tmp`
+      await rm(temporary, { force: true })
+      await symlink(link.orc, temporary)
+      await rename(temporary, path)
+    }
+  }
+
   private async save(state: RexState): Promise<void> {
     const temporary = `${this.file}.${process.pid}.tmp`
     await writeFile(temporary, JSON.stringify(state, null, 2), { mode: 0o600 })
@@ -156,10 +173,11 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
-/** A viewer of `session` in its Rex tab. */
+/** A viewer of `session` in its Rex tab, started as the session's agent for Rex to show its icon. */
 function attachCommand(link: RexLink, profile: string, session: TerminalSession): string[] {
+  const program = AGENT_PROGRAMS[session.meta.agent ?? ''] ? join(profile, 'rex-programs', AGENT_PROGRAMS[session.meta.agent!]) : link.orc
   return ['/usr/bin/env', `ORC_RUNTIME_DIR=${profile}`, ...(link.config ? [`ORC_CONFIG_DIR=${link.config}`] : []),
-    link.orc, 'attach', session.meta.name, '--no-session-switch', '--client-id', `rex-${session.handle}`, '--viewport-ownership']
+    program, 'attach', session.meta.name, '--no-session-switch', '--client-id', `rex-${session.handle}`, '--viewport-ownership']
 }
 
 function runRex(link: RexLink, input: string): Promise<string> {

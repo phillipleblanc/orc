@@ -79,7 +79,8 @@ for _, session in ipairs(args.clear and {} or args.sessions or {}) do
       end
       call("session.attach", { session_id = project.session })
       local window = call("session.new_window", { session_id = project.session, window_label = session.name, focus = false,
-        layout = { block = { flavor = TERMINAL, label = session.name, options = { command = session.command, shell = "none", cwd = session.cwd } } } })
+        -- Started directly, without a login wrapper, so Rex sees the program and shows its icon.
+        layout = { block = { flavor = TERMINAL, label = session.name, options = { command = session.command, shell = "none", login = false, cwd = session.cwd } } } })
       result.map[session.handle] = { session = project.session, window = window.window_id, name = session.name, project = session.project.id }
       table.insert(result.created, session.name)
       -- A tab follows the size of the client that owns it; this one gives it up so the app showing it sizes it.
