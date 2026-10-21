@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { MAX_RECORDS, overallState, parseReport, ProgramStatus } from '../src/program-status.ts'
-import { destroyProfile, Frontend, makeProfile, until } from './harness.ts'
+import { Opcode, type TerminalFrame } from '../src/terminal-frames.ts'
+import { destroyProfile, Frontend, makeProfile, sleep, until } from './harness.ts'
+import { parsePairingLink, RuntimeClient } from './runtime-client.ts'
 
 const b64 = (text: string) => Buffer.from(text).toString('base64')
 
@@ -81,4 +85,72 @@ exec cat`
   // A shell prompt starting does not end a finished record, and a full reset clears it.
   await frontend.rpc('terminal.send', { terminal: terminal.handle, text: '\x1b]133;A\x07\x1bc' })
   await until(async () => !(await listed())?.programStatus, 10_000, 'the reset')
+})
+
+/** A desktop's terminal.multiplex subscription to `terminal`, collecting the ProgramStatus frames it receives. */
+async function viewer(rpc: (method: string, params?: Record<string, unknown>) => Promise<any>, terminal: string, programStatus: boolean) {
+  const { link } = await rpc('slim.pairing.create', { scope: 'runtime', name: 'viewer' })
+  const client = await RuntimeClient.connect(parsePairingLink(link))
+  const statuses: any[][] = []
+  client.onFrame = (frame: TerminalFrame) => { if (frame.opcode === Opcode.ProgramStatus) statuses.push(JSON.parse(frame.payload.toString('utf8')).records) }
+  const multiplex = client.stream('terminal.multiplex', {})
+  await multiplex.next((event) => event.type === 'ready')
+  client.sendFrame(Opcode.Subscribe, 0, Buffer.from(JSON.stringify({
+    streamId: 1, terminal, client: { id: `viewer-${terminal}`, type: 'desktop' }, viewport: { cols: 80, rows: 24 },
+    capabilities: { desktopViewportClaims: 1, ...(programStatus ? { programStatus: 1 } : {}) }
+  })))
+  await multiplex.next((event) => event.type === 'subscribed')
+  const latest = () => statuses.at(-1)
+  return { client, statuses, latest }
+}
+
+test('a viewer that asks for program status gets the records a terminal attached to the session shows, then every change', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  let frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const rpc = (method: string, params?: Record<string, unknown>) => frontend.rpc(method, params)
+  // Reports before anyone views the session, then prints each line it is sent, so a line can carry a report.
+  const script = `stty -echo; printf '\\033]7501;state=working:app=build:msg=${b64('Compiling')}\\033\\\\'; exec cat`
+  const { terminal } = await rpc('terminal.create', { name: 'build', argv: ['/bin/sh', '-c', script], cols: 80, rows: 24 })
+  await until(async () => (await rpc('terminal.list')).terminals.find((each: any) => each.handle === terminal.handle)?.programStatus, 10_000, 'the first report')
+
+  const watching = await viewer(rpc, terminal.handle, true)
+  const plain = await viewer(rpc, terminal.handle, false)
+  t.after(() => { watching.client.close(); plain.client.close() })
+  await until(async () => watching.latest(), 5000, 'the status on subscribing')
+  assert.deepEqual(watching.latest(), [{ id: '', state: 'working', app: 'build', msg: 'Compiling' }])
+
+  await rpc('terminal.send', { terminal: terminal.handle, text: `\x1b]7501;state=blocked:kind=question:id=step:title=${b64('Tests')}\x1b\\`, enter: true })
+  await until(async () => watching.latest()?.length === 2, 5000, 'the change', () => JSON.stringify(watching.statuses))
+  assert.deepEqual(watching.latest(), [{ id: '', state: 'working', app: 'build', msg: 'Compiling' }, { id: 'step', state: 'blocked', kind: 'question', title: 'Tests', app: 'build' }])
+  await rpc('terminal.send', { terminal: terminal.handle, text: '\x1b]7501;state=clear\x1b\\', enter: true })
+  await until(async () => watching.latest()?.length === 0, 5000, 'the cleared records')
+  await sleep(200)
+  assert.equal(plain.statuses.length, 0, 'only a viewer that asked receives program status')
+
+  // An agent session whose program reports no root record: its root record comes from Orc's hooks.
+  const events = join(profile, 'agent.jsonl')
+  const line = (event: string, extra: Record<string, unknown> = {}) => JSON.stringify({ agent: 'pi', event, time: Math.floor(Date.now() / 1000), payload: { session_id: 's1', ...extra } }) + '\n'
+  await writeFile(events, line('SessionStart'))
+  const agent = (await rpc('terminal.create', { name: 'helper', argv: ['/bin/sh', '-c', 'stty -echo; exec cat'], cols: 80, rows: 24 })).terminal
+  await frontend.kill('SIGTERM')
+  const metaFile = join(profile, 'sessions', 'helper', 'meta.json')
+  await writeFile(metaFile, JSON.stringify({ ...JSON.parse(await readFile(metaFile, 'utf8')), agent: 'pi', events }))
+  frontend = await Frontend.start(profile)
+  const helper = await viewer(rpc, agent.handle, true)
+  t.after(() => helper.client.close())
+  await until(async () => helper.latest()?.[0]?.state === 'idle', 5000, 'the agent at rest', () => JSON.stringify(helper.statuses))
+  assert.deepEqual(helper.latest(), [{ id: '', state: 'idle', app: 'pi' }])
+  await appendFile(events, line('UserPromptSubmit'))
+  await until(async () => helper.latest()?.[0]?.state === 'working', 5000, 'the turn', () => JSON.stringify(helper.statuses))
+  await appendFile(events, line('PermissionRequest'))
+  await until(async () => helper.latest()?.[0]?.state === 'blocked', 5000, 'the prompt', () => JSON.stringify(helper.statuses))
+  assert.deepEqual(helper.latest(), [{ id: '', state: 'blocked', kind: 'permission', app: 'pi' }])
+  await appendFile(events, line('PermissionResolved') + line('Stop'))
+  await until(async () => helper.latest()?.[0]?.state === 'done', 5000, 'the finished turn', () => JSON.stringify(helper.statuses))
+  // A program that reports for itself speaks for its session.
+  await rpc('terminal.send', { terminal: agent.handle, text: '\x1b]7501;state=working:app=pi:msg=' + b64('Reading files') + '\x1b\\', enter: true })
+  await until(async () => helper.latest()?.[0]?.msg === 'Reading files', 5000, 'the program’s own report', () => JSON.stringify(helper.statuses))
+  assert.deepEqual(helper.latest(), [{ id: '', state: 'working', app: 'pi', msg: 'Reading files' }])
 })

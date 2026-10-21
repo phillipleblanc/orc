@@ -58,6 +58,10 @@ public struct InputDecoder {
     private var ready = false
     private var snapshotDeadline: Task<Void, Never>?
     private var retryDelay: Task<Void, Never>?
+    private var outputFilter = TerminalOutputFilter()
+    private var statusReporter = ProgramStatusReporter()
+    /// The latest program-status records, until the output reaches a point where they can be reported.
+    private var pendingStatus: [[String: Any]]?
 
     /// With `clientID`, the app running this attach names its viewer and reports what is on screen (`terminal.view`);
     /// `viewportOwnership` then opts the viewer into the runtime's viewport ownership. Without one, the attach runs in
@@ -217,7 +221,7 @@ public struct InputDecoder {
             streamID = 1
             Task {
                 do {
-                    var capabilities = ["desktopViewportClaims": 1, "writeUnavailable": 1]
+                    var capabilities = ["desktopViewportClaims": 1, "writeUnavailable": 1, "programStatus": 1]
                     if viewportOwnership { capabilities["viewportOwnership"] = 1 }
                     try await connection.send(TerminalFrame(opcode: 9, streamID: 0, payload: jsonData([
                         "streamId": 1, "terminal": terminal.handle,
@@ -240,10 +244,10 @@ public struct InputDecoder {
             if let streamID, frame.streamID != streamID { throw OrcError("Mismatched terminal stream.") }
             streamID = frame.streamID
             switch frame.opcode {
-            case 1: try writeAll(STDOUT_FILENO, frame.payload)
+            case 1: try writeOutput(frame.payload)
             case 15:
                 guard let text = try jsonObject(frame.payload)["data"] as? String else { throw OrcError("Invalid terminal output span.") }
-                try writeAll(STDOUT_FILENO, Data(text.utf8))
+                try writeOutput(Data(text.utf8))
             case 2:
                 collectingSnapshot = true; snapshot.removeAll()
                 replayingScrollbackSnapshot = scrollbackSnapshotPending
@@ -266,7 +270,7 @@ public struct InputDecoder {
                 // A fresh snapshot may follow an alternate-screen application
                 // that exited during a disconnect. Its replay selects the screen.
                 output("\u{1b}[?2026h\u{1b}[?1049l\u{1b}[0m\u{1b}[2J\u{1b}[H")
-                try writeAll(STDOUT_FILENO, snapshot)
+                try writeOutput(snapshot)
                 // Scrollback replay is historical: its keyboard metadata can
                 // be zero even while the live agent is still in Kitty mode.
                 // Keep the current mode rather than letting history turn
@@ -296,9 +300,25 @@ public struct InputDecoder {
             case 5, 12: break
             case 6: throw OrcError("The runtime reported a terminal stream error.")
             case 17: note("The runtime refused terminal input.")
+            case 18:
+                guard let records = try jsonObject(frame.payload)["records"] as? [[String: Any]] else { throw OrcError("Invalid program status.") }
+                pendingStatus = records
+                try reportStatus()
             default: throw OrcError("Unsupported terminal opcode \(frame.opcode); detach and update Orc.")
             }
         } catch { disconnected(error); connection?.close() }
+    }
+    /// Writes the session's output, without its own program-status sequences, then any status waiting for a point
+    /// between sequences.
+    private func writeOutput(_ data: Data) throws {
+        try writeAll(STDOUT_FILENO, outputFilter.filter(data))
+        try reportStatus()
+    }
+    /// Reports the session's program status (OSC 7501) to this terminal, which shows it as the attach's own.
+    private func reportStatus() throws {
+        guard let records = pendingStatus, outputFilter.atBoundary else { return }
+        pendingStatus = nil
+        try writeAll(STDOUT_FILENO, Data(statusReporter.update(records).utf8))
     }
     private func disconnected(_ error: Error?) {
         failure = error; ready = false
@@ -319,6 +339,7 @@ public struct InputDecoder {
         signalSources.forEach { $0.cancel() }; signalSources.removeAll()
         previousSignals.forEach { _ = signal($0.0, $0.1) }; previousSignals.removeAll()
         connection?.close(); connection = nil
+        output(statusReporter.clear())
         // Keyboard modes are per screen; neither the picker nor the shell
         // should inherit the attached application's extended key encoding.
         output("\u{1b}[?2026l\u{1b}[<u\u{1b}[=0u\u{1b}[?2004l\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l\u{1b}[?1004l\u{1b}[0m\u{1b}[?25h\u{1b}[?1049l\u{1b}[=0u\u{1b}[r\u{1b}[?6l\u{1b}[999;1H\r\n")

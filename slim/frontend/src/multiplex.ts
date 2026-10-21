@@ -1,3 +1,5 @@
+import type { AgentDirectory } from './agents.ts'
+import { viewedRecords } from './program-status.ts'
 import type { SessionStore } from './session-store.ts'
 import type { Subscriber, TerminalSession } from './terminal-session.ts'
 import type { Size, TerminalSizes } from './terminal-sizes.ts'
@@ -8,7 +10,12 @@ const MAX_SCROLLBACK_ROWS = 5000
 /** How viewers name a desktop that connected over the local socket, which has no device grant. */
 export const LOCAL_DEVICE = 'this host'
 
-type Stream = { session: TerminalSession; subscriber: Subscriber; stopFrames: () => void; viewer: string; followsOwnership: boolean }
+type Stream = {
+  session: TerminalSession; subscriber: Subscriber; stopFrames: () => void; viewer: string; followsOwnership: boolean
+  /** For a subscription that asked for program status: when it attached, and the last status it was sent. */
+  status: { since: number; sent: string } | null
+  programStatusChanged: () => void
+}
 
 /**
  * `terminal.multiplex`: many terminal subscriptions over one connection. The client subscribes with a
@@ -16,9 +23,11 @@ type Stream = { session: TerminalSession; subscriber: Subscriber; stopFrames: ()
  * output, and can claim the PTY size, request a snapshot with scrollback, send input, or unsubscribe.
  * A subscription is a desktop viewer of its session (see `TerminalSizes`), named by its client id. One
  * that opts into viewport ownership reports its size with ClaimViewport, and its Resized frames say
- * whether it owns the session and which device does.
+ * whether it owns the session and which device does. One that asks for program status receives ProgramStatus
+frames with the records a terminal attached to the session shows (`viewedRecords`), whole, when it subscribes and
+whenever they change.
  */
-export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): StreamingHandler {
+export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes, agents: AgentDirectory): StreamingHandler {
   return (_params, context, emit) => new Promise<void>((resolve) => {
     const streams = new Map<number, Stream>()
     const send = (opcode: number, streamId: number, seq: number, payload?: Uint8Array) => context.sendBinary(encodeFrame(opcode, streamId, seq, payload))
@@ -35,18 +44,33 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
       }
     }
     sizes.on('owner', ownerChanged)
+    const sendStatus = (streamId: number, stream: Stream) => {
+      if (!stream.status) return
+      const monitor = agents.monitor(stream.session)
+      const agent = monitor && { kind: monitor.kind, state: monitor.effectiveState, lastIdleAt: monitor.lastIdleAt, dialog: monitor.dialog }
+      const payload = JSON.stringify({ records: viewedRecords(stream.session.programStatus.list(), agent, stream.status.since) })
+      if (payload === stream.status.sent) return
+      stream.status.sent = payload
+      send(Opcode.ProgramStatus, streamId, 0, Buffer.from(payload))
+    }
+    const statusChanged = (session: TerminalSession) => {
+      for (const [streamId, stream] of streams) if (stream.session === session) sendStatus(streamId, stream)
+    }
+    agents.on('change', statusChanged)
 
     const stop = (streamId: number) => {
       const stream = streams.get(streamId)
       if (!stream) return
       streams.delete(streamId)
       stream.session.unsubscribe(stream.subscriber)
+      stream.session.off('program-status', stream.programStatusChanged)
       stream.stopFrames()
       void sizes.desktopUnsubscribed(stream.session, stream.viewer).catch(() => {})
     }
 
     const subscribe = async (frame: TerminalFrame) => {
-      let request: { streamId?: number; terminal?: string; client?: { id?: unknown; type?: string }; viewport?: unknown; capabilities?: { viewportOwnership?: unknown } }
+      let request: { streamId?: number; terminal?: string; client?: { id?: unknown; type?: string }; viewport?: unknown
+        capabilities?: { viewportOwnership?: unknown; programStatus?: unknown } }
       try { request = JSON.parse(frame.payload.toString('utf8')) } catch { return }
       const streamId = Number(request.streamId)
       if (!Number.isInteger(streamId) || streamId <= 0 || streams.has(streamId)) return
@@ -101,10 +125,14 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
             break
         }
       })
-      streams.set(streamId, { session, subscriber, stopFrames, viewer, followsOwnership })
+      const status = request.capabilities?.programStatus === 1 ? { since: Date.now(), sent: '' } : null
+      const stream: Stream = { session, subscriber, stopFrames, viewer, followsOwnership, status, programStatusChanged: () => sendStatus(streamId, stream) }
+      streams.set(streamId, stream)
+      if (status) session.on('program-status', stream.programStatusChanged)
       void sizes.desktopSubscribed(session, viewer, { legacy: !followsOwnership, device, size: viewportSize(request.viewport) }).catch(() => {})
       // Desktop clients receive the viewport first and ask for scrollback once it is on screen.
       await session.subscribe(subscriber, 0)
+      if (streams.get(streamId) === stream) sendStatus(streamId, stream)
     }
 
     const stopControl = context.onFrames(0, (frame) => {
@@ -113,6 +141,7 @@ export function terminalMultiplex(store: SessionStore, sizes: TerminalSizes): St
     context.onClose(() => {
       stopControl()
       sizes.off('owner', ownerChanged)
+      agents.off('change', statusChanged)
       for (const streamId of [...streams.keys()]) stop(streamId)
       resolve()
     })

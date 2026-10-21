@@ -19,7 +19,8 @@ export const Opcode = {
   ClaimViewport: 14,
   OutputSpan: 15,
   SetOutputPaused: 16,
-  WriteUnavailable: 17
+  WriteUnavailable: 17,
+  ProgramStatus: 18
 } as const
 
 export type TerminalFrame = { opcode: number; streamId: number; seq: number; payload: Buffer }

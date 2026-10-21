@@ -165,3 +165,24 @@ const URGENCY: ProgramState[] = ['blocked', 'error', 'working', 'done', 'idle']
 export function overallState(records: ProgramRecord[]): ProgramState | null {
   return URGENCY.find((state) => records.some((record) => record.state === state)) ?? null
 }
+
+/** What Orc's hooks say an agent in a session is doing. */
+export type AgentActivity = { kind: string; state: 'starting' | 'idle' | 'working' | 'permission' | 'ended'; lastIdleAt: number; dialog: string | null }
+
+// The names Claude Code and Codex report for themselves.
+const AGENT_APPS: Record<string, string> = { claude: 'claude-code', durable: 'pi-durable' }
+
+/**
+ * The records a terminal attached to a session shows: the program's own, and, when it reports no root record, a root
+ * record for its agent from Orc's hooks. A turn that ended since the terminal attached (`since`, in milliseconds) is
+ * `done`, which the terminal shows until the person looks; an agent that was already at rest is `idle`.
+ */
+export function viewedRecords(records: ProgramRecord[], agent: AgentActivity | undefined, since: number): ProgramRecord[] {
+  if (!agent || records.some((record) => record.id === '')) return records
+  const app = AGENT_APPS[agent.kind] ?? agent.kind
+  const root: ProgramRecord | null = agent.state === 'working' ? { id: '', state: 'working', app }
+    : agent.state === 'permission' ? { id: '', state: 'blocked', kind: 'permission', app, ...(agent.dialog ? { msg: agent.dialog } : {}) }
+    : agent.state === 'idle' ? { id: '', state: agent.lastIdleAt >= since ? 'done' : 'idle', app }
+    : null
+  return root ? [root, ...records] : records
+}

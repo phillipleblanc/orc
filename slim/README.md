@@ -354,6 +354,13 @@ person is looking at (`terminal-sizes.ts`).
   runtime-scope devices; errors are `not_found` and `invalid_argument`.
 - **Resized** (opcode 5) frames to an opted-in viewer add `owner` and `ownerDevice`, and are also sent
   when the owner changes without a resize.
+- **Program status:** a Subscribe with `capabilities.programStatus: 1` receives ProgramStatus (opcode 18)
+  frames, JSON `{records}`, with the OSC 7501 records a terminal attached to the session shows
+  (`viewedRecords` in `program-status.ts`): the program's own, and when it reports no root record, one for
+  its agent from Orc's hooks: `working`, `blocked` with kind `permission` at a prompt, `idle`, or `done`
+  for a turn that ended since the subscription. The whole set comes on subscribing and on every change.
+  `orc attach` reports them to the terminal it runs in, and removes the session's own OSC 7501
+  sequences from its output.
 
 Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
 

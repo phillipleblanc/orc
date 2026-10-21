@@ -181,7 +181,7 @@ const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
 const clientEvents = clientEventMethods(catalog, subscriptions)
 const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
 const streaming = {
-  'terminal.multiplex': terminalMultiplex(store, sizes),
+  'terminal.multiplex': terminalMultiplex(store, sizes, agents),
   ...createSessionStreams(runtime),
   ...mobileTerminal.streaming,
   ...clientEvents.streaming
