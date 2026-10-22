@@ -6,7 +6,7 @@ import { connectWithGrant } from './runtime-client.ts'
 const OWNER_METHODS = ['brief.list', 'brief.refresh', 'brief.dismiss', 'brief.settings', 'brief.configure', 'brief.evaluate',
   'pr.list', 'pr.watch', 'pr.unwatch', 'pr.resolve', 'pr.settings', 'pr.configure', 'usage.read']
 
-test('the owner’s computers get briefs, pull requests and usage over the WebSocket; phones do not, and pairing stays local', async (t) => {
+test('the owner’s computers get briefs, pull requests and usage over the WebSocket; phones only read briefs, and pairing stays local', async (t) => {
   const profile = await makeProfile()
   t.after(() => destroyProfile(profile))
   const frontend = await Frontend.start(profile)
@@ -34,7 +34,9 @@ test('the owner’s computers get briefs, pull requests and usage over the WebSo
     assert.ok(reached, method)
   }
 
-  for (const method of OWNER_METHODS) await assert.rejects(phone.request(method, {}), { code: 'forbidden' }, method)
+  // Orc's page for the phone app shows agents' briefs.
+  assert.deepEqual(await phone.request('brief.list'), { briefs: [] })
+  for (const method of OWNER_METHODS.filter((method) => method !== 'brief.list')) await assert.rejects(phone.request(method, {}), { code: 'forbidden' }, method)
   for (const method of ['orc.phone.status', 'orc.desktop.status', 'slim.pairing.create', 'slim.pairing.list', 'slim.pairing.revoke', 'durable.chat']) {
     await assert.rejects(computer.request(method, { scope: 'runtime' }), { code: 'method_not_found' }, method)
   }

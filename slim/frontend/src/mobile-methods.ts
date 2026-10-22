@@ -1,4 +1,4 @@
-/** Methods a mobile-scope device may call: the ones the Orca mobile app uses to view and type into sessions. */
+/** Methods a mobile-scope device may call: the ones the Orca mobile app and Orc's page for it use. */
 export const MOBILE_METHODS = new Set([
   'status.get',
   'runtime.clientCapabilities.update',
@@ -21,5 +21,11 @@ export const MOBILE_METHODS = new Set([
   'nativeChat.subscribe',
   'nativeChat.unsubscribe',
   'nativeChat.readSession',
-  'orchestration.workerTerminalUserInput'
+  'orchestration.workerTerminalUserInput',
+  // Orc's page for the phone app: its download, and what its screens show and do.
+  'mobileWeb.bundle.manifest',
+  'mobileWeb.bundle.chunk',
+  'agent.list',
+  'agent.send',
+  'brief.list'
 ])

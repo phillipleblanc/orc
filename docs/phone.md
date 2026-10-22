@@ -2,6 +2,12 @@
 
 The official Orca mobile app can view and type into Orc's sessions.
 
+## On the phone
+
+The app shows Orc's screens. The first lists your sessions by project, with the sessions waiting on you at the top. Tap a session to watch its terminal live, sized to fit the phone. Type in the box at the bottom to message an agent, or to run a command in a shell; the keys above it send Esc, Tab, the arrows, Ctrl-C and Return. An agent's screen also shows its brief: what it is doing and any question it has for you. On a tablet, the session list stays beside the session you open.
+
+## Pair
+
 In Orc, choose **Pair Device…** from the menu or click the devices icon below the session list, then **Phone**. Select your Mac's LAN or Tailscale address and click **Generate QR Code**. On the same Wi-Fi or Tailscale network, open the Orca mobile app, choose **Pair**, and scan the code. **Copy Link** provides the alternative paste-pair flow.
 
 ```sh

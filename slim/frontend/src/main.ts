@@ -21,6 +21,7 @@ import { MOBILE_METHODS } from './mobile-methods.ts'
 import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
 import { rexHandlers, RexSync } from './rex.ts'
+import { PhonePage } from './phone-page.ts'
 import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
 import { phonePairingHandlers } from './phone-pairing.ts'
@@ -55,7 +56,9 @@ const { values } = parseArgs({
     port: { type: 'string' },
     'checkpoint-quiet-ms': { type: 'string' },
     'checkpoint-max-ms': { type: 'string' },
-    'checkpoint-max-bytes': { type: 'string' }
+    'checkpoint-max-bytes': { type: 'string' },
+    // Orc's page for the Orca phone app, built by scripts/build-phone.mjs.
+    'phone-page': { type: 'string', default: resolve(here, '../build/phone') }
   }
 })
 const policy = {
@@ -116,7 +119,8 @@ const notifications = new NotificationQueue()
 // The Rex server `orc rex start` linked, kept in sync with these sessions.
 const rex = new RexSync({ profile, store, catalog, log })
 await rex.load()
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions, rex }
+const phonePage = await PhonePage.load(values['phone-page']!, VERSION)
+const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions, rex, phonePage }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {
@@ -183,7 +187,7 @@ const ownerHandlers: Handlers = {
 }
 const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
 const clientEvents = clientEventMethods(catalog, subscriptions)
-const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers }
+const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers, ...phonePage.handlers() }
 const streaming = {
   'terminal.multiplex': terminalMultiplex(store, sizes, agents),
   ...createSessionStreams(runtime),
@@ -194,8 +198,8 @@ const websocket = new WebSocketRpcServer({
   port: Number(values.port ?? DEFAULT_PORT), keypair, devices, runtimeId, handlers, streaming,
   ownerHandlers,
   mobileMethods: MOBILE_METHODS,
-  // Only the Orca mobile app has a chat view.
-  mobileHandlers: nativeChat.handlers,
+  // Only the Orca mobile app has a chat view; its page shows agents' status briefs.
+  mobileHandlers: { ...nativeChat.handlers, 'brief.list': ownerHandlers['brief.list'] },
   mobileStreaming: nativeChat.streaming,
   log
 })

@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/main.ts",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p phone"
   },
   "dependencies": {
     "@earendil-works/chord": "1.0.2",
@@ -27,6 +27,7 @@
     "@types/node": "^25.0.0",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "8.18.2",
+    "@xterm/xterm": "6.1.0-beta.304",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }

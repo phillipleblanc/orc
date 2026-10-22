@@ -4,6 +4,7 @@ import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
 import type { RexSync } from './rex.ts'
+import { MOBILE_WEB_BUNDLE_CAPABILITY, type PhonePage } from './phone-page.ts'
 import { restartSession, type SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
 import type { StreamContext, StreamingHandler } from './websocket-server.ts'
@@ -43,6 +44,8 @@ export type Runtime = {
   subscriptions: ConnectionSubscriptions
   /** The Rex server `orc rex start` linked, kept in sync with the sessions. */
   rex?: RexSync
+  /** Orc's page for the Orca phone app. */
+  phonePage?: PhonePage
 }
 
 // Orca waits this long after typing a message before pressing Enter, so the program has read the text.
@@ -142,7 +145,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       minCompatibleRuntimeClientVersion: RUNTIME_PROTOCOL_VERSION,
       protocolVersion: RUNTIME_PROTOCOL_VERSION,
       minCompatibleMobileVersion: 2,
-      capabilities: CAPABILITIES,
+      capabilities: runtime.phonePage?.available ? [...CAPABILITIES, MOBILE_WEB_BUNDLE_CAPABILITY] : CAPABILITIES,
       appVersion: runtime.version,
       desktopWindowStatus: 'unavailable',
       floatingWorkspaceEnabled: false,

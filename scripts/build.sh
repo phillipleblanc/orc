@@ -20,6 +20,7 @@ npm --prefix WebMarkdown ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
 npm --prefix WebMarkdown run build
 npm --prefix slim/frontend ci --no-audit --no-fund "${ORC_NPM_FLAGS[@]}"
 node slim/frontend/scripts/build-chat-vendor.mjs
+node slim/frontend/scripts/build-phone.mjs
 swift build -c release
 swift build -c release --package-path slim/holder
 ORC_BIN="$(swift build -c release --show-bin-path)"

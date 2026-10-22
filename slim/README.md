@@ -320,7 +320,7 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   It serves the same methods except those served only on the local socket, plus the streams
   `terminal.multiplex`, `terminal.subscribe`, `session.tabs.subscribe` and `runtime.clientEvents.subscribe`.
   `usage.read`, `brief.*` and `pr.*` go to runtime-scope devices only (capability
-  `orc.owner-methods.v1`), and `nativeChat.*` to mobile devices only. Every streamed reply carries
+  `orc.owner-methods.v1`), except `brief.list`, which phones get too; `nativeChat.*` goes to mobile devices only. Every streamed reply carries
   `streaming: true` and a stream ends with `{type: "end"}`.
 - **Launching:** Orc runs `Orc.app/Contents/Resources/Runtime/orc-runtime --profile DIR` (or
   `ORC_RUNTIME_EXECUTABLE`) when no frontend serves the profile. `orc-runtime` starts this frontend on
@@ -448,6 +448,15 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
   and follows the file as it grows. Text blocks are clipped to 64,000 characters and tool bodies to
   4,000. Only mobile devices are served chat; Orc and the local socket get `method_not_found`.
 - **Input:** `terminal.send` with `enter` types the text, waits 500 ms, then sends Enter.
+- **Page:** the app shows Orc's own screens, built by `scripts/build-phone.mjs` from `phone/` into
+  `build/phone` (`--phone-page` names another directory). With the page present, `status.get` lists
+  `mobileWeb.bundle.v1`; `mobileWeb.bundle.manifest` lists its files with their SHA-256 and a build id (the
+  SHA-256 of that list), and `mobileWeb.bundle.chunk` serves each file in 48 KiB windows. Its routes are
+  `/h/<host>` and every path under it, and it may draw a wide layout's sidebar. A session's screen is
+  `/h/<host>/orc/<name>`; any other path shows that Orc has no such screen. The page reaches the runtime
+  through the app's bridge as the phone, so the methods in `mobile-methods.ts` are all it can call. The app
+  runs it under a CSP that allows only the page's own scripts and styles and no network requests, so the
+  build has no inline script and loads nothing from elsewhere.
 
 Workspace creation, files, notifications, relay connections and floating workspaces are not served.
 
@@ -457,6 +466,7 @@ Workspace creation, files, notifications, relay connections and floating workspa
 (cd holder && swift build -c release)
 cd frontend && npm ci
 node scripts/build-chat-vendor.mjs
+node scripts/build-phone.mjs
 npm run typecheck
 npm test
 ```
