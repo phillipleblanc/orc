@@ -1,23 +1,19 @@
 // Workbench: a durable agent's transcript as a document, beside an inspector rail.
 import { DurableAgent } from '/chat/shared/agent.js'
-import { describeTool, escapeHtml, formatDuration } from '/chat/shared/format.js'
+import { escapeHtml, formatDuration } from '/chat/shared/format.js'
 import { ChangesPanel } from './changes-panel.js'
 import { Composer } from './composer.js'
 import { Minimap } from './minimap.js'
 import { ModelPicker } from './model-picker.js'
+import { olderPuller } from './older.js'
+import { QueueView } from './queue.js'
 import { Rail } from './rail.js'
+import { agentStatus } from './status.js'
 import { Transcript } from './transcript.js'
 import { h, icon, prefs } from './ui.js'
 
-const QUEUE_LABELS = { steer: 'Next step', followUp: 'Queued' }
-
 const $ = (id) => document.getElementById(id)
-const STEP_VERBS = { bash: 'Running', read: 'Reading', write: 'Writing', edit: 'Editing' }
 const TOAST_MS = 8000
-// Older turns load in the background until the view holds this many entries, and beyond while it is near the top.
-const OLDER_AUTO = 3000
-const OLDER_PAUSE_MS = 50
-const OLDER_RETRY_MS = 3000
 const narrow = matchMedia('(max-width: 900px)')
 
 const agent = new DurableAgent()
@@ -72,8 +68,11 @@ const composer = new Composer(agent, {
   send: $('send'),
   stop: $('stop'),
   toast,
-  onHeld: () => renderQueue()
+  onHeld: () => queue.render()
 })
+
+const queue = new QueueView(agent, composer, { root: $('queue'), toast })
+const pullOlder = olderPuller(agent, $('scroller'))
 
 // ─── Rendering ───────────────────────────────────────────────────────────
 
@@ -114,43 +113,16 @@ function flush() {
   pullOlder()
 }
 
-let pulling = false
-let pullAgain = false
-let pullFailedAt = -Infinity
-
-const nearTop = () => $('scroller').scrollTop < $('scroller').clientHeight
-
-/** Loads older turns a page at a time, pausing between pages unless the view is near the top. */
-async function pullOlder() {
-  pullAgain = true
-  if (pulling || performance.now() - pullFailedAt < OLDER_RETRY_MS) return
-  pulling = true
-  while (pullAgain) {
-    pullAgain = false
-    try {
-      while (agent.older && (agent.entries.length < OLDER_AUTO || nearTop()) && await agent.loadOlder()) {
-        await new Promise((resolve) => setTimeout(resolve, nearTop() ? 0 : OLDER_PAUSE_MS))
-      }
-    } catch {
-      pullFailedAt = performance.now()
-      break
-    }
-  }
-  pulling = false
-}
-
-$('scroller').addEventListener('scroll', () => { if (nearTop()) pullOlder() }, { passive: true })
-
 function renderChrome() {
   if (agent.connected && !modelsRequested) {
     modelsRequested = true
     picker.load().then(() => rail.setModels(picker.models), () => {})
   }
-  const status = statusOf()
+  const status = agentStatus(agent)
   renderTopbar(status)
   picker.render()
   rail.render(status)
-  renderQueue()
+  queue.render()
   composer.sync()
   composer.release()
   $('connecting').hidden = agent.everConnected
@@ -158,33 +130,6 @@ function renderChrome() {
   $('banner').hidden = !offline
   if (offline) $('banner-text').textContent = agent.everConnected ? 'Connection lost. Reconnecting…' : 'Can’t reach the agent yet. Retrying…'
   app.dataset.state = status.key
-}
-
-/** What the agent is doing, for the top bar and the Status section. */
-function statusOf() {
-  if (!agent.connected) return agent.everConnected ? { key: 'offline', label: 'Disconnected' } : { key: 'connecting', label: 'Connecting' }
-  const since = agent.runStartedAt
-  if (agent.retry) {
-    const attempt = agent.retry.attempt ? ` (attempt ${agent.retry.attempt})` : ''
-    return { key: 'retry', label: 'Retrying', since, step: { verb: `Retrying the model${attempt}` }, detail: agent.retry.error }
-  }
-  const compacting = agent.compactions.length > 0
-  if (agent.busy) return { key: 'busy', label: 'Working', since, step: currentStep() ?? (compacting ? { verb: 'Compacting context' } : null) }
-  if (compacting) return { key: 'busy', label: 'Compacting', step: { verb: 'Compacting context' } }
-  return { key: 'idle', label: 'Idle' }
-}
-
-function currentStep() {
-  for (const tool of agent.tools.values()) {
-    if (tool.status !== 'running') continue
-    const target = describeTool(tool.name, tool.args ?? {}).target.split('\n')[0]
-    return { verb: `${STEP_VERBS[tool.name] ?? `Using ${tool.name}`}…`, target }
-  }
-  const last = (agent.live?.content ?? []).filter(Boolean).at(-1)
-  if (last?.type === 'thinking') return { verb: 'Thinking…' }
-  if (last?.type === 'text') return { verb: 'Writing a reply…' }
-  if (last?.type === 'toolCall') return { verb: `Preparing ${last.name}…` }
-  return { verb: 'Waiting for the model…' }
 }
 
 let topbarSignature = ''
@@ -202,48 +147,9 @@ function renderTopbar(status) {
   $('tb-state').dataset.state = status.key
 }
 
-let queueSignature = ''
-
-/**
- * Messages waiting for the agent, above the composer: steering reaches the current run at its next step,
- * queued ones follow it, and held ones are sent once the compaction is done.
- */
-function renderQueue() {
-  const signature = JSON.stringify([agent.inbox, composer.held])
-  if (signature === queueSignature) return
-  queueSignature = signature
-  $('queue').replaceChildren(
-    ...agent.inbox.map((item) => queueChip(QUEUE_LABELS[item.mode] ?? item.mode, item, () => agent.withdraw(item.id))),
-    ...composer.held.map((item) => queueChip('After compaction', item, async () => composer.withdrawHeld(item.id))))
-}
-
-function queueChip(label, item, withdraw) {
-  const chip = h('div', { class: 'chip', 'data-mode': item.mode },
-    h('b', {}, label),
-    h('span', { class: 'what', title: item.text }, item.text))
-  chip.append(h('button', {
-    type: 'button',
-    class: 'chip-withdraw',
-    'aria-label': `Withdraw: ${item.text.slice(0, 60)}`,
-    title: 'Withdraw',
-    html: icon('close'),
-    onclick: (event) => {
-      const button = event.currentTarget
-      button.disabled = true
-      chip.classList.add('leaving')
-      withdraw().catch((error) => {
-        button.disabled = false
-        chip.classList.remove('leaving')
-        toast(`Could not withdraw: ${error.message}`)
-      })
-    }
-  }))
-  return chip
-}
-
 setInterval(() => {
   if (!agent.busy && !agent.retry) return
-  const status = statusOf()
+  const status = agentStatus(agent)
   transcript.tick()
   rail.tick(status)
   renderTopbar(status)

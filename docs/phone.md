@@ -4,7 +4,7 @@ The official Orca mobile app can view and type into Orc's sessions.
 
 ## On the phone
 
-The app shows Orc's screens. The first lists your sessions by project, with the sessions waiting on you at the top. Tap a session to watch its terminal live, sized to fit the phone. Type in the box at the bottom to message an agent, or to run a command in a shell; the keys above it send Esc, Tab, the arrows, Ctrl-C and Return. An agent's screen also shows its brief: what it is doing and any question it has for you. On a tablet, the session list stays beside the session you open.
+The app shows Orc's screens. The first lists your sessions by project, with the sessions waiting on you at the top. Tap a session to watch its terminal live, sized to fit the phone. Type in the box at the bottom to message an agent, or to run a command in a shell; the keys above it send Esc, Tab, the arrows, Ctrl-C and Return. An agent's screen also shows its brief: what it is doing and any question it has for you. A durable agent opens on its chat, as in the Workbench: send it messages, steer or queue them while it works, stop it, and open a turn's diff; **Terminal** switches to its terminal. On a tablet, the session list stays beside the session you open.
 
 ## Pair
 

@@ -1,7 +1,8 @@
-// A turn's file changes beside the transcript, each edit and write as Pierre's diff with its file's name.
+// A turn's file changes beside the transcript, each edit and write as Pierre's diff with its file's name, or as plain
+// diff rows without Pierre.
 import { escapeHtml, toolState } from '/chat/shared/format.js'
 import { release, renderChanges } from './pierre.js'
-import { changeOf } from './transcript.js'
+import { changeOf, plainChangeHtml } from './transcript.js'
 import { h, shortPath } from './ui.js'
 
 export class ChangesPanel {
@@ -33,7 +34,12 @@ export class ChangesPanel {
       section.append(host)
       if (change) {
         renderChanges(host, change, { header: true }).then((views) => {
-          if (!views) return host.replaceChildren(h('p', { class: 'change-note' }, 'This change cannot be shown'))
+          if (!views) {
+            const plain = plainChangeHtml(item, state)
+            if (plain) host.innerHTML = plain
+            else host.replaceChildren(h('p', { class: 'change-note' }, 'This change cannot be shown'))
+            return
+          }
           if (!this.body.contains(host)) return release(views)
           this.views.push(...views)
         })

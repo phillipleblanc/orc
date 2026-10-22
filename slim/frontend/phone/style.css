@@ -305,6 +305,34 @@ button { cursor: pointer; }
 .send-error { margin: 6px 4px 0; color: var(--danger); font-size: 13px; }
 .send-error[hidden] { display: none; }
 
+/* A durable agent: its chat, or its terminal. */
+
+.modes {
+  display: flex;
+  flex: none;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+}
+.modes[hidden] { display: none; }
+.modes button {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.modes button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
+
+.chat-slot, .chat-host { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.session-screen[data-mode="chat"] :is(.brief, .terminal-slot, .keys, .composer) { display: none; }
+.session-screen:not([data-mode="chat"]) .chat-slot { display: none; }
+
 /* Wide: the session list beside the session it shows. */
 
 .split { flex: 1; display: grid; grid-template-columns: minmax(280px, 360px) 1fr; min-height: 0; }

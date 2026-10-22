@@ -656,6 +656,13 @@ function flashCopied(button, copied) {
 // ─── Tool panes ──────────────────────────────────────────────────────────
 
 /** What an edit or write changed, for Pierre: the edit's patch, or the file written whole. */
+/** An edit's or write's changes as plain diff rows, for when Pierre cannot show them; null when it has none. */
+export function plainChangeHtml(item, state) {
+  if (item.name === 'edit' && state.details?.diff) return diffView(state.details.diff)
+  if (item.name === 'write' && typeof item.args?.content === 'string' && item.args.content) return writtenView(item.args.content)
+  return null
+}
+
 export function changeOf(item, state) {
   if (item.name === 'edit' && state.details?.patch) return { patch: state.details.patch }
   if (item.name === 'write' && typeof item.args?.content === 'string') return { path: String(item.args.path ?? item.args.file_path ?? 'file'), contents: item.args.content }
@@ -679,9 +686,7 @@ function paneHtml(item, state) {
     }
     case 'write': {
       const content = String(item.args?.content ?? '')
-      const lines = content.replace(/\n$/, '').split('\n')
-      const rows = lines.map((line, index) => `<div class="dl diff-add"><span class="ln">${index + 1}</span><span class="sg">+</span><span class="tx">${escapeHtml(line) || ' '}</span></div>`).join('')
-      return `${content ? `<div class="pierre-host"><div class="diff" role="region" aria-label="Written content">${rows}</div></div>` : ''}${body ? `<div class="pane-result">${escapeHtml(body)}</div>` : ''}${paneFoot(state, notes)}`
+      return `${content ? `<div class="pierre-host">${writtenView(content)}</div>` : ''}${body ? `<div class="pane-result">${escapeHtml(body)}</div>` : ''}${paneFoot(state, notes)}`
     }
     case 'read':
       return `${terminal(body, state, running ? 'Reading…' : 'Empty')}${paneFoot(state, notes)}`
@@ -709,6 +714,13 @@ function paneFoot(state, notes, exit) {
 
 function copyButtonHtml(label) {
   return `<button type="button" class="copy" data-action="copy" aria-label="${label}">${icon('copy')}<span>Copy</span></button>`
+}
+
+/** A written file's content as added rows. */
+function writtenView(content) {
+  const lines = content.replace(/\n$/, '').split('\n')
+  const rows = lines.map((line, index) => `<div class="dl diff-add"><span class="ln">${index + 1}</span><span class="sg">+</span><span class="tx">${escapeHtml(line) || ' '}</span></div>`).join('')
+  return `<div class="diff" role="region" aria-label="Written content">${rows}</div>`
 }
 
 /** The edit tool's numbered diff (`+12 text`), or a unified diff, as gutter rows. */

@@ -3,13 +3,26 @@
     "target": "es2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": ["es2023", "dom", "dom.iterable"],
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": []
+    "types": [],
+    "allowJs": true,
+    "checkJs": false,
+    "paths": {
+      "/chat/*": [
+        "../src/chat/*"
+      ]
+    }
   },
-  "include": ["."]
+  "include": [
+    "."
+  ]
 }

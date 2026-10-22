@@ -27,5 +27,9 @@ export const MOBILE_METHODS = new Set([
   'mobileWeb.bundle.chunk',
   'agent.list',
   'agent.send',
-  'brief.list'
+  'brief.list',
+  'durable.subscribe',
+  'durable.request',
+  'durable.renew',
+  'durable.unsubscribe'
 ])

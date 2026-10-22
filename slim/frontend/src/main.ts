@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util'
 import { resumedConversation } from './agent-hooks.ts'
 import { AgentDirectory } from './agents.ts'
 import { Devices, pairingLink, type DeviceKind } from './devices.ts'
+import { durableChatMethods } from './durable/chat-relay.ts'
 import { ChatServer } from './durable/chat-server.ts'
 import { durableSocket } from './durable/paths.ts'
 import { DurableUpgrades } from './durable/upgrades.ts'
@@ -187,12 +188,20 @@ const ownerHandlers: Handlers = {
 }
 const mobileTerminal = mobileTerminalMethods(store, subscriptions, sizes)
 const clientEvents = clientEventMethods(catalog, subscriptions)
-const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers, ...phonePage.handlers() }
+// A durable agent session's worker socket, which chat views reach through the chat server or the WebSocket.
+const durableSocketOf = (name: string) => {
+  const session = store.get(name)
+  const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
+  return storage ? durableSocket(storage) : null
+}
+const durableChat = durableChatMethods(durableSocketOf, subscriptions)
+const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers, ...phonePage.handlers(), ...durableChat.handlers }
 const streaming = {
   'terminal.multiplex': terminalMultiplex(store, sizes, agents),
   ...createSessionStreams(runtime),
   ...mobileTerminal.streaming,
-  ...clientEvents.streaming
+  ...clientEvents.streaming,
+  ...durableChat.streaming
 }
 const websocket = new WebSocketRpcServer({
   port: Number(values.port ?? DEFAULT_PORT), keypair, devices, runtimeId, handlers, streaming,
@@ -211,11 +220,7 @@ try {
   process.exit(1)
 }
 const websocketEndpoint = `ws://127.0.0.1:${websocket.port}`
-const chat = new ChatServer((name) => {
-  const session = store.get(name)
-  const storage = session?.meta.agent === 'durable' ? resumedConversation('durable', session.meta.argv).transcriptPath : undefined
-  return storage ? durableSocket(storage) : null
-})
+const chat = new ChatServer(durableSocketOf)
 const chatPort = join(profile, 'chat-port')
 await chat.listen(Number(await readFile(chatPort, 'utf8').catch(() => '')) || 0)
 await writeFile(chatPort, String(chat.port), { mode: 0o600 })

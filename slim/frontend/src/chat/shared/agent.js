@@ -20,10 +20,13 @@ export function pageParams() {
 }
 
 export class DurableAgent extends EventTarget {
-  constructor({ session, token } = pageParams()) {
+  /** `openSocket` opens a connection to the agent's worker; by default, the chat server's WebSocket relay. */
+  constructor({ session, token, openSocket } = pageParams()) {
     super()
     this.session = session
     this.token = token
+    this.openSocket = openSocket ?? (() => new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/chat/socket?session=${encodeURIComponent(this.session)}&token=${encodeURIComponent(this.token)}`))
+    this.closed = false
     this.connected = false
     this.everConnected = false
     this.entries = []
@@ -60,8 +63,7 @@ export class DurableAgent extends EventTarget {
   }
 
   connect() {
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/chat/socket?session=${encodeURIComponent(this.session)}&token=${encodeURIComponent(this.token)}`
-    const socket = new WebSocket(url)
+    const socket = this.openSocket()
     this.socket = socket
     socket.onopen = async () => {
       this.attempt = 0
@@ -73,7 +75,7 @@ export class DurableAgent extends EventTarget {
     }
     socket.onmessage = (event) => this.receive(JSON.parse(event.data))
     socket.onclose = () => {
-      if (this.socket !== socket) return
+      if (this.socket !== socket || this.closed) return
       const was = this.connected
       this.connected = false
       for (const { reject } of this.pending.values()) reject(new Error('disconnected'))
@@ -83,6 +85,12 @@ export class DurableAgent extends EventTarget {
       window.webkit?.messageHandlers?.orc?.postMessage({ type: 'disconnected' })
       setTimeout(() => this.connect(), RETRY_MS[Math.min(this.attempt++, RETRY_MS.length - 1)])
     }
+  }
+
+  /** Disconnects for good, for a view that is going away. */
+  close() {
+    this.closed = true
+    this.socket?.close()
   }
 
   request(method, params = {}) {

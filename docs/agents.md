@@ -101,7 +101,7 @@ No agent loads them until you turn one on: `orc agent spawn claude vanta-check -
 
 Orc shows it in the **Workbench**, a chat in place of its terminal, with an inspector beside it for its status, usage, directory and context. A finished turn shows your prompt and the agent's answer, with its work folded behind one line ("Worked for 3m 43s"), its tool calls grouped into a sentence ("Ran 3 commands and read 5 files"), and a card listing the files it changed, whose **Open diff** shows the turn's changes beside the transcript. While the agent works, the turn shows how long it has been working and the calls running now. Ticks at the left edge, one per turn, preview each turn on hover and jump to it on click; a new turn stays near the top of the view while its answer fills the screen. The Workbench opens on the newest turns and loads older ones in the background and as you scroll up, and it keeps what it has shown, so it opens at once next time and fetches only what is new. Code and diffs are highlighted. Messages sent while it works steer it; `--when-idle` messages wait in its queue, where the Workbench can withdraw them.
 
-In the Orca phone app it opens in the native chat view, shown as a Pi agent. When an Orc update changes the durable agent, running durable agents restart on the new code at their next idle moment and continue their conversations.
+On your phone, Orc's screens in the Orca app open it in the same chat, with its terminal a tap away ([phone](phone.md)). When an Orc update changes the durable agent, running durable agents restart on the new code at their next idle moment and continue their conversations.
 
 ## Agent integrations
 

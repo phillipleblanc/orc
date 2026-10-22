@@ -1,0 +1,25 @@
+/* The Workbench's conversation column as the phone page shows it, inside its chat view's shadow root. */
+
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.body {
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.changes-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  border-left: 0;
+}
+
+/* Under 16px, iOS zooms the page in on focus. */
+.composer-box textarea { font-size: 16px; }
+
+/* Return starts a new line here, so the Workbench's key hints do not apply. */
+.hint { display: none; }

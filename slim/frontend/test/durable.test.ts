@@ -7,10 +7,12 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
 import WebSocket from 'ws'
+import { durableChatMethods, PART_UNITS } from '../src/durable/chat-relay.ts'
 import { ChatServer } from '../src/durable/chat-server.ts'
 import { durableRequest } from '../src/durable/connection.ts'
 import { viewEvent } from '../src/durable/views.ts'
-import { destroyProfile, Frontend, makeProfile, until } from './harness.ts'
+import { ConnectionSubscriptions } from '../src/subscriptions.ts'
+import { destroyProfile, Frontend, makeProfile, sleep, until } from './harness.ts'
 import { connectWithGrant } from './runtime-client.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -263,6 +265,78 @@ test('a phone opens a durable agent in native chat as omp, follows it, and types
   const earlier = await phone.request('nativeChat.readSession', { agent: 'omp', sessionId, transcriptPath, limit: 100, beforeOffset: page.beforeOffset })
   assert.deepEqual(earlier.messages[0].blocks[0].text, 'hello')
   await frontend.rpc('terminal.close', { terminal: 'dur' })
+})
+
+test('a phone page follows a durable agent over the WebSocket: its conversation, answers as they stream, history, long messages in parts, and stop', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const project = join(profile, 'project')
+  await mkdir(project)
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  await frontend.rpc('agent.spawn', { agent: 'durable', name: 'dur', cwd: project, prompt: 'hello', args: ['--faux'] })
+  await frontend.rpc('agent.wait', { name: 'dur', timeoutMs: 20_000 })
+  await frontend.rpc('terminal.create', { name: 'shell', cwd: project, argv: ['/bin/sh', '-c', 'exec cat'] })
+  const phone = await connectWithGrant(frontend.rpc.bind(frontend), 'mobile')
+  t.after(() => phone.close())
+  const ask = (method: string, params: Record<string, unknown> = {}) => phone.request('durable.request', { session: 'dur', method, params })
+
+  const chat = phone.stream('durable.subscribe', { session: 'dur', lease: 'view-1' })
+  const snapshot = await chat.next((event) => event.type === 'snapshot', 10_000)
+  assert.equal(snapshot.snapshot.entries.filter((entry: any) => entry.kind === 'pi.user').length, 1)
+  assert.equal(snapshot.info.model.provider, 'faux')
+  assert.ok((await ask('submit', { text: 'from the phone', mode: 'steer' })).submissionId)
+  const answered = await chat.next((event) => event.type === 'events' && event.events.some((change: any) => change.type === 'message_end' &&
+    change.entry.kind === 'pi.assistant' && JSON.stringify(change.entry.model).includes('echo: from the phone')), 10_000)
+  const newest = answered.events.findLast((change: any) => change.type === 'message_end').entry.id
+  const { entries } = await ask('history', { before: newest })
+  assert.ok(entries.some((entry: any) => entry.kind === 'pi.user' && JSON.stringify(entry.model).includes('hello')), 'earlier turns come back by entry id')
+
+  // A message too long for one event of the phone app's bridge arrives in parts, each well under its 640 KiB limit.
+  const long = `${'é'.repeat(PART_UNITS)}${'x'.repeat(1000)}`
+  await ask('submit', { text: long, mode: 'steer' })
+  const parts: any[] = []
+  while (parts.at(-1)?.index !== parts.at(-1)?.count - 1 || !parts.length) parts.push(await chat.next((event) => event.type === 'part', 10_000))
+  assert.ok(parts.length > 1)
+  assert.ok(parts.every((part) => Buffer.byteLength(JSON.stringify(part)) < 600 * 1024))
+  assert.ok(JSON.stringify(JSON.parse(parts.map((part) => part.text).join(''))).includes(long))
+  await ask('abort')
+  await chat.next((event) => event.type === 'events' && event.events.some((change: any) => change.type === 'run_end'), 10_000)
+
+  // Only a durable agent session, and only what a chat view may ask; `upgrade` is Orc's.
+  await assert.rejects(ask('upgrade'), { code: 'forbidden' })
+  await assert.rejects(phone.request('durable.request', { session: 'shell', method: 'info' }), { code: 'not_found' })
+  const refused = phone.stream('durable.subscribe', { session: 'shell', lease: 'view-2' })
+  assert.equal((await refused.next((event) => event.ok === false)).error.code, 'not_found')
+
+  // Released, the stream ends and its lease is gone.
+  assert.deepEqual(await phone.request('durable.renew', { lease: 'view-1' }), { renewed: true })
+  assert.deepEqual(await phone.request('durable.unsubscribe', { lease: 'view-1' }), { unsubscribed: true })
+  await chat.next((event) => event.type === 'end')
+  assert.deepEqual(await phone.request('durable.renew', { lease: 'view-1' }), { renewed: false })
+})
+
+test('a durable agent\'s stream over the WebSocket lasts while its lease is renewed, and ends once it lapses', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const path = join(profile, 'worker.sock')
+  const worker = createServer((socket) => socket.once('data', () => socket.write(JSON.stringify({ type: 'snapshot', snapshot: { entries: [] } }) + '\n')))
+  await new Promise<void>((resolve) => worker.listen(path, resolve))
+  t.after(() => worker.close())
+  const { handlers, streaming } = durableChatMethods((name) => name === 'dur' ? path : null, new ConnectionSubscriptions(), 300)
+  const context: any = { connectionId: 'phone', scope: 'mobile', onClose: () => {} }
+  const events: any[] = []
+  let ended = false
+  const stream = streaming['durable.subscribe']({ session: 'dur', lease: 'view' }, context, (event) => events.push(event)).then(() => { ended = true })
+  await until(async () => events.some((event) => event.type === 'snapshot'), 5000, 'the snapshot')
+  for (let renewal = 0; renewal < 10; renewal++) {
+    assert.deepEqual(await handlers['durable.renew']({ lease: 'view' }, context), { renewed: true })
+    await sleep(100)
+  }
+  assert.equal(ended, false, 'renewed for three times its lease, the stream is open')
+  await until(async () => ended, 1000, 'the stream to end once its lease lapsed')
+  await stream
+  assert.deepEqual(await handlers['durable.renew']({ lease: 'view' }, context), { renewed: false })
 })
 
 test('a durable agent on older code restarts in place once it is idle, keeping its session and conversation', async (t) => {

@@ -318,7 +318,8 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   latest only, so later briefs' prompts tell the model not to raise it again.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods except those served only on the local socket, plus the streams
-  `terminal.multiplex`, `terminal.subscribe`, `session.tabs.subscribe` and `runtime.clientEvents.subscribe`.
+  `terminal.multiplex`, `terminal.subscribe`, `session.tabs.subscribe`, `runtime.clientEvents.subscribe` and
+  `durable.subscribe`.
   `usage.read`, `brief.*` and `pr.*` go to runtime-scope devices only (capability
   `orc.owner-methods.v1`), except `brief.list`, which phones get too; `nativeChat.*` goes to mobile devices only. Every streamed reply carries
   `streaming: true` and a stream ends with `{type: "end"}`.
@@ -457,6 +458,14 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
   through the app's bridge as the phone, so the methods in `mobile-methods.ts` are all it can call. The app
   runs it under a CSP that allows only the page's own scripts and styles and no network requests, so the
   build has no inline script and loads nothing from elsewhere.
+- **Durable chat:** a durable agent's screen opens on the Workbench's conversation view: its modules and
+  stylesheet, bundled into the page without Pierre (the app takes at most 256 files), in a shadow root.
+  `durable.subscribe` (`session`, `lease`, and the worker's `after` and `conversation`) relays the worker's
+  subscription, and `durable.request` (`session`, `method`, `params`) makes any worker request but `upgrade`.
+  The app drops a page's streams without telling the runtime, so a stream lives while its lease is renewed
+  (`durable.renew`, within 30 s) and ends with `durable.unsubscribe`. The app ends a stream whose event is over
+  640 KiB, so a longer worker message arrives as `{type: "part", index, count, text}` events whose texts join
+  into it. The terminal is open only while shown, since a phone viewing it sizes the session.
 
 Workspace creation, files, notifications, relay connections and floating workspaces are not served.
 

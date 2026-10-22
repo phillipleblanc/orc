@@ -1,4 +1,5 @@
 import { Bridge, BridgeError, CLIENT, type Init } from './bridge.ts'
+import { DurableChat, statusText } from './durable-chat.ts'
 import { TerminalView } from './terminal-view.ts'
 
 type ProgramRecord = { id: string; state: string; kind?: string; progress?: number; title?: string; msg?: string }
@@ -35,6 +36,10 @@ let pollTimer = 0
 let painted = false
 let terminal: TerminalView | null = null
 let terminalName = ''
+let chat: DurableChat | null = null
+let chatName = ''
+/** A durable agent's screen shows its chat, or else its terminal. */
+let chatShown = true
 let backClaimed = false
 
 if (!bridge) {
@@ -56,7 +61,7 @@ if (!bridge) {
     renderBanner()
     if (state === 'connected') void refresh()
   }
-  bridge.onBack = () => show(root)
+  bridge.onBack = () => chat?.overlayOpen ? chat.closeOverlay() : show(root)
   bridge.start()
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refresh() })
 }
@@ -96,9 +101,9 @@ function show(next: View): void {
   render()
 }
 
-/** Back belongs to the page only while it draws a screen over the one it was opened on. */
+/** Back belongs to the page while it draws a screen or a panel over the one it was opened on. */
 function claimBack(): void {
-  const claim = !wide() && hrefOf(view) !== hrefOf(root)
+  const claim = (!wide() && hrefOf(view) !== hrefOf(root)) || Boolean(chat?.overlayOpen)
   if (claim === backClaimed) return
   backClaimed = claim
   bridge!.notify('back-claim', { claimed: claim })
@@ -172,8 +177,9 @@ function folderName(path: string): string {
 // Rendering.
 
 function render(): void {
-  // The screen is rebuilt, and a session's terminal with it.
+  // The screen is rebuilt, and a session's terminal and chat with it.
   closeTerminal()
+  closeChat()
   document.body.classList.toggle('wide', wide())
   const banner = el('div', { class: 'banner', role: 'status' })
   if (wide()) {
@@ -262,9 +268,12 @@ function sessionRow(session: Session): HTMLElement {
 }
 
 function sessionScreen(name: string): HTMLElement {
+  chatShown = true
+  const modes = el('div', { class: 'modes', role: 'tablist', hidden: '' }, modeButton('Chat', 'chat'), modeButton('Terminal', 'terminal'))
   const screen = el('div', { class: 'screen session-screen' },
-    el('header', { class: 'bar' }, backButton(wide() ? null : 'Sessions'),
-      el('div', { class: 'titles' }, el('h1', {}, name), el('span', { class: 'subtitle' }))),
+    el('header', { class: 'bar' }, backButton(null),
+      el('div', { class: 'titles' }, el('h1', {}, name), el('span', { class: 'subtitle' })), modes),
+    el('div', { class: 'chat-slot' }),
     el('div', { class: 'brief', hidden: '' }),
     el('div', { class: 'terminal-slot' }, el('p', { class: 'empty' }, 'Connecting…')),
     keyRow(),
@@ -273,17 +282,55 @@ function sessionScreen(name: string): HTMLElement {
   return screen
 }
 
-/** Shows the session's status and brief, and mounts its terminal once the session is known. */
+function modeButton(label: string, mode: 'chat' | 'terminal'): HTMLElement {
+  const button = el('button', { type: 'button', role: 'tab', 'data-mode': mode }, label)
+  button.addEventListener('click', () => {
+    chatShown = mode === 'chat'
+    update()
+  })
+  return button
+}
+
+/**
+ * Shows the session once it is known: a durable agent's chat, or the terminal with the session's status and brief. A
+ * terminal is open only while shown, since a phone viewing it sizes the session to the phone.
+ */
 function fillSession(screen: HTMLElement, session: Session | undefined): void {
   const subtitle = screen.querySelector<HTMLElement>('.subtitle')!
   const slot = screen.querySelector<HTMLElement>('.terminal-slot')!
   const brief = screen.querySelector<HTMLElement>('.brief')!
+  const modes = screen.querySelector<HTMLElement>('.modes')!
   if (!session) {
     if (sessions) {
       closeTerminal()
+      closeChat()
+      modes.hidden = true
+      screen.dataset.mode = 'terminal'
       subtitle.textContent = 'Not running'
       slot.replaceChildren(el('div', { class: 'empty' }, el('p', {}, 'This session is not running anymore.')))
     }
+    return
+  }
+  const durable = session.agent === 'durable' && session.connected
+  const mode = durable && chatShown ? 'chat' : 'terminal'
+  screen.dataset.mode = mode
+  modes.hidden = !durable
+  for (const button of modes.querySelectorAll('button')) button.setAttribute('aria-selected', String(button.dataset.mode === mode))
+  if (!durable) closeChat()
+  else if (chatName !== session.name) {
+    closeChat()
+    chat = new DurableChat(bridge!, session.name)
+    chatName = session.name
+    chat.onStatus = (status) => {
+      if (screen.dataset.mode === 'chat') subtitle.textContent = `${session.agent} · ${statusText(status)}`
+    }
+    chat.onOverlay = () => claimBack()
+    screen.querySelector<HTMLElement>('.chat-slot')!.replaceChildren(chat.element)
+    chat.mount()
+  }
+  if (mode === 'chat') {
+    closeTerminal()
+    subtitle.textContent = `${session.agent} · ${statusText(chat!.status)}`
     return
   }
   subtitle.textContent = [session.agent, session.question ? STATUS_TEXT[session.status] : session.program ?? STATUS_TEXT[session.status]].filter(Boolean).join(' · ')
@@ -309,6 +356,12 @@ function closeTerminal(): void {
   terminal?.dispose()
   terminal = null
   terminalName = ''
+}
+
+function closeChat(): void {
+  chat?.dispose()
+  chat = null
+  chatName = ''
 }
 
 function keyRow(): HTMLElement {
