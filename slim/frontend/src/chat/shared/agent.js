@@ -9,6 +9,8 @@
 import { TranscriptCache } from './transcript-cache.js'
 
 const RETRY_MS = [500, 1000, 2000, 4000]
+// A socket's open readyState. Not read from `WebSocket`, which the phone app's page has replaced with a function that throws.
+const OPEN = 1
 // A page of older entries from the cache: at least this many, back to the start of a turn, at most CACHE_MAX.
 const CACHE_MIN = 200
 const CACHE_MAX = 1000
@@ -94,7 +96,7 @@ export class DurableAgent extends EventTarget {
   }
 
   request(method, params = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('not connected'))
+    if (!this.socket || this.socket.readyState !== OPEN) return Promise.reject(new Error('not connected'))
     const id = this.nextId++
     this.socket.send(JSON.stringify({ id, method, params }))
     return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }))

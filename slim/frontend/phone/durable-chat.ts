@@ -7,7 +7,7 @@ import { QueueView } from '/chat/workbench/queue.js'
 import { agentStatus } from '/chat/workbench/status.js'
 import { Transcript } from '/chat/workbench/transcript.js'
 import { h, icon } from '/chat/workbench/ui.js'
-import type { Bridge } from './bridge.ts'
+import { newId, type Bridge } from './bridge.ts'
 
 // The runtime ends a stream whose lease (`durable.subscribe`) is not renewed for 30 s.
 const RENEW_MS = 10_000
@@ -208,7 +208,7 @@ class BridgeSocket {
   onclose: (() => void) | null = null
   private readonly bridge: Bridge
   private readonly session: string
-  private readonly lease = crypto.randomUUID()
+  private readonly lease = newId()
   private cancel: (() => void) | null = null
   private renewal = 0
   private parts: string[] = []

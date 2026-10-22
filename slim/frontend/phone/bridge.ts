@@ -183,8 +183,11 @@ export class Bridge {
   }
 }
 
-/** 128 random bits in base64url: the app's 22-character id. */
-function newId(): string {
+/**
+ * 128 random bits in base64url: the app's 22-character id. The page is not a secure context under the app's custom
+ * scheme, so it has `crypto.getRandomValues` but not `crypto.randomUUID`.
+ */
+export function newId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
