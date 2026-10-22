@@ -7,6 +7,8 @@ const THEME = { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3',
 const SNAPSHOT_BUDGET = 600 * 1024
 const KEYS: Record<string, string> = { escape: '\x1b', tab: '\t', interrupt: '\x03', enter: '\r' }
 const ARROWS: Record<string, string> = { up: 'A', down: 'B', right: 'C', left: 'D' }
+// xterm's touch scrolling event (@xterm/xterm 6.1 internals; the version is pinned).
+const GESTURE_CHANGE = '-xterm-gesturechange'
 
 /**
  * A session's terminal, live: the runtime's snapshot, then its output, at the size that fits this view. While a phone
@@ -30,6 +32,17 @@ export class TerminalView {
     this.element.className = 'terminal'
     this.term = new Terminal({ fontFamily: FONT, fontSize: 12, scrollback: 3000, cursorBlink: false, theme: THEME })
     this.term.onData((data) => void this.send(data).catch(() => {}))
+    // xterm keeps scrolling after a swipe with events that carry no position, which a program tracking the mouse would
+    // receive as wheel reports at cell NaN, typed into it as text. They take the point where the finger left.
+    let finger = { clientX: 0, clientY: 0 }
+    this.element.addEventListener('touchmove', (event) => {
+      const touch = event.touches[0]
+      if (touch) finger = { clientX: touch.clientX, clientY: touch.clientY }
+    }, { passive: true })
+    this.element.addEventListener(GESTURE_CHANGE, (event) => {
+      const gesture = event as Event & { clientX?: number; clientY?: number }
+      if (!Number.isFinite(gesture.clientX)) Object.assign(gesture, finger)
+    }, { capture: true })
   }
 
   mount(): void {
