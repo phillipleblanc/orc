@@ -1,8 +1,19 @@
 # Pair a computer
 
-[Orc for Windows](../windows/README.md) (experimental) views and drives this Mac's sessions from another computer on the network.
+Orc on another Mac, or [Orc for Windows](../windows/README.md) (experimental), views and drives this Mac's sessions from another computer on the network.
 
-In Orc, choose **Pair Device…** from the menu or click the devices icon below the session list, then **Computer**. Name the computer and choose how it reaches this Mac: the Mac's local name (`NAME.local`), which keeps working when its address changes, or one of its LAN or Tailscale addresses. **Copy Link** copies a private pairing link; paste it into the computer's Host page and connect.
+In Orc, choose **Pair Device…** from the menu or click the devices icon below the session list, then **Computer**. Name the computer and choose how it reaches this Mac: the Mac's local name (`NAME.local`), which keeps working when its address changes, or one of its LAN or Tailscale addresses. **Copy Link** copies a private pairing link; paste it into the other computer's Orc.
+
+## View from another Mac
+
+In Orc on the other Mac, choose **Host › Connect to a Mac…**, paste the link, and **Connect**. Orc checks that this Mac answers and holds the key the link pins before it saves anything, then offers to show it. The **Host** menu lists **This Mac** and each paired Mac; choosing one reopens Orc showing that Mac's sessions. While it shows another Mac:
+
+- Sessions, terminals, statuses, usage, notifications, notes, Markdown links and durable agents' chats are that Mac's.
+- Files dropped into a terminal are copied to that Mac (up to 12 MiB each) and their paths there are typed.
+- **Add Project…** browses that Mac's home folder, and Settings changes its New Session defaults.
+- Pairing other devices is done on that Mac itself.
+
+This Mac's own sessions keep running meanwhile; choose **This Mac** to show them again. **Connect to a Mac…** also lists the paired Macs and forgets one. Forgetting a Mac removes its link from this Mac; revoke its access on that Mac too. From a terminal, `orc attach NAME --host HOST` attaches to a session on a paired Mac.
 
 ```sh
 orc pair-computer --name EPYC-WINDOWS                # The link and steps, at this Mac's local name

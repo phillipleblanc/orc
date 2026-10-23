@@ -46,6 +46,21 @@ public enum TerminalFileDrop {
             return shellQuote(file.url.path) + " "
         }
     }
+    /// What to type for dropped files in a session of the Mac Orc shows: their paths on this Mac, or for another Mac,
+    /// the paths of copies saved there.
+    public static func typed(_ files: [DroppedFile]) async throws -> [String] {
+        guard RuntimeHost.current.remote != nil else { return try writes(files) }
+        var typed: [String] = []
+        for file in files {
+            try file.validate()
+            let name = file.url.lastPathComponent
+            guard (try file.url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= HostData.maximumTransferBytes else {
+                throw OrcError("“\(name)” is larger than 12 MiB, the most Orc copies to another Mac.")
+            }
+            typed.append(shellQuote(try await HostData.saveAttachment(name: name, data: Data(contentsOf: file.url))) + " ")
+        }
+        return typed
+    }
     /// Image data without a file is kept as a private PNG: the program it was
     /// pasted into may read it later, for example when a conversation resumes.
     public static func saveImage(_ data: Data, directory: URL) throws -> DroppedFile {

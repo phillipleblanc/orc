@@ -1,7 +1,9 @@
 // Bundles the browser libraries the Workbench loads from `/chat/vendor/diffs/` into build/chat-vendor/:
-// Pierre's code and diff renderers, with each highlighting language in a chunk loaded when first used.
+// Pierre's code and diff renderers, with each highlighting language in a chunk loaded when first used. Copies the
+// Markdown libraries it loads from `/chat/vendor/` there too, for Orc.app, which serves another Mac's agents the
+// Workbench from its own copy.
 import { build } from 'esbuild'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,9 +17,12 @@ await build({
   bundle: true, splitting: true, format: 'esm', minify: true, target: ['safari17'], legalComments: 'none'
 })
 
+await copyFile(fileURLToPath(import.meta.resolve('marked')), join(output, 'marked.js'))
+await copyFile(fileURLToPath(import.meta.resolve('dompurify')), join(output, 'purify.js'))
+
 // Notices of the bundled packages: everything the bundle's package needs at run time.
 const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'))
-const bundled = new Set(['node_modules/@pierre/diffs'])
+const bundled = new Set(['node_modules/@pierre/diffs', 'node_modules/marked', 'node_modules/dompurify'])
 for (let added = true; added;) {
   added = false
   for (const location of [...bundled]) {

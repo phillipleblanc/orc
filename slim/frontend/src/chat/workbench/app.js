@@ -1,6 +1,7 @@
 // Workbench: a durable agent's transcript as a document, beside an inspector rail.
-import { DurableAgent } from '/chat/shared/agent.js'
+import { DurableAgent, pageParams } from '/chat/shared/agent.js'
 import { escapeHtml, formatDuration } from '/chat/shared/format.js'
+import { RelaySocket } from '/chat/shared/relay-socket.js'
 import { ChangesPanel } from './changes-panel.js'
 import { Composer } from './composer.js'
 import { Minimap } from './minimap.js'
@@ -16,7 +17,11 @@ const $ = (id) => document.getElementById(id)
 const TOAST_MS = 8000
 const narrow = matchMedia('(max-width: 900px)')
 
-const agent = new DurableAgent()
+// Orc.app opens another Mac's agents in the Workbench from its own copy, and relays their worker through its connection
+// to that Mac (`orcRelay`).
+const params = pageParams()
+const relay = globalThis.orcRelay
+const agent = new DurableAgent(relay ? { ...params, openSocket: () => new RelaySocket(relay, params.session) } : params)
 const app = $('app')
 
 const changes = new ChangesPanel(agent, { root: $('changes'), title: $('changes-title'), counts: $('changes-counts'), body: $('changes-body'), close: $('changes-close') })

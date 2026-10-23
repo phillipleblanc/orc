@@ -30,8 +30,9 @@ public struct MarkdownDocument: Equatable, Sendable {
     public let source: String
     public static let maximumBytes = 4 * 1024 * 1024
 
-    public static func load(_ url: URL) throws -> Self {
-        let data = try readFile(url, maximumBytes: maximumBytes)
+    /// The document at `url` on the Mac whose sessions Orc shows.
+    public static func load(_ url: URL) async throws -> Self {
+        let data = try await HostData.read(url, maximumBytes: maximumBytes)
         guard let source = String(data: data, encoding: .utf8) else {
             throw OrcError("This Markdown file is not UTF-8 text.")
         }
@@ -56,7 +57,8 @@ public struct MarkdownImageLoader: Sendable {
     public static let scheme = "orc-markdown-image"
     public let directory: URL
     public init(directory: URL) { self.directory = directory.resolvingSymlinksInPath().standardizedFileURL }
-    public func load(_ request: URL) throws -> (data: Data, mimeType: String) {
+    public static let maximumBytes = 20 * 1024 * 1024
+    public func load(_ request: URL) async throws -> (data: Data, mimeType: String) {
         guard directory.isFileURL, request.scheme == Self.scheme, request.host == "local" else { throw OrcError("Unsupported image URL.") }
         let file = URL(fileURLWithPath: request.path).resolvingSymlinksInPath().standardizedFileURL
         let prefix = directory.path.hasSuffix("/") ? directory.path : directory.path + "/"
@@ -64,6 +66,6 @@ public struct MarkdownImageLoader: Sendable {
               type.conforms(to: .image), let mimeType = type.preferredMIMEType else {
             throw OrcError("Only images inside the Markdown file's folder can be previewed.")
         }
-        return (try MarkdownDocument.readFile(file, maximumBytes: 20 * 1024 * 1024), mimeType)
+        return (try await HostData.read(file, maximumBytes: Self.maximumBytes, binary: true), mimeType)
     }
 }

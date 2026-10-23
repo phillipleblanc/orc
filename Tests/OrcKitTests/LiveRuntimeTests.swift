@@ -89,6 +89,33 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    /// What Orc reads and writes on another Mac's disk goes through that Mac's runtime.
+    @MainActor func testAnotherMacsFilesThroughItsRuntime() async throws {
+        let worktree = try isolatedWorktree()
+        let paired = try await LocalRPC.call("slim.pairing.create", ["scope": "runtime", "name": "Live test files"])
+        let host = try await RemoteHosts.verify(link: try XCTUnwrap(paired["link"] as? String), name: "Live host")
+        let before = try await HostData.configuration()
+        RuntimeHost.use(.remote(host))
+        defer { RuntimeHost.use(.local) }
+
+        let readme = URL(fileURLWithPath: worktree).appendingPathComponent("README.md")
+        let document = try await MarkdownDocument.load(readme)
+        XCTAssertEqual(document.source, try String(contentsOf: readme, encoding: .utf8))
+        let image = try XCTUnwrap(try FileManager.default.contentsOfDirectory(atPath: worktree + "/docs/images").first { $0.hasSuffix(".png") })
+        let bytes = try await HostData.read(URL(fileURLWithPath: worktree + "/docs/images/" + image), maximumBytes: 12 << 20, binary: true)
+        XCTAssertEqual(bytes, try Data(contentsOf: URL(fileURLWithPath: worktree + "/docs/images/" + image)))
+
+        let saved = try await HostData.saveAttachment(name: "drop.txt", data: Data("dropped".utf8))
+        XCTAssertEqual(try String(contentsOfFile: saved, encoding: .utf8), "dropped", "the copy is on the runtime's Mac, here this one")
+        let folders = try await HostData.folders(in: worktree)
+        XCTAssertTrue(folders.folders.contains("Sources") && folders.folders.contains("docs"), "\(folders.folders)")
+
+        try await HostData.setDefaultSessionType(.pi)
+        let changed = try await HostData.configuration()
+        XCTAssertEqual(changed.defaultSessionType, .pi)
+        try await HostData.setDefaultSessionType(before.defaultSessionType)
+        XCTAssertTrue(HostData.configurationLocation.contains("Live host"))
+    }
     /// The disposable runtime stands in for another Mac: Orc reaches it through the host its link saves, over its
     /// WebSocket, as Orc on that other Mac would.
     @MainActor func testAnotherMacsSessionsThroughTheHostItsLinkSaves() async throws {

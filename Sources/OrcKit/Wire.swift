@@ -134,6 +134,14 @@ struct RequestNotSent: LocalizedError {
                     if response["_keepalive"] as? Bool == true { continue }
                     guard let id = response["id"] as? String else { throw OrcError("Missing runtime response ID.") }
                     if streams.contains(id) {
+                        // An attach's terminal stream failing takes its connection down, and the attach reconnects;
+                        // another stream on a shared connection ends alone.
+                        if id != "orc-stream", response["ok"] as? Bool != true {
+                            streams.remove(id)
+                            let message = (response["error"] as? [String: Any])?["message"] as? String ?? "The runtime ended the stream."
+                            onStreamEvent?(id, ["type": "end", "error": message])
+                            continue
+                        }
                         let event = try rpcResult(response)
                         if id == "orc-stream" { onEvent?(event) }
                         onStreamEvent?(id, event)

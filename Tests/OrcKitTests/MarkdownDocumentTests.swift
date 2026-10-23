@@ -36,24 +36,26 @@ final class MarkdownDocumentTests: XCTestCase {
         }
         XCTAssertNotNil(try resolve("file://localhost/tmp/notes.md"))
     }
-    func testReadsExactUTF8SourceAndSupportsReload() throws {
+    func testReadsExactUTF8SourceAndSupportsReload() async throws {
         let url = root.appendingPathComponent("notes.md")
         let source = "# 한글\n\n**Bold**\n\n```swift\nlet x = 1\n```\n"
         try Data(source.utf8).write(to: url)
-        XCTAssertEqual(try MarkdownDocument.load(url).source, source)
+        let first = try await MarkdownDocument.load(url)
+        XCTAssertEqual(first.source, source)
         try Data("# Updated".utf8).write(to: url)
-        XCTAssertEqual(try MarkdownDocument.load(url).source, "# Updated")
+        let reloaded = try await MarkdownDocument.load(url)
+        XCTAssertEqual(reloaded.source, "# Updated")
     }
-    func testMissingUnreadableNonTextAndOversizedDocumentsFailClearly() throws {
-        XCTAssertThrowsError(try MarkdownDocument.load(root.appendingPathComponent("missing.md")))
-        XCTAssertThrowsError(try MarkdownDocument.load(root))
-        let url = root.appendingPathComponent("binary.md")
-        try Data([0xff, 0xfe, 0xff]).write(to: url)
-        XCTAssertThrowsError(try MarkdownDocument.load(url))
-        try Data(repeating: 0x41, count: MarkdownDocument.maximumBytes + 1).write(to: url)
-        XCTAssertThrowsError(try MarkdownDocument.load(url))
+    func testMissingUnreadableNonTextAndOversizedDocumentsFailClearly() async throws {
+        let binary = root.appendingPathComponent("binary.md")
+        try Data([0xff, 0xfe, 0xff]).write(to: binary)
+        let oversized = root.appendingPathComponent("oversized.md")
+        try Data(repeating: 0x41, count: MarkdownDocument.maximumBytes + 1).write(to: oversized)
+        for url: URL in [root.appendingPathComponent("missing.md"), root, binary, oversized] {
+            do { _ = try await MarkdownDocument.load(url); XCTFail("\(url.lastPathComponent) loaded") } catch {}
+        }
     }
-    func testImageLoaderConfinesFileAccessToDocumentFolder() throws {
+    func testImageLoaderConfinesFileAccessToDocumentFolder() async throws {
         let docs = root.appendingPathComponent("docs", isDirectory: true)
         try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
         let file = docs.appendingPathComponent("screen shot.png")
@@ -65,17 +67,16 @@ final class MarkdownDocumentTests: XCTestCase {
             components.scheme = MarkdownImageLoader.scheme; components.host = "local"
             return try XCTUnwrap(components.url)
         }
-        let image = try loader.load(request(file))
+        let image = try await loader.load(request(file))
         XCTAssertEqual(image.data, bytes); XCTAssertEqual(image.mimeType, "image/png")
         let outside = root.appendingPathComponent("secret.png")
         try bytes.write(to: outside)
-        XCTAssertThrowsError(try loader.load(request(outside)))
         let symlink = docs.appendingPathComponent("link.png")
         try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outside)
-        XCTAssertThrowsError(try loader.load(request(symlink)))
         let text = docs.appendingPathComponent("secret.txt")
         try bytes.write(to: text)
-        XCTAssertThrowsError(try loader.load(request(text)))
-        XCTAssertThrowsError(try loader.load(URL(string: "https://example.com/image.png")!))
+        for refused in [try request(outside), try request(symlink), try request(text), URL(string: "https://example.com/image.png")!] {
+            do { _ = try await loader.load(refused); XCTFail("\(refused) loaded") } catch {}
+        }
     }
 }

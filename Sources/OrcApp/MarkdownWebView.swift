@@ -71,8 +71,10 @@ struct MarkdownWebView: NSViewRepresentable {
             openLink(url)
         }
         private func openLink(_ url: URL) {
+            // Another Mac's files are not this Mac's to open.
+            let schemes = HostSelection.current == nil ? ["https", "http", "mailto", "file"] : ["https", "http", "mailto"]
             if !MarkdownWindowController.open(url, relativeTo: parent.document.url.deletingLastPathComponent()),
-               ["https", "http", "mailto", "file"].contains(url.scheme?.lowercased() ?? "") {
+               schemes.contains(url.scheme?.lowercased() ?? "") {
                 NSWorkspace.shared.open(url)
             }
         }
@@ -104,7 +106,7 @@ struct MarkdownWebView: NSViewRepresentable {
             defer { tasks.removeValue(forKey: id) }
             do {
                 guard let url = urlSchemeTask.request.url else { throw OrcError("Invalid image URL.") }
-                let image = try await Task.detached { try loader.load(url) }.value
+                let image = try await Task.detached { try await loader.load(url) }.value
                 guard !Task.isCancelled else { return }
                 urlSchemeTask.didReceive(URLResponse(url: url, mimeType: image.mimeType, expectedContentLength: image.data.count, textEncodingName: nil))
                 urlSchemeTask.didReceive(image.data)

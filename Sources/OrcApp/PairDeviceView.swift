@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import OrcKit
 
-/// Pairs a phone (Orca Mobile) or another computer (Orc for Windows) with this Mac's runtime.
+/// Pairs a phone (Orca Mobile) or another computer (Orc on another Mac, or Orc for Windows) with this Mac's runtime.
 struct PairDeviceView: View {
     enum Device: Hashable { case phone, computer }
     @Environment(\.dismiss) private var dismiss
@@ -161,7 +161,7 @@ private struct ComputerPairingPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Let a computer on the same network, such as one running Orc for Windows, view and drive this Mac's sessions. Copy the link and paste it into the computer's Host page.")
+            Text("Let another computer on the network view and drive this Mac's sessions: Orc on another Mac, or Orc for Windows. Copy the link and paste it into that computer's Orc: Host › Connect to a Mac… on a Mac, the Host page on Windows.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 12) {
                 GridRow {
@@ -191,7 +191,7 @@ private struct ComputerPairingPane: View {
                     Label("Computer paired", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
                     Label("Link copied. Paste it into the computer's Host page and connect.", systemImage: "doc.on.clipboard")
-                    Text("The link gives full control of this Mac's sessions. Paste it only into Orc for Windows.")
+                    Text("The link gives full control of this Mac's sessions. Paste it only into Orc on the other computer.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(offer.endpoint).font(.caption.monospaced()).textSelection(.enabled)

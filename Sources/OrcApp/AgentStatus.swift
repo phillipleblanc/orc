@@ -77,7 +77,7 @@ import OrcKit
 struct SessionViewLog {
     /// Coming back to a session after this long, to a newer brief, shows the brief.
     static let away: TimeInterval = 15 * 60
-    private static let key = "sessionLastViewed"
+    private static var key: String { HostSelection.defaultsKey("sessionLastViewed") }
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }

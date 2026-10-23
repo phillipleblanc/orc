@@ -111,6 +111,14 @@ public enum RuntimeRPC {
         guard let host = RuntimeHost.current.remote else { return try await LocalRPC.call(method, params, timeout: timeout) }
         return try await RemoteRPC.shared.call(host, method, params, timeout: timeout)
     }
+
+    /// Delivers the viewed Mac's events of a streaming method until the returned function is called, then
+    /// `{type: "end"}` if the stream or its connection ends first. This Mac's streams are not served here.
+    @MainActor public static func subscribe(_ method: String, _ params: [String: Any],
+                                            onEvent: @escaping ([String: Any]) -> Void) async throws -> () -> Void {
+        guard let host = RuntimeHost.current.remote else { throw OrcError("\(method) streams only from another Mac.") }
+        return try await RemoteRPC.shared.subscribe(host, method, params, onEvent: onEvent)
+    }
 }
 
 /// One encrypted connection to the viewed Mac, opened on the first request and again after it drops.
@@ -118,21 +126,21 @@ public enum RuntimeRPC {
     static let shared = RemoteRPC()
     private var connection: (host: RemoteHost, connection: StreamConnection)?
     private var opening: (host: RemoteHost, task: Task<StreamConnection, Error>)?
+    /// Each open stream's listener, by its id on the connection.
+    private var streams: [String: ([String: Any]) -> Void] = [:]
 
     func call(_ host: RemoteHost, _ method: String, _ params: [String: Any], timeout: Int) async throws -> [String: Any] {
         do { return try await open(host).request(method, params, timeout: timeout) }
         catch is RequestNotSent {
             // The connection dropped before the request left; it goes on a new one.
-            connection?.connection.close()
-            connection = nil
+            drop()
             return try await open(host).request(method, params, timeout: timeout)
         }
     }
 
     private func open(_ host: RemoteHost) async throws -> StreamConnection {
         if let connection, connection.host == host, !connection.connection.isClosed { return connection.connection }
-        connection?.connection.close()
-        connection = nil
+        drop()
         if let opening, opening.host == host { return try await opening.task.value }
         let task = Task { @MainActor in
             let connection = try StreamConnection(host: host)
@@ -144,7 +152,33 @@ public enum RuntimeRPC {
         defer { opening = nil }
         let opened = try await task.value
         connection = (host, opened)
+        opened.onStreamEvent = { [weak self] id, event in
+            self?.streams[id]?(event)
+            if event["type"] as? String == "end" { self?.streams[id] = nil }
+        }
+        opened.onClose = { [weak self] _ in
+            guard let self else { return }
+            for listener in self.streams.values { listener(["type": "end"]) }
+            self.streams.removeAll()
+        }
         return opened
+    }
+
+    /// Closes the connection, ending its streams.
+    private func drop() {
+        connection?.connection.close()
+        connection = nil
+        for listener in streams.values { listener(["type": "end"]) }
+        streams.removeAll()
+    }
+
+    func subscribe(_ host: RemoteHost, _ method: String, _ params: [String: Any],
+                   onEvent: @escaping ([String: Any]) -> Void) async throws -> () -> Void {
+        let connection = try await open(host)
+        let id = "stream-" + UUID().uuidString
+        streams[id] = onEvent
+        do { try await connection.subscribe(method, params, id: id) } catch { streams[id] = nil; throw error }
+        return { [weak self] in self?.streams[id] = nil }
     }
 
     /// The protocol and capabilities Orc needs of a runtime, as it requires of its own.

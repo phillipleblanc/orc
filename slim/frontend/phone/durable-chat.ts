@@ -1,5 +1,6 @@
 import { DurableAgent } from '/chat/shared/agent.js'
 import { formatDuration } from '/chat/shared/format.js'
+import { RelaySocket } from '/chat/shared/relay-socket.js'
 import { ChangesPanel } from '/chat/workbench/changes-panel.js'
 import { Composer } from '/chat/workbench/composer.js'
 import { olderPuller } from '/chat/workbench/older.js'
@@ -7,10 +8,8 @@ import { QueueView } from '/chat/workbench/queue.js'
 import { agentStatus } from '/chat/workbench/status.js'
 import { Transcript } from '/chat/workbench/transcript.js'
 import { h, icon } from '/chat/workbench/ui.js'
-import { newId, type Bridge } from './bridge.ts'
+import type { Bridge } from './bridge.ts'
 
-// The runtime ends a stream whose lease (`durable.subscribe`) is not renewed for 30 s.
-const RENEW_MS = 10_000
 const TOAST_MS = 8000
 
 const ARROW_DOWN = '<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v9.5M4 8.5l4 4 4-4"/></svg>'
@@ -91,7 +90,7 @@ export class DurableChat {
     this.part = (name) => root.querySelector<HTMLElement>(`[data-el="${name}"]`)!
     const part = this.part
     const toast = (message: string) => this.toast(message)
-    const connection: any = { session, token: '', openSocket: () => new BridgeSocket(bridge, session) }
+    const connection: any = { session, token: '', openSocket: () => new RelaySocket(bridge, session) }
     this.agent = new DurableAgent(connection)
     this.changes = new ChangesPanel(this.agent, { root: part('changes'), title: part('changesTitle'), counts: part('changesCounts'), body: part('changesBody'), close: part('changesClose') })
     this.changes.onToggle = (open: boolean) => this.onOverlay(open)
@@ -195,77 +194,4 @@ export class DurableChat {
 export function statusText(status: ChatStatus): string {
   const timer = status.since ? formatDuration(Date.now() - status.since) : ''
   return [status.label + (timer ? ` ${timer}` : ''), status.step?.verb].filter(Boolean).join(' · ')
-}
-
-/**
- * The connection DurableAgent expects of its WebSocket to the worker, through the phone app's bridge: the
- * subscription as `durable.subscribe` under a lease this socket renews, and each other request as `durable.request`.
- */
-class BridgeSocket {
-  readyState = 0
-  onopen: (() => void) | null = null
-  onmessage: ((event: { data: string }) => void) | null = null
-  onclose: (() => void) | null = null
-  private readonly bridge: Bridge
-  private readonly session: string
-  private readonly lease = newId()
-  private cancel: (() => void) | null = null
-  private renewal = 0
-  private parts: string[] = []
-
-  constructor(bridge: Bridge, session: string) {
-    this.bridge = bridge
-    this.session = session
-    window.setTimeout(() => {
-      if (this.readyState !== 0) return
-      this.readyState = 1
-      this.onopen?.()
-    })
-  }
-
-  send(text: string): void {
-    const message = JSON.parse(text)
-    if (message.method === 'subscribe') return this.subscribe(message.id, message.params)
-    this.bridge.request('durable.request', { session: this.session, method: message.method, params: message.params ?? {} }).then(
-      (result) => this.deliver({ id: message.id, result }),
-      (error: Error) => this.deliver({ id: message.id, error: error.message }))
-  }
-
-  close(): void {
-    if (this.readyState === 3) return
-    this.readyState = 3
-    window.clearInterval(this.renewal)
-    if (this.cancel) {
-      this.cancel()
-      this.cancel = null
-      void this.bridge.request('durable.unsubscribe', { lease: this.lease }).catch(() => {})
-    }
-    this.onclose?.()
-  }
-
-  private subscribe(id: number, params: Record<string, unknown>): void {
-    this.cancel = this.bridge.subscribe('durable.subscribe', { session: this.session, lease: this.lease, ...params }, (event) => {
-      if (event?.type === 'end') return this.close()
-      if (event?.type === 'part') {
-        this.parts[event.index] = event.text
-        if (event.index === event.count - 1) {
-          const whole = JSON.parse(this.parts.join(''))
-          this.parts = []
-          this.deliver(whole)
-        }
-        return
-      }
-      // The worker's answer to the subscription itself, under the id the agent asked with.
-      if (event?.id !== undefined) return this.deliver(event.error ? { id, error: event.error } : { id, result: event.result })
-      this.deliver(event)
-    })
-    this.renewal = window.setInterval(() => {
-      this.bridge.request<{ renewed: boolean }>('durable.renew', { lease: this.lease })
-        .then(({ renewed }) => { if (!renewed) this.close() }, () => {})
-    }, RENEW_MS)
-  }
-
-  private deliver(message: unknown): void {
-    if (this.readyState === 1) this.onmessage?.({ data: JSON.stringify(message) })
-  }
 }

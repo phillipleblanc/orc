@@ -33,6 +33,7 @@ Orc keeps every agent and shell you run in one window. Sessions run in a backgro
 - **Pull request follow-up.** Orc watches the pull requests your agents open and tells them about failed checks, review comments and merge conflicts.
 - **A CLI for everything.** `orc` creates, attaches to and manages the same sessions from any terminal.
 - **Your phone, too.** Pair the Orca mobile app to watch and type into sessions over your local network or Tailscale.
+- **Another Mac, too.** Pair one Mac to another and show its sessions there, terminals, agents and chats included, from the Host menu.
 
 ### Session Overview
 

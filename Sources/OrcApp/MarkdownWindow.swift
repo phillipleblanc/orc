@@ -57,7 +57,7 @@ import OrcKit
         loading = true; error = nil
         let url = self.url
         do {
-            let document = try await Task.detached { try MarkdownDocument.load(url) }.value
+            let document = try await Task.detached { try await MarkdownDocument.load(url) }.value
             guard !Task.isCancelled, self.generation == generation else { return }
             self.document = document; revision = UUID()
         } catch {

@@ -439,7 +439,7 @@ struct ExpandedBrief: View {
 
 /// When sessions were last marked read in the overview, by name.
 enum OverviewAcknowledgements {
-    private static let key = "overviewAcknowledged"
+    private static var key: String { HostSelection.defaultsKey("overviewAcknowledged") }
 
     static func load(defaults: UserDefaults = .standard) -> [String: Date] {
         (defaults.dictionary(forKey: key) as? [String: Double] ?? [:]).mapValues(Date.init(timeIntervalSince1970:))

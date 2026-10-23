@@ -1,7 +1,7 @@
 import SwiftUI
 import OrcKit
 
-/// Defaults for new sessions, kept in Orc's `config.json` and shared with `orc new`.
+/// Defaults for new sessions, kept in Orc's `config.json` on the Mac whose sessions Orc shows and shared with `orc new` there.
 struct SettingsView: View {
     @ObservedObject var model: SessionModel
     @State private var agent: SessionType = .codex
@@ -37,7 +37,7 @@ struct SettingsView: View {
                 if let unregistered { Text("\(unregistered) (not registered)").tag(unregistered) }
             }
             Section {
-                Text("New Session, `orc new` and the session picker start new sessions with these. Saved in \(OrcConfiguration.file.path).")
+                Text("New Session, `orc new` and the session picker start new sessions with these. Saved in \(HostData.configurationLocation).")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
@@ -70,7 +70,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 480)
-        .onAppear(perform: load)
+        .task { await load() }
         .task { await loadStatus() }
         // While an evaluation runs, its outcome is checked every few seconds.
         .task(id: evaluating) {
@@ -100,20 +100,20 @@ struct SettingsView: View {
                 }
             }
         }
-        .onChange(of: model.workspaces) { _, _ in load() }
+        .onChange(of: model.workspaces) { _, _ in Task { await load() } }
         .onChange(of: agent) { _, value in
             guard let stored, value != stored.agent else { return }
-            save { try OrcConfiguration.setDefaultSessionType(value) }
+            Task { await save { try await HostData.setDefaultSessionType(value) } }
         }
         .onChange(of: project) { _, value in
             guard let stored, value != stored.project else { return }
-            save { try OrcConfiguration.setDefaultProject(value.isEmpty ? nil : value) }
+            Task { await save { try await HostData.setDefaultProject(value.isEmpty ? nil : value) } }
         }
     }
 
-    private func load() {
+    private func load() async {
         do {
-            let config = try OrcConfiguration.load()
+            let config = try await HostData.configuration()
             let resolved = config.defaultProject.isEmpty ? nil : try? SessionCreationDefaults.project(config.defaultProject, in: model.workspaces)
             let tag = config.defaultProject.isEmpty ? "" : resolved.map { "id:" + $0.id } ?? config.defaultProject
             unregistered = !config.defaultProject.isEmpty && resolved == nil ? config.defaultProject : nil
@@ -127,15 +127,15 @@ struct SettingsView: View {
         }
     }
 
-    private func save(_ change: () throws -> Void) {
+    private func save(_ change: () async throws -> Void) async {
         do {
-            try change()
+            try await change()
             stored = (agent, project)
             if project != unregistered { unregistered = nil }
             error = nil
         } catch {
             self.error = error.localizedDescription
-            load()
+            await load()
         }
     }
 

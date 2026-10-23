@@ -364,7 +364,8 @@ struct TerminalHost: NSViewRepresentable {
         // The native app owns navigation; its terminal stays bound to this session.
         // An embedded Ghostty PTY is not its parent process's Herdr pane.
         let command = commandOverride ?? ("/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
-            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch --client-id " + shellQuote(viewerID) + " --viewport-ownership")
+            + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch --client-id " + shellQuote(viewerID) + " --viewport-ownership"
+            + (RuntimeHost.current.remote.map { " --host " + shellQuote($0.id) } ?? ""))
         command.withCString { commandPointer in
             config.command = commandPointer
             FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in
@@ -534,20 +535,23 @@ struct TerminalHost: NSViewRepresentable {
     }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard surface != nil, !detached, session.writable else { return false }
-        do {
-            let writes = try TerminalFileDrop.writes(TerminalFileDrop.load(sender.draggingPasteboard))
-            guard !writes.isEmpty else { return false }
-            window?.makeFirstResponder(self)
-            for text in writes {
-                if let surface { text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) } }
-            }
-            return true
-        } catch {
-            let alert = NSAlert(); alert.messageText = "Could not drop files"
-            alert.informativeText = error.localizedDescription
-            if let window { alert.beginSheetModal(for: window) }
-            return false
+        let files: [DroppedFile]
+        do { files = try TerminalFileDrop.load(sender.draggingPasteboard) } catch { showDropError(error); return false }
+        window?.makeFirstResponder(self)
+        // Another Mac's session gets copies saved there, which takes a moment.
+        Task { @MainActor in
+            do {
+                for text in try await TerminalFileDrop.typed(files) {
+                    if let surface { text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) } }
+                }
+            } catch { showDropError(error) }
         }
+        return true
+    }
+    private func showDropError(_ error: Error) {
+        let alert = NSAlert(); alert.messageText = "Could not drop files"
+        alert.informativeText = error.localizedDescription
+        if let window { alert.beginSheetModal(for: window) }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); if let tracking { removeTrackingArea(tracking) }

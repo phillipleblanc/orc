@@ -10,6 +10,7 @@ import OrcKit
     @StateObject private var briefs = BriefModel()
     @StateObject private var overviewAgents = OverviewAgents()
     @Environment(\.openWindow) private var openWindow
+    init() { HostSelection.apply() }
     var body: some Scene {
         Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, usage: usage, briefs: briefs) }
             .defaultSize(width: 1440, height: 936)
@@ -23,10 +24,25 @@ import OrcKit
                     Button("Session Overview") { openWindow(id: "overview") }
                         .keyboardShortcut("o", modifiers: [.command, .shift])
                     Button("Add Project…") { model.revealWindow?(); model.showProject = true }
-                    Button("Pair Device…") { model.revealWindow?(); model.showPairDevice = true }
+                    // Pairing is administered on the Mac whose runtime it is.
+                    if HostSelection.current == nil {
+                        Button("Pair Device…") { model.revealWindow?(); model.showPairDevice = true }
+                    }
                     Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r")
                     Button("Reopen Closed Session") { model.revealWindow?(); Task { try? await model.reopenLatest() } }
                         .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(model.closed.isEmpty)
+                }
+                CommandMenu("Host") {
+                    Picker("Host", selection: Binding(get: { HostSelection.current?.id ?? "" }, set: { id in
+                        guard id != (HostSelection.current?.id ?? "") else { return }
+                        HostSelection.switchTo(id.isEmpty ? nil : try? RemoteHosts.load(id))
+                    })) {
+                        Text("This Mac").tag("")
+                        ForEach((try? RemoteHosts.list()) ?? []) { Text($0.name).tag($0.id) }
+                    }
+                    .pickerStyle(.inline)
+                    Divider()
+                    Button("Connect to a Mac…") { model.revealWindow?(); model.showConnectHost = true }
                 }
             }
         Window("Session Overview", id: "overview") { SessionOverviewView(model: model, briefs: briefs, usage: usage, agents: overviewAgents) }
@@ -62,6 +78,7 @@ import OrcKit
     @Published var showCreate = false
     @Published var showProject = false
     @Published var showPairDevice = false
+    @Published var showConnectHost = false
     @Published var showOpen = false
     @Published var connected = false
     @Published var loading = false
@@ -86,9 +103,12 @@ import OrcKit
     private var badgeCount: Int?
     private var badgeTask: Task<Void, Never>?
     /// The notifications already shown, kept across launches so reopening Orc shows only the ones that came while it was closed.
-    private var notificationCursor: NotificationCursor? = UserDefaults.standard.data(forKey: "notificationCursor")
+    private var notificationCursor: NotificationCursor? = UserDefaults.standard.data(forKey: HostSelection.defaultsKey("notificationCursor"))
         .flatMap { try? JSONDecoder().decode(NotificationCursor.self, from: $0) } {
-        didSet { if notificationCursor != oldValue { UserDefaults.standard.set(try? JSONEncoder().encode(notificationCursor), forKey: "notificationCursor") } }
+        didSet {
+            guard notificationCursor != oldValue else { return }
+            UserDefaults.standard.set(try? JSONEncoder().encode(notificationCursor), forKey: HostSelection.defaultsKey("notificationCursor"))
+        }
     }
 
     init(monitorSessions: Bool = true) {
@@ -309,7 +329,7 @@ struct SessionWindow: View {
     private let viewLog = SessionViewLog()
     @StateObject private var durableChat = DurableChatModel()
     /// Projects whose sidebar sections are collapsed, by project id, one per line.
-    @AppStorage("collapsedSidebarProjects") private var collapsedProjectsStorage = ""
+    @AppStorage(HostSelection.defaultsKey("collapsedSidebarProjects")) private var collapsedProjectsStorage = ""
     @State private var renamingSession: Session?
     @State private var closingSession: Session?
     @State private var closeError: String?
@@ -355,6 +375,7 @@ struct SessionWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 440)
+        .navigationTitle(HostSelection.current.map { "Orc — \($0.name)" } ?? "Orc")
         .background(TerminalWindowBackground(engine: ghostty, showingTerminal: showsTerminal).allowsHitTesting(false).accessibilityHidden(true))
         .toolbar {
             ToolbarItem {
@@ -372,6 +393,7 @@ struct SessionWindow: View {
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
         .sheet(isPresented: $model.showProject) { AddProjectView(model: model) }
         .sheet(isPresented: $model.showPairDevice) { PairDeviceView() }
+        .sheet(isPresented: $model.showConnectHost) { ConnectHostView() }
         .sheet(item: $creatingChildOf) { CreateSessionView(model: model, parent: $0) }
         .sheet(item: $renamingSession) { RenameSessionView(model: model, session: $0) }
         .alert("Close “\(closingSession?.name ?? "")”?", isPresented: Binding(get: { closingSession != nil }, set: { if !$0 { closingSession = nil } }),
@@ -444,10 +466,13 @@ struct SessionWindow: View {
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
             UsageSection(model: usage)
             HStack {
-                Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")" + (HostSelection.current.map { " on \($0.name)" } ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button { model.showPairDevice = true } label: { Image(systemName: "laptopcomputer.and.iphone") }
-                    .buttonStyle(.borderless).help("Pair a Phone or Computer").accessibilityLabel("Pair Device")
+                if HostSelection.current == nil {
+                    Button { model.showPairDevice = true } label: { Image(systemName: "laptopcomputer.and.iphone") }
+                        .buttonStyle(.borderless).help("Pair a Phone or Computer").accessibilityLabel("Pair Device")
+                }
             }.padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -505,8 +530,13 @@ struct SessionWindow: View {
     @ViewBuilder private var emptyState: some View {
         switch placeholder {
         case .runtimeNotConnected:
-            ContentUnavailableView("Runtime Not Connected", systemImage: "bolt.horizontal.circle",
-                                   description: Text("Orc is reconnecting to the session runtime."))
+            if let host = HostSelection.current {
+                ContentUnavailableView("Can't Reach \(host.name)", systemImage: "bolt.horizontal.circle",
+                                       description: Text("Orc keeps trying. \(host.name) must be awake, running Orc, and reachable at \(host.endpoint)."))
+            } else {
+                ContentUnavailableView("Runtime Not Connected", systemImage: "bolt.horizontal.circle",
+                                       description: Text("Orc is reconnecting to the session runtime."))
+            }
         case .offline(let name):
             ContentUnavailableView("Session Offline", systemImage: "bolt.horizontal.circle",
                                    description: Text("\(name) is not connected. Orc reconnects when it is available."))
@@ -567,22 +597,21 @@ struct SessionWindow: View {
 
 struct SessionNotesEditor: View {
     let session: Session
-    @State private var notes: String
+    @State private var notes = ""
+    @State private var loaded = false
     @State private var error: String?
+    /// Edits made here, so a read that started before one does not undo it, and saves not yet done.
+    @State private var edits = 0
+    @State private var saving = 0
     @State private var saveFailed = false
-
-    init(session: Session) {
-        self.session = session
-        _notes = State(initialValue: (try? SessionNotesStore.load(session.name)) ?? "")
-    }
+    @State private var lastSave: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Notes").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: Binding(get: { notes }, set: { value in
                 notes = value
-                do { try SessionNotesStore.save(value, for: session.name); error = nil; saveFailed = false }
-                catch { self.error = error.localizedDescription; saveFailed = true }
+                save(value)
             }))
                 .font(.callout)
                 .scrollContentBackground(.hidden)
@@ -590,21 +619,39 @@ struct SessionNotesEditor: View {
                 .frame(height: 140)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
+                .disabled(!loaded)
                 .accessibilityLabel("Session notes")
                 .accessibilityIdentifier("session-notes")
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }
+        // Notes change elsewhere too, for example in Pi's /notes.
         .task(id: session.name) {
+            loaded = false
             while !Task.isCancelled {
                 if !saveFailed {
+                    let before = edits
                     do {
-                        let saved = try SessionNotesStore.load(session.name)
-                        if saved != notes { notes = saved }
+                        let saved = try await HostData.notes(session.name)
+                        if edits == before, saving == 0, saved != notes { notes = saved }
+                        loaded = true
                         error = nil
                     } catch { self.error = error.localizedDescription }
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
+        }
+    }
+
+    /// Saves each edit in order.
+    private func save(_ value: String) {
+        edits += 1
+        saving += 1
+        let name = session.name, previous = lastSave
+        lastSave = Task {
+            await previous?.value
+            do { try await HostData.saveNotes(value, for: name); error = nil; saveFailed = false }
+            catch { self.error = error.localizedDescription; saveFailed = true }
+            saving -= 1
         }
     }
 }
@@ -702,9 +749,9 @@ struct CreateSessionView: View {
         .sheet(isPresented: $showProject) {
             AddProjectView(model: model) { project in workspace = "id:" + project.id }
         }
-        .onAppear {
+        .task {
             do {
-                let config = try OrcConfiguration.load()
+                let config = try await HostData.configuration()
                 agent = config.defaultSessionType.rawValue
                 let project: Workspace
                 if let parent {
