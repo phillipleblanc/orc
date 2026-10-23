@@ -38,7 +38,7 @@ extension SessionService {
             func enqueue(_ session: Session) {
                 group.addTask {
                     guard session.connected else { return (session.handle, .offline) }
-                    guard let response = try? await LocalRPC.call("terminal.agentStatus", ["terminal": session.handle], timeout: 3),
+                    guard let response = try? await RuntimeRPC.call("terminal.agentStatus", ["terminal": session.handle], timeout: 3),
                           let status = response["agentStatus"] as? [String: Any],
                           status["handle"] as? String == session.handle else { return (session.handle, .unknown) }
                     return (session.handle, AgentActivity(isRunningAgent: status["isRunningAgent"] as? Bool,

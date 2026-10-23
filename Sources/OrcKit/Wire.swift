@@ -23,10 +23,19 @@ public struct TerminalFrame {
     }
 }
 
+/// A request that never left this Mac, so sending it again cannot repeat it.
+struct RequestNotSent: LocalizedError {
+    let underlying: Error
+    init(_ underlying: Error) { self.underlying = underlying }
+    var errorDescription: String? { underlying.localizedDescription }
+}
+
 @MainActor public final class StreamConnection {
     private var task: URLSessionWebSocketTask?
     private let session: URLSession
     private let pairing: Pairing
+    /// Another Mac this one views, or nil for this Mac's own runtime, found through its metadata.
+    private let host: RemoteHost?
     private let crypto: NaClChannel
     private var receiving: Task<Void, Never>?
     private var pending: [String: CheckedContinuation<[String: Any], Error>] = [:]
@@ -38,17 +47,31 @@ public struct TerminalFrame {
     public var onBinary: ((Data) -> Void)?
     public var onClose: ((Error?) -> Void)?
 
-    public init(pairing: Pairing) throws {
+    public convenience init(pairing: Pairing) throws {
+        try self.init(pairing: pairing, host: nil)
+    }
+    public convenience init(host: RemoteHost) throws {
+        try self.init(pairing: host.pairing, host: host)
+    }
+    private init(pairing: Pairing, host: RemoteHost?) throws {
         self.pairing = pairing
+        self.host = host
         crypto = try NaClChannel(peerKey: Data(base64Encoded: pairing.publicKeyB64) ?? Data())
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         session = URLSession(configuration: config)
     }
+    public var isClosed: Bool { closed }
     public func connect() async throws {
-        let metadata = try await RuntimeBootstrap.ensureRunning()
+        let endpoint: URL
+        if let host {
+            guard let url = URL(string: host.endpoint) else { throw OrcError("Invalid address for \(host.name).") }
+            endpoint = url
+        } else {
+            endpoint = try pairing.localEndpoint(metadata: try await RuntimeBootstrap.ensureRunning())
+        }
         guard !closed, !Task.isCancelled else { throw OrcError("Connection was cancelled.") }
-        let task = session.webSocketTask(with: try pairing.localEndpoint(metadata: metadata))
+        let task = session.webSocketTask(with: endpoint)
         self.task = task
         task.maximumMessageSize = 16 * 1024 * 1024
         task.resume()
@@ -62,7 +85,8 @@ public struct TerminalFrame {
             try await sendJSON(["type": "e2ee_auth", "deviceToken": pairing.deviceToken])
             guard case .string(let encrypted) = try await task.receive(), let data = Data(base64Encoded: encrypted),
                   try jsonObject(crypto.open(data))["type"] as? String == "e2ee_authenticated" else {
-                throw OrcError("The runtime rejected this connection. Remove connection.json from Orc's configuration directory so Orc requests new access.")
+                throw OrcError(host.map { "\($0.name) refused this Mac. Pair it again from Orc's Host menu, with a new link from that Mac." }
+                    ?? "The runtime rejected this connection. Remove connection.json from Orc's configuration directory so Orc requests new access.")
             }
             receiving = Task { await receiveLoop() }
         } catch { close(); throw error }
@@ -71,18 +95,18 @@ public struct TerminalFrame {
         guard let task, !closed else { throw OrcError("Runtime connection is closed.") }
         try await task.send(.string(crypto.seal(jsonData(value)).base64EncodedString()))
     }
-    public func request(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+    public func request(_ method: String, _ params: [String: Any] = [:], timeout: Int = 15) async throws -> [String: Any] {
         let id = UUID().uuidString
         return try await withCheckedThrowingContinuation { continuation in
             guard !closed else { continuation.resume(throwing: OrcError("Runtime connection is closed.")); return }
             pending[id] = continuation
             deadlines[id] = Task {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(timeout) * 1_000_000_000)
                 if !Task.isCancelled { self.finish(id, .failure(OrcError("Runtime request timed out. Input was not retried."))) }
             }
             Task {
                 do { try await sendJSON(["id": id, "method": method, "params": params, "deviceToken": pairing.deviceToken]) }
-                catch { finish(id, .failure(error)) }
+                catch { finish(id, .failure(RequestNotSent(error))) }
             }
         }
     }

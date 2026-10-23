@@ -32,7 +32,7 @@ import OrcKit
         fetching = true
         defer { fetching = false }
         // A runtime that is not running, or that predates usage, leaves what is shown.
-        guard let result = try? await LocalRPC.call("usage.read", ["refresh": mode], timeout: 60),
+        guard let result = try? await RuntimeRPC.call("usage.read", ["refresh": mode], timeout: 60),
               let providers = try? AgentUsage.list(from: result) else { return }
         self.providers = providers
     }

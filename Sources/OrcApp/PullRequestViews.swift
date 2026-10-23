@@ -5,16 +5,16 @@ import OrcKit
 enum PullRequestWatch {
     /// Answers a check that failed again after the agent was told: ignore it from now on, or keep telling the agent.
     static func resolve(_ name: String, _ pullRequest: AgentPullRequest, check: String, ignore: Bool) async throws {
-        _ = try await LocalRPC.call("pr.resolve", ["name": name, "url": pullRequest.url.absoluteString, "check": check, "choice": ignore ? "ignore" : "keep"])
+        _ = try await RuntimeRPC.call("pr.resolve", ["name": name, "url": pullRequest.url.absoluteString, "check": check, "choice": ignore ? "ignore" : "keep"])
     }
 
     /// The checks never reported to agents.
     static func ignoredChecks() async throws -> [String] {
-        try await LocalRPC.call("pr.settings")["ignoredChecks"] as? [String] ?? []
+        try await RuntimeRPC.call("pr.settings")["ignoredChecks"] as? [String] ?? []
     }
 
     static func setIgnoredChecks(_ checks: [String]) async throws {
-        _ = try await LocalRPC.call("pr.configure", ["ignoredChecks": checks])
+        _ = try await RuntimeRPC.call("pr.configure", ["ignoredChecks": checks])
     }
 }
 

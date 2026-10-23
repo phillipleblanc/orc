@@ -24,7 +24,7 @@ import OrcKit
     }
 
     private func load() async {
-        guard let result = try? await LocalRPC.call("agent.list"), let agents = try? AgentSummary.list(from: result) else { return }
+        guard let result = try? await RuntimeRPC.call("agent.list"), let agents = try? AgentSummary.list(from: result) else { return }
         if agents != self.agents { self.agents = agents }
     }
 }
@@ -537,7 +537,7 @@ private struct ReplyField: View {
         Task {
             defer { sending = false }
             do {
-                _ = try await LocalRPC.call("agent.send", ["to": name, "text": message, "whenIdle": whenIdle])
+                _ = try await RuntimeRPC.call("agent.send", ["to": name, "text": message, "whenIdle": whenIdle])
                 close()
             } catch {
                 self.error = error.localizedDescription

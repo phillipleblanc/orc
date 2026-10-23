@@ -237,12 +237,19 @@ import COrcSupport
             else { print("Closed \(safe(options[0])).") }
         case "attach":
             let readOnly = flag("--read-only"), noReconnect = flag("--no-reconnect")
-            let sessionSwitching = !flag("--no-session-switch")
+            let noSessionSwitch = flag("--no-session-switch")
             // Orc.app names the viewer of each of its terminals and reports what is on screen for it.
             let clientID = try value("--client-id"), viewportOwnership = flag("--viewport-ownership")
-            guard options.count <= 1, !json else { throw OrcError("Usage: orc attach [NAME] [--read-only] [--no-reconnect]") }
-            let herdr = HerdrAttach.current
-            let herdrChild = ProcessInfo.processInfo.environment["ORC_HERDR_ATTACH_CHILD"] == "1"
+            // A session on another Mac that Orc views, by the name or id its Host menu shows.
+            let host = try value("--host").map(RemoteHosts.load)
+            guard options.count <= 1, !json, host == nil || options.count == 1 else {
+                throw OrcError("Usage: orc attach [NAME] [--read-only] [--no-reconnect], or orc attach NAME --host HOST")
+            }
+            if let host { RuntimeHost.use(.remote(host)) }
+            // Switching opens the session picker, which creates sessions from this Mac's defaults.
+            let sessionSwitching = !noSessionSwitch && host == nil
+            let herdr = host == nil ? HerdrAttach.current : nil
+            let herdrChild = host == nil && ProcessInfo.processInfo.environment["ORC_HERDR_ATTACH_CHILD"] == "1"
             if herdrChild, options.count != 1 { throw OrcError("An Orc Herdr attachment needs a session handle.") }
             var selector = options.first
             var selectedHandle: String?
@@ -284,7 +291,7 @@ import COrcSupport
                 bridge?.start()
                 let result: AttachExit
                 do {
-                    result = try await TerminalAttach(terminal: terminal, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching,
+                    result = try await TerminalAttach(terminal: terminal, host: host, readOnly: readOnly, reconnect: !noReconnect, sessionSwitching: sessionSwitching,
                                                       clientID: clientID, viewportOwnership: viewportOwnership).run()
                 } catch {
                     await bridge?.stop()
@@ -478,6 +485,7 @@ import COrcSupport
     orc attach [NAME]                        Choose a session, or attach by name
                  [--read-only]              Watch without sending input or resizing
                  [--no-reconnect]           Exit on connection loss
+                 [--host HOST]              A session on another Mac Orc views (its Host menu)
     orc agent                               Spawn agents and message them by name (orc agent --help)
     orc history [QUERY] [--all] [--json]     Recently closed agent sessions and agent conversations
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach

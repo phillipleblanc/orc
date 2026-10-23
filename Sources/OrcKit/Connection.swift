@@ -56,16 +56,9 @@ public struct Pairing: Codable {
     }
     public func save(to directory: URL = Self.directory, profile: URL = RuntimeMetadata.directory) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temp = directory.appendingPathComponent(".connection-\(UUID().uuidString)")
-        let fd = Darwin.open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-        guard fd >= 0 else { throw OrcError("Cannot save the Orc connection.") }
-        defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temp) }
         var scoped = self
         scoped.profilePath = profile.resolvingSymlinksInPath().path
-        try writeAll(fd, JSONEncoder().encode(scoped))
-        guard Darwin.rename(temp.path, directory.appendingPathComponent("connection.json").path) == 0 else {
-            throw OrcError("Cannot save the Orc connection.")
-        }
+        try writePrivateFile(JSONEncoder().encode(scoped), to: directory.appendingPathComponent("connection.json"))
     }
     public func localEndpoint(metadata: RuntimeMetadata) throws -> URL {
         // The key pins the host; the runtime metadata follows its current listening port.
@@ -74,6 +67,16 @@ public struct Pairing: Codable {
         guard let url = components?.url else { throw OrcError("Invalid local runtime WebSocket endpoint.") }
         return url
     }
+}
+
+/// Replaces `url` with `data` in one rename, readable only by its owner.
+func writePrivateFile(_ data: Data, to url: URL) throws {
+    let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent)-\(UUID().uuidString)")
+    let fd = Darwin.open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+    guard fd >= 0 else { throw OrcError("Cannot save \(url.lastPathComponent).") }
+    defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temp) }
+    try writeAll(fd, data)
+    guard Darwin.rename(temp.path, url.path) == 0 else { throw OrcError("Cannot save \(url.lastPathComponent).") }
 }
 
 public struct NaClChannel {

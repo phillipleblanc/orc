@@ -103,19 +103,23 @@ public struct NotificationCursor: Codable, Equatable {
 public struct SessionService {
     public init() {}
     public func list() async throws -> SessionListing {
-        try decode(await LocalRPC.call("terminal.list", ["limit": 10000]))
+        try decode(await RuntimeRPC.call("terminal.list", ["limit": 10000]))
     }
     public func workspaces() async throws -> [Workspace] {
-        let result = try await LocalRPC.call("worktree.list", ["limit": 10000])
+        let result = try await RuntimeRPC.call("worktree.list", ["limit": 10000])
         return try decode(result["worktrees"] ?? [])
     }
+    /// A folder on the runtime's Mac; the runtime checks another Mac's folders itself.
     public func registerProject(at directory: URL) async throws -> Workspace {
-        let path = directory.standardizedFileURL.resolvingSymlinksInPath()
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw OrcError("Choose an existing project directory.")
+        var path = directory.standardizedFileURL
+        if RuntimeHost.current.remote == nil {
+            path = path.resolvingSymlinksInPath()
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw OrcError("Choose an existing project directory.")
+            }
         }
-        _ = try await LocalRPC.call("repo.add", ["path": path.path], timeout: 60)
+        _ = try await RuntimeRPC.call("repo.add", ["path": path.path], timeout: 60)
         let projects = try await workspaces()
         guard let project = projects.first(where: { $0.path == path.path && ($0.hostId == nil || $0.hostId == "local") }) else {
             throw OrcError("The runtime accepted project registration but has not listed it yet. Check `orc projects` before trying again.")
@@ -124,7 +128,7 @@ public struct SessionService {
     }
     /// Forgets a project; the runtime refuses while sessions belong to it. Its folder is left as it is.
     public func removeProject(_ project: Workspace) async throws {
-        _ = try await LocalRPC.call("repo.remove", ["repo": "id:" + project.id])
+        _ = try await RuntimeRPC.call("repo.remove", ["repo": "id:" + project.id])
     }
     /// With `rexTab`, the Rex tab the session is about to be attached in, which the runtime's Rex sync then keeps as the session's tab.
     public func create(name: String, worktree: String, command: String?, mcp: [String] = [], rexTab: RexTab? = nil) async throws -> String {
@@ -132,7 +136,7 @@ public struct SessionService {
         if let command, !command.isEmpty { params["command"] = command }
         if !mcp.isEmpty { params["mcp"] = mcp }
         if let rexTab { params["rexTab"] = rexTab.parameters }
-        let response = try await LocalRPC.call("terminal.create", params, timeout: 60)
+        let response = try await RuntimeRPC.call("terminal.create", params, timeout: 60)
         guard let handle = (response["terminal"] as? [String: Any])?["handle"] as? String else {
             throw OrcError("The runtime did not return the created session. Check `orc list` before retrying.")
         }
@@ -140,11 +144,11 @@ public struct SessionService {
     }
     /// Renaming changes the session's identity; the runtime moves its notes with it.
     public func rename(handle: String, name: String) async throws {
-        _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": try validatedName(name)])
+        _ = try await RuntimeRPC.call("terminal.rename", ["terminal": handle, "title": try validatedName(name)])
     }
     /// The optional MCP configs of a project (`.mcp/NAME.json`) that an agent can add to its own servers.
     public func mcpConfigs(worktree: String) async throws -> [McpConfig] {
-        try decode(await LocalRPC.call("mcp.list", ["project": worktree])["configs"] ?? [])
+        try decode(await RuntimeRPC.call("mcp.list", ["project": worktree])["configs"] ?? [])
     }
     /// Names given as `NAME[,NAME]`.
     public static func mcpNames(_ text: String) -> [String] {
@@ -153,7 +157,7 @@ public struct SessionService {
     /// The notifications sessions asked Orc to show since `cursor`, and the cursor to ask from next. Without a cursor,
     /// or with one from an earlier frontend, the newest few, which arrived while Orc was closed.
     public func notifications(after cursor: NotificationCursor?) async throws -> (notifications: [SessionNotification], cursor: NotificationCursor) {
-        let result = try await LocalRPC.call("notify.since", cursor.map { ["after": $0.latest] } ?? [:])
+        let result = try await RuntimeRPC.call("notify.since", cursor.map { ["after": $0.latest] } ?? [:])
         guard let runtimeId = result["runtimeId"] as? String, let latest = result["latest"] as? Int else {
             throw OrcError("The runtime returned no notification cursor.")
         }
@@ -162,11 +166,11 @@ public struct SessionService {
     }
     /// Ends the session and the program running in it. A closed agent session can be reopened.
     public func close(handle: String) async throws {
-        _ = try await LocalRPC.call("terminal.close", ["terminal": handle])
+        _ = try await RuntimeRPC.call("terminal.close", ["terminal": handle])
     }
     /// Ends a session and starts it again under its name; an agent continues its conversation. Returns the new handle.
     public func restart(handle: String) async throws -> String {
-        let result = try await LocalRPC.call("terminal.restart", ["terminal": handle], timeout: 60)
+        let result = try await RuntimeRPC.call("terminal.restart", ["terminal": handle], timeout: 60)
         guard let restarted = (result["restart"] as? [String: Any])?["handle"] as? String else {
             throw OrcError("The runtime did not return the restarted session. Check `orc list` before retrying.")
         }

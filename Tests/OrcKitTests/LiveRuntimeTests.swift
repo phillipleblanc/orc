@@ -89,4 +89,48 @@ final class LiveRuntimeTests: XCTestCase {
         }
         for handle in handles { _ = try await LocalRPC.call("terminal.close", ["terminal": handle]) }
     }
+    /// The disposable runtime stands in for another Mac: Orc reaches it through the host its link saves, over its
+    /// WebSocket, as Orc on that other Mac would.
+    @MainActor func testAnotherMacsSessionsThroughTheHostItsLinkSaves() async throws {
+        let worktree = try isolatedWorktree()
+        let paired = try await LocalRPC.call("slim.pairing.create", ["scope": "runtime", "name": "Live test viewer"])
+        let link = try XCTUnwrap(paired["link"] as? String), deviceId = try XCTUnwrap(paired["deviceId"] as? String)
+        var tampered = try Pairing.parse(link)
+        tampered = Pairing(endpoint: tampered.endpoint, deviceToken: tampered.deviceToken,
+                           publicKeyB64: Data(repeating: 7, count: 32).base64EncodedString(), scope: "runtime")
+        let wrongKey = RemoteHost(id: UUID().uuidString, name: "impostor", endpoint: tampered.endpoint,
+                                  publicKeyB64: tampered.publicKeyB64, deviceToken: tampered.deviceToken)
+        do {
+            try await StreamConnection(host: wrongKey).connect()
+            XCTFail("a Mac without the key the link pins was accepted")
+        } catch {}
+
+        let host = try await RemoteHosts.verify(link: link, name: "Live host")
+        RuntimeHost.use(.remote(host))
+        defer { RuntimeHost.use(.local) }
+        let service = SessionService()
+        let name = "orc-remote-" + UUID().uuidString.prefix(8)
+        let handle = try await service.create(name: name, worktree: "path:" + worktree, command: nil)
+        do {
+            let listed = try await service.list().terminals
+            XCTAssertTrue(listed.contains { $0.handle == handle })
+            _ = try await RuntimeRPC.call("notes.set", ["name": name, "text": "from the other Mac"])
+            try await service.rename(handle: handle, name: name + "-renamed")
+            let notes = try await RuntimeRPC.call("notes.get", ["name": name + "-renamed"])
+            XCTAssertEqual(notes["text"] as? String, "from the other Mac")
+            try await service.close(handle: handle)
+            let remaining = try await service.list().terminals
+            XCTAssertFalse(remaining.contains { $0.handle == handle })
+        } catch {
+            _ = try? await LocalRPC.call("terminal.close", ["terminal": handle])
+            throw error
+        }
+        // Revoking the grant drops the connection; a request already on it fails, and the next connection is refused.
+        _ = try await LocalRPC.call("slim.pairing.revoke", ["deviceId": deviceId])
+        _ = try? await service.list()
+        do {
+            _ = try await service.list()
+            XCTFail("a revoked host still answered")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("refused this Mac"), error.localizedDescription) }
+    }
 }

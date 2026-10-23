@@ -5,6 +5,7 @@ Requires ORC_RUNTIME_DIR and ORC_CONFIG_DIR pointing to disposable profiles.
 No existing session is altered. Only sessions created by this invocation are closed.
 """
 import asyncio
+import base64
 import fcntl
 import json
 import os
@@ -24,6 +25,7 @@ import termios
 import threading
 import time
 import uuid
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = str(Path(os.environ.get('ORC_TEST_CLI', ROOT / '.build/debug/orc')).resolve())
@@ -179,6 +181,35 @@ class Proxy:
 
 handles, terminals = [], []
 try:
+    # A session on another Mac, reached through the host Orc.app saved from that Mac's pairing link: the link's address
+    # and grant, with no runtime profile of this Mac's. An empty profile catches any request that goes to this Mac.
+    paired = rpc('slim.pairing.create', {'scope': 'runtime', 'name': 'e2e viewer'})
+    code = parse_qs(urlparse(paired['link']).query)['code'][0]
+    offer = json.loads(base64.urlsafe_b64decode(code + '=' * (-len(code) % 4)))
+    host_id = str(uuid.uuid4())
+    hosts = Path(os.environ['ORC_CONFIG_DIR']) / 'hosts'
+    hosts.mkdir(mode=0o700, exist_ok=True)
+    host_file = hosts / (host_id + '.json')
+    host_file.write_text(json.dumps({'id': host_id, 'name': 'e2e-host', 'endpoint': offer['endpoint'],
+                                     'publicKeyB64': offer['publicKeyB64'], 'deviceToken': offer['deviceToken']}))
+    host_file.chmod(0o600)
+    try:
+        with tempfile.TemporaryDirectory(prefix='orc-no-runtime-') as nowhere:
+            elsewhere = dict(os.environ, ORC_RUNTIME_DIR=nowhere)
+            remote_name = 'orc-remote-' + uuid.uuid4().hex[:8]
+            remote = json.loads(cli('new', '--name', remote_name, '--project', 'path:' + str(ROOT),
+                                    '--command', "exec env PS1='__REMOTE__ ' /bin/sh -i", '--json'))['handle']
+            handles.append(remote)
+            t = Terminal(remote_name, extra=('--host', 'e2e-host', '--no-session-switch'), env=elsewhere); terminals.append(t)
+            t.attached(remote_name)
+            t.send("printf '__REMOTE_%s__\\n' TYPED\r"); t.read_until('__REMOTE_TYPED__')
+            t.close(); terminals.remove(t)
+            rpc('slim.pairing.revoke', {'deviceId': paired['deviceId']})
+            t = Terminal(remote_name, extra=('--host', 'e2e-host', '--no-session-switch'), env=elsewhere); terminals.append(t)
+            t.read_until('refused this Mac')
+            t.close(expected_code=1); terminals.remove(t)
+    finally: host_file.unlink()
+    print('PASS attach to a session on another Mac through its saved host, and refusal once its grant is revoked', flush=True)
     exit_suffix = uuid.uuid4().hex[:8]
 
     def exit_test_session(label):

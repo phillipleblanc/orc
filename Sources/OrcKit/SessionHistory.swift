@@ -64,12 +64,12 @@ public func relativeAge(_ date: Date?, now: Date = Date()) -> String {
 
 extension SessionService {
     public func closedSessions() async throws -> [ClosedSession] {
-        try decode(await LocalRPC.call("history.list")["sessions"] ?? [])
+        try decode(await RuntimeRPC.call("history.list")["sessions"] ?? [])
     }
 
     /// Conversations whose words include every word of `query`, from registered projects unless `allProjects`.
     public func conversations(query: String = "", allProjects: Bool = false, limit: Int = 50) async throws -> [AgentConversation] {
-        try decode(await LocalRPC.call("history.conversations", ["query": query, "allProjects": allProjects, "limit": limit])["conversations"] ?? [])
+        try decode(await RuntimeRPC.call("history.conversations", ["query": query, "allProjects": allProjects, "limit": limit])["conversations"] ?? [])
     }
 
     /// Starts a closed agent session again, resuming its conversation, under its own name or `newName`.
@@ -89,7 +89,7 @@ extension SessionService {
     private func reopen(_ selector: [String: Any], as newName: String?) async throws -> ReopenedSession {
         var params = selector
         if let newName { params["as"] = try validatedName(newName) }
-        let result = try await LocalRPC.call("history.reopen", params, timeout: 60)
+        let result = try await RuntimeRPC.call("history.reopen", params, timeout: 60)
         guard let handle = result["handle"] as? String, let name = result["name"] as? String else {
             throw OrcError("The runtime did not return the reopened session. Check `orc list` before retrying.")
         }

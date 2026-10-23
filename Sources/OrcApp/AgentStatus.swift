@@ -24,23 +24,23 @@ import OrcKit
     deinit { monitor?.cancel() }
 
     func load() async {
-        guard let result = try? await LocalRPC.call("brief.list"), let briefs = try? AgentBrief.list(from: result) else { return }
+        guard let result = try? await RuntimeRPC.call("brief.list"), let briefs = try? AgentBrief.list(from: result) else { return }
         if briefs != self.briefs { self.briefs = briefs }
         if !loaded { loaded = true }
-        if let result = try? await LocalRPC.call("pr.list"), let pullRequests = try? AgentPullRequest.list(from: result), pullRequests != self.pullRequests {
+        if let result = try? await RuntimeRPC.call("pr.list"), let pullRequests = try? AgentPullRequest.list(from: result), pullRequests != self.pullRequests {
             self.pullRequests = pullRequests
         }
     }
 
     /// Asks the runtime to write a session's brief now.
     func refresh(_ name: String) async throws {
-        let record = try await LocalRPC.call("brief.refresh", ["name": name])
+        let record = try await RuntimeRPC.call("brief.refresh", ["name": name])
         briefs[name] = try AgentBrief(record: record)
     }
 
     /// Its person marked the brief's question read: the runtime drops it, and later briefs do not raise it again.
     func dismiss(_ name: String, question: String) async throws {
-        let record = try await LocalRPC.call("brief.dismiss", ["name": name, "question": question])
+        let record = try await RuntimeRPC.call("brief.dismiss", ["name": name, "question": question])
         briefs[name] = try AgentBrief(record: record)
     }
 
@@ -53,7 +53,7 @@ import OrcKit
     }
 
     static func settings() async throws -> Settings {
-        let result = try await LocalRPC.call("brief.settings")
+        let result = try await RuntimeRPC.call("brief.settings")
         let models = (result["models"] as? [[String: Any]] ?? []).compactMap { entry -> (model: String, name: String)? in
             guard let model = entry["model"] as? String else { return nil }
             return (model, entry["name"] as? String ?? model)
@@ -64,12 +64,12 @@ import OrcKit
 
     /// Chooses the model; the runtime then evaluates a newly chosen one.
     static func configure(model: String?) async throws {
-        _ = try await LocalRPC.call("brief.configure", ["model": model ?? NSNull()])
+        _ = try await RuntimeRPC.call("brief.configure", ["model": model ?? NSNull()])
     }
 
     /// Starts evaluating the chosen model again.
     static func evaluate() async throws {
-        _ = try await LocalRPC.call("brief.evaluate")
+        _ = try await RuntimeRPC.call("brief.evaluate")
     }
 }
 

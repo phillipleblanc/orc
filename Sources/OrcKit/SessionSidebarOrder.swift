@@ -61,7 +61,10 @@ public struct SessionSidebarOrder: Codable, Equatable {
 }
 
 public enum SessionSidebarOrderStore {
-    public static var file: URL { file(config: Pairing.directory, profile: RuntimeMetadata.directory) }
+    public static var file: URL {
+        if let host = RuntimeHost.current.remote { return RemoteHosts.stateDirectory(host.id).appendingPathComponent("sidebar-order.json") }
+        return file(config: Pairing.directory, profile: RuntimeMetadata.directory)
+    }
 
     public static func file(config: URL, profile: URL) -> URL {
         let scope = SHA256.hash(data: Data(profile.standardizedFileURL.resolvingSymlinksInPath().path.utf8))

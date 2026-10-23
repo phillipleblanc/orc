@@ -29,7 +29,7 @@ public struct SessionMutes: Codable, Equatable, Sendable {
 }
 
 public enum SessionMuteStore {
-    public static var file: URL { Pairing.directory.appendingPathComponent("muted-sessions.json") }
+    public static var file: URL { RuntimeHost.current.stateDirectory.appendingPathComponent("muted-sessions.json") }
 
     public static func load(from url: URL = file) throws -> SessionMutes {
         guard FileManager.default.fileExists(atPath: url.path) else { return SessionMutes() }

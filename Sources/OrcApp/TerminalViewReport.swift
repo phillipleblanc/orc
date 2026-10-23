@@ -24,7 +24,7 @@ import OrcKit
     private var lastAttention: (attention: Attention, at: Date)?
     private var sending: Task<Void, Never>?
 
-    init(handle: String, viewer: String, send: @escaping ([String: Any]) async throws -> [String: Any] = { try await LocalRPC.call("terminal.view", $0, timeout: 3) },
+    init(handle: String, viewer: String, send: @escaping ([String: Any]) async throws -> [String: Any] = { try await RuntimeRPC.call("terminal.view", $0, timeout: 3) },
          ownerChanged: @escaping (_ owner: Bool, _ device: String?) -> Void) {
         self.handle = handle; self.viewer = viewer; self.send = send; self.ownerChanged = ownerChanged
     }

@@ -61,7 +61,7 @@ public struct AgentReviewState: Codable, Equatable {
 }
 
 public enum AgentReviewStore {
-    public static var file: URL { Pairing.directory.appendingPathComponent("agent-review.json") }
+    public static var file: URL { RuntimeHost.current.stateDirectory.appendingPathComponent("agent-review.json") }
 
     public static func load() throws -> AgentReviewState { try load(from: file) }
 

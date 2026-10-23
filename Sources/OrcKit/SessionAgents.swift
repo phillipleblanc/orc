@@ -127,21 +127,21 @@ public enum SessionAgentService {
             if let model = command.options["model"] { params["model"] = model }
             if let effort = command.options["effort"] { params["effort"] = effort }
             if let mcp = command.options["mcp"] { params["mcp"] = SessionService.mcpNames(mcp) }
-            let result = try await LocalRPC.call("agent.spawn", params, timeout: timeout + 30)
+            let result = try await RuntimeRPC.call("agent.spawn", params, timeout: timeout + 30)
             return (result, params["prompt"] == nil || result["delivered"] as? Bool == true)
         case .send:
             let text = try command.text(required: true)!
-            let result = try await LocalRPC.call("agent.send", ["to": command.name!, "text": text, "from": caller ?? NSUserName(), "whenIdle": command.whenIdle])
+            let result = try await RuntimeRPC.call("agent.send", ["to": command.name!, "text": text, "from": caller ?? NSUserName(), "whenIdle": command.whenIdle])
             return (result, true)
         case .list:
-            return (try await LocalRPC.call("agent.list"), true)
+            return (try await RuntimeRPC.call("agent.list"), true)
         case .status:
-            return (try await LocalRPC.call("agent.status", ["name": command.name!]), true)
+            return (try await RuntimeRPC.call("agent.status", ["name": command.name!]), true)
         case .wait:
             let deadline = Date().addingTimeInterval(TimeInterval(timeout))
             while true {
                 let remaining = max(1, Int(deadline.timeIntervalSinceNow * 1000))
-                let result = try await LocalRPC.call("agent.wait", ["name": command.name!, "timeoutMs": min(remaining, 25_000)], timeout: 40)
+                let result = try await RuntimeRPC.call("agent.wait", ["name": command.name!, "timeoutMs": min(remaining, 25_000)], timeout: 40)
                 if result["done"] as? Bool == true || Date() >= deadline { return (result, result["done"] as? Bool == true) }
             }
         }

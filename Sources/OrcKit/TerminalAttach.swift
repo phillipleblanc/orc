@@ -20,6 +20,8 @@ public struct InputDecoder {
 
 @MainActor public final class TerminalAttach {
     private let terminal: Session
+    /// Another Mac's session, or nil for this Mac's.
+    private let host: RemoteHost?
     private let readOnly: Bool
     private let reconnect: Bool
     private let sessionSwitching: Bool
@@ -66,9 +68,9 @@ public struct InputDecoder {
     /// With `clientID`, the app running this attach names its viewer and reports what is on screen (`terminal.view`);
     /// `viewportOwnership` then opts the viewer into the runtime's viewport ownership. Without one, the attach runs in
     /// a terminal of its own: it opts in and reports itself as looked at when it attaches and when its window resizes.
-    public init(terminal: Session, readOnly: Bool = false, reconnect: Bool = true, sessionSwitching: Bool = true,
+    public init(terminal: Session, host: RemoteHost? = nil, readOnly: Bool = false, reconnect: Bool = true, sessionSwitching: Bool = true,
                 clientID: String? = nil, viewportOwnership: Bool = false) {
-        self.terminal = terminal; self.readOnly = readOnly; self.reconnect = reconnect
+        self.terminal = terminal; self.host = host; self.readOnly = readOnly; self.reconnect = reconnect
         self.sessionSwitching = sessionSwitching; self.shortcuts = AttachInput(sessionSwitching: sessionSwitching)
         self.clientID = clientID ?? "orc-" + UUID().uuidString
         self.viewportOwnership = !readOnly && (clientID == nil || viewportOwnership)
@@ -76,7 +78,7 @@ public struct InputDecoder {
     }
     public func run() async throws -> AttachExit {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { throw OrcError("Attach needs an interactive terminal. Run it in Ghostty, or use `orc list --json`.") }
-        let pairing = try Pairing.load()
+        let pairing = host == nil ? try Pairing.load() : nil
         guard tcgetattr(STDIN_FILENO, &savedTermios) == 0 else { throw OrcError("Cannot read terminal settings.") }
         var settings = savedTermios
         cfmakeraw(&settings)
@@ -95,7 +97,7 @@ public struct InputDecoder {
             replayingScrollbackSnapshot = false; activeKeyboardFlags = nil
             snapshotUnavailable = false; snapshotKeyboardFlags = nil
             do {
-                let conn = try StreamConnection(pairing: pairing)
+                let conn = try host.map(StreamConnection.init(host:)) ?? StreamConnection(pairing: pairing!)
                 connection = conn
                 conn.onBinary = { [weak self] in self?.receive($0) }
                 conn.onEvent = { [weak self] in self?.event($0) }
@@ -108,7 +110,7 @@ public struct InputDecoder {
                 }
                 reportingView = reportsView && capabilities.contains("orc.viewport-ownership.v1")
                 // Reconnecting to a replaced process must require another explicit attach.
-                let current = try await SessionService().list()
+                let current: SessionListing = try decode(await conn.request("terminal.list", ["limit": 10000]))
                 guard let live = current.terminals.first(where: { $0.handle == terminal.handle }), live.connected,
                       terminal.incarnationId == nil || terminal.incarnationId == live.incarnationId else {
                     ended = true; throw OrcError("The original terminal exited or was replaced. Run `orc list` to choose a session.")

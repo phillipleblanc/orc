@@ -78,9 +78,9 @@ public enum SessionWakeService {
         }
         switch command.action {
         case .list:
-            return try await LocalRPC.call("wake.list", ["name": name])
+            return try await RuntimeRPC.call("wake.list", ["name": name])
         case .cancel(let id):
-            return try await LocalRPC.call("wake.cancel", ["name": name, "id": id])
+            return try await RuntimeRPC.call("wake.cancel", ["name": name, "id": id])
         case .create(let condition, let message):
             var params: [String: Any] = ["name": name, "message": message]
             switch condition {
@@ -88,7 +88,7 @@ public enum SessionWakeService {
             case .pid(let pid): params["kind"] = "pid"; params["pid"] = pid
             case .script(let path, let cwd): params["kind"] = "script"; params["script"] = path; params["cwd"] = cwd
             }
-            return try await LocalRPC.call("wake.create", params)
+            return try await RuntimeRPC.call("wake.create", params)
         }
     }
 
