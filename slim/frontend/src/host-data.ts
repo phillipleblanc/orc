@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import type { Catalog } from './catalog.ts'
@@ -127,6 +127,20 @@ export function hostDataHandlers(options: { store: SessionStore; catalog: Catalo
     if (project) return project.path
     throw new RpcError('not_found', `no session or project ${base}`)
   }
+}
+
+/** Moves a renamed session's notes to its new name, unless that name already has notes. */
+export async function moveNotes(from: string, to: string): Promise<void> {
+  if (from === to) return
+  const folder = join(configDirectory(), 'notes')
+  const source = join(folder, `${from}.txt`)
+  try {
+    await link(source, join(folder, `${to}.txt`))
+  } catch (error) {
+    if (['ENOENT', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) return
+    throw error
+  }
+  await unlink(source)
 }
 
 /** The real path of `path`, which must be inside the home folder. */

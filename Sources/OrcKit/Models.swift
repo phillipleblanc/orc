@@ -138,14 +138,9 @@ public struct SessionService {
         }
         return handle
     }
-    /// Renaming changes the session's identity; its notes move with it.
+    /// Renaming changes the session's identity; the runtime moves its notes with it.
     public func rename(handle: String, name: String) async throws {
-        let name = try validatedName(name)
-        guard let session = try await list().terminals.first(where: { $0.handle == handle }) else {
-            throw OrcError("This session is no longer available. Refresh the session list.")
-        }
-        _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": name])
-        try SessionNotesStore.rename(session.name, to: name)
+        _ = try await LocalRPC.call("terminal.rename", ["terminal": handle, "title": try validatedName(name)])
     }
     /// The optional MCP configs of a project (`.mcp/NAME.json`) that an agent can add to its own servers.
     public func mcpConfigs(worktree: String) async throws -> [McpConfig] {

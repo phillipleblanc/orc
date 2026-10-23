@@ -20,16 +20,4 @@ final class SessionNotesStoreTests: XCTestCase {
         XCTAssertThrowsError(try SessionNotesStore.file(for: "../escape"))
         XCTAssertThrowsError(try SessionNotesStore.file(for: ".hidden"))
     }
-
-    func testNotesMoveWithARenameUnlessTheNewNameHasNotes() throws {
-        let old = "old-" + UUID().uuidString.prefix(8), new = "new-" + UUID().uuidString.prefix(8)
-        defer { for name in [old, new] { try? FileManager.default.removeItem(at: SessionNotesStore.file(for: name)) } }
-        try SessionNotesStore.save("carried", for: old)
-        try SessionNotesStore.rename(old, to: new)
-        XCTAssertEqual(try SessionNotesStore.load(new), "carried")
-        XCTAssertEqual(try SessionNotesStore.load(old), "")
-        try SessionNotesStore.save("other", for: old)
-        try SessionNotesStore.rename(old, to: new)
-        XCTAssertEqual(try SessionNotesStore.load(new), "carried", "existing notes are never overwritten")
-    }
 }

@@ -92,6 +92,13 @@ test('the owner’s computers read and write the host’s notes, files, attachme
 
   // The same on the local socket; never to phones.
   assert.equal((await rpc('notes.get', { name: 'writer' })).text, 'shipped')
+
+  // Renaming a session from any client moves its notes, unless the new name already has some.
+  await computer.request('terminal.rename', { terminal: terminal.handle, title: 'author' })
+  assert.deepEqual([(await rpc('notes.get', { name: 'author' })).text, (await rpc('notes.get', { name: 'writer' })).text], ['shipped', ''])
+  await rpc('notes.set', { name: 'editor', text: 'theirs' })
+  await computer.request('terminal.rename', { terminal: terminal.handle, title: 'editor' })
+  assert.deepEqual([(await rpc('notes.get', { name: 'editor' })).text, (await rpc('notes.get', { name: 'author' })).text], ['theirs', 'shipped'])
   for (const method of ['notes.get', 'notes.set', 'file.read', 'attachment.save', 'fs.list', 'config.get', 'config.set']) {
     await assert.rejects(phone.request(method, { name: 'writer', path: home }), { code: 'forbidden' }, method)
   }

@@ -4,6 +4,7 @@ import { isAgentKind, type AgentKind } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Catalog } from './catalog.ts'
 import type { RexSync } from './rex.ts'
+import { moveNotes } from './host-data.ts'
 import { MOBILE_WEB_BUNDLE_CAPABILITY, type PhonePage } from './phone-page.ts'
 import { restartSession, type SessionHistory } from './history.ts'
 import { holdStream, type ConnectionSubscriptions } from './subscriptions.ts'
@@ -233,7 +234,10 @@ export function createHandlers(runtime: Runtime): Handlers {
 
     'terminal.rename': async (params) => {
       const target = session(params.terminal)
+      const previous = target.meta.name
       await store.rename(target, String(params.title ?? ''))
+      // Notes are kept by session name.
+      await moveNotes(previous, target.meta.name)
       return { rename: { handle: target.handle, title: target.meta.name } }
     },
 

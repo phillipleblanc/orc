@@ -24,12 +24,4 @@ public enum SessionNotesStore {
         try notes.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
-
-    /// Moves notes to a session's new name, unless that name already has notes.
-    static func rename(_ name: String, to newName: String) throws {
-        let source = try file(for: name), target = try file(for: newName)
-        guard name != newName, FileManager.default.fileExists(atPath: source.path),
-              !FileManager.default.fileExists(atPath: target.path) else { return }
-        try FileManager.default.moveItem(at: source, to: target)
-    }
 }
