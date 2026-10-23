@@ -53,17 +53,48 @@ struct SessionSidebarHeader: View {
     }
 }
 
+/// Where the sessions' order is kept: by the runtime, which Rex's tabs and other Macs showing its sessions share.
+struct SessionOrderStore {
+    var load: () async throws -> [String]
+    var save: ([String]) async throws -> Void
+
+    static let runtime = SessionOrderStore(
+        load: { try await RuntimeRPC.call("session.order.get")["keys"] as? [String] ?? [] },
+        save: { _ = try await RuntimeRPC.call("session.order.set", ["keys": $0]) })
+}
+
+/// The sessions' order, read again every two seconds, as it also changes in Rex and on other Macs. A drag shows at
+/// once and is saved after.
 @MainActor final class SessionSidebarModel: ObservableObject {
     @Published private(set) var order = SessionSidebarOrder()
     @Published private(set) var error: String?
+    /// Whether the order has been read; until then, sessions can't be moved.
     @Published private(set) var loaded = false
-    private let file: URL
+    private let store: SessionOrderStore
+    private var monitor: Task<Void, Never>?
+    /// Saves begun and saves under way: a read made while one was under way may not have it yet.
+    private var saves = 0
+    private var saving = 0
 
-    init(file: URL = SessionSidebarOrderStore.file) { self.file = file; reload() }
+    init(store: SessionOrderStore = .runtime, monitor: Bool = true) {
+        self.store = store
+        guard monitor else { return }
+        self.monitor = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.reload()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+    deinit { monitor?.cancel() }
 
-    func reload() {
-        do { order = try SessionSidebarOrderStore.load(from: file); loaded = true; error = nil }
-        catch { loaded = false; self.error = "Could not load sidebar order: \(error.localizedDescription)" }
+    /// Reads the order. A failed read keeps the order shown; the session list reports an unreachable runtime.
+    func reload() async {
+        let started = saves
+        guard let keys = try? await store.load(), started == saves, saving == 0 else { return }
+        let next = SessionSidebarOrder(keys: keys)
+        if next != order { order = next }
+        loaded = true
     }
 
     func move(fromOffsets source: IndexSet, toOffset destination: Int,
@@ -76,8 +107,14 @@ struct SessionSidebarHeader: View {
         var next = order
         change(&next)
         guard next != order else { return }
-        do { try SessionSidebarOrderStore.save(next, to: file); order = next; error = nil }
-        catch { self.error = "Could not save sidebar order: \(error.localizedDescription)" }
+        order = next
+        saves += 1
+        saving += 1
+        Task {
+            defer { saving -= 1 }
+            do { try await store.save(next.keys); error = nil }
+            catch { self.error = "Could not save the session order: \(error.localizedDescription)" }
+        }
     }
 }
 

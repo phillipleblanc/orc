@@ -48,7 +48,6 @@ final class RemoteHostsTests: XCTestCase {
         let state = config.appendingPathComponent("hosts/\(studio.id)")
         XCTAssertEqual(AgentReviewStore.file, state.appendingPathComponent("agent-review.json"))
         XCTAssertEqual(SessionMuteStore.file, state.appendingPathComponent("muted-sessions.json"))
-        XCTAssertEqual(SessionSidebarOrderStore.file, state.appendingPathComponent("sidebar-order.json"))
         var mutes = SessionMutes()
         mutes.set(true, for: "build")
         try SessionMuteStore.save(mutes)

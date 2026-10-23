@@ -62,7 +62,7 @@ public enum RemoteHosts {
         try FileManager.default.removeItem(at: file(id))
     }
 
-    /// What this Mac keeps about a host's sessions: which it has reviewed, which are muted, and the sidebar's order.
+    /// What this Mac keeps about a host's sessions: which it has reviewed and which are muted.
     public static func stateDirectory(_ id: String) -> URL {
         directory.appendingPathComponent(id, isDirectory: true)
     }

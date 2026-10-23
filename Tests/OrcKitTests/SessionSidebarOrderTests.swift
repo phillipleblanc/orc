@@ -86,24 +86,6 @@ final class SessionSidebarOrderTests: XCTestCase {
         XCTAssertTrue(order.rows(in: hierarchy, matching: "absent").isEmpty)
     }
 
-    func testRoundTripPrivateProfileScopedStorageAndCorruptData() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orc-sidebar-test-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = SessionSidebarOrderStore.file(config: directory, profile: directory.appendingPathComponent("one"))
-        let other = SessionSidebarOrderStore.file(config: directory, profile: directory.appendingPathComponent("two"))
-        XCTAssertNotEqual(file, other)
-        XCTAssertEqual(try SessionSidebarOrderStore.load(from: file), SessionSidebarOrder())
-        var order = SessionSidebarOrder()
-        order.move(fromOffsets: [5], toOffset: 3, rows: order.rows(in: hierarchy))
-        try SessionSidebarOrderStore.save(order, to: file)
-        XCTAssertEqual(try SessionSidebarOrderStore.load(from: file), order)
-        XCTAssertEqual(try SessionSidebarOrderStore.load(from: other), SessionSidebarOrder())
-        let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
-        XCTAssertEqual(permissions?.intValue, 0o600)
-        try Data("invalid JSON".utf8).write(to: file)
-        XCTAssertThrowsError(try SessionSidebarOrderStore.load(from: file))
-    }
-
     func testSectionsGroupByProjectInTheOrderOfTheirFirstSession() {
         func session(_ name: String, project: String) -> Session {
             Session(handle: name, title: name, worktreeId: project, worktreePath: "/code/" + project,

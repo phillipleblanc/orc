@@ -1,8 +1,8 @@
 import Foundation
-import CryptoKit
 
-/// Sidebar placement is keyed by session name and never changes name-based parentage.
-public struct SessionSidebarOrder: Codable, Equatable {
+/// Sidebar placement is keyed by session name and never changes name-based parentage. The runtime keeps the keys
+/// (`session.order.get`), and its Rex sync orders tabs as `rows(in:)` does.
+public struct SessionSidebarOrder: Equatable {
     public struct Row: Identifiable {
         public let session: Session
         public let parentID: String?
@@ -11,7 +11,7 @@ public struct SessionSidebarOrder: Codable, Equatable {
     }
 
     public private(set) var keys: [String] = []
-    public init() {}
+    public init(keys: [String] = []) { self.keys = keys }
 
     public func rows(in hierarchy: SessionHierarchy, matching search: String = "",
                      collapsed: Set<String> = []) -> [Row] {
@@ -57,31 +57,6 @@ public struct SessionSidebarOrder: Codable, Equatable {
         keys.removeAll { $0 == key }
         if let anchor, let index = keys.firstIndex(of: anchor) { keys.insert(key, at: index) }
         else { keys.append(key) }
-    }
-}
-
-public enum SessionSidebarOrderStore {
-    public static var file: URL {
-        if let host = RuntimeHost.current.remote { return RemoteHosts.stateDirectory(host.id).appendingPathComponent("sidebar-order.json") }
-        return file(config: Pairing.directory, profile: RuntimeMetadata.directory)
-    }
-
-    public static func file(config: URL, profile: URL) -> URL {
-        let scope = SHA256.hash(data: Data(profile.standardizedFileURL.resolvingSymlinksInPath().path.utf8))
-            .map { String(format: "%02x", $0) }.joined()
-        return config.appendingPathComponent("sidebar-order").appendingPathComponent(scope + ".json")
-    }
-
-    public static func load(from file: URL = Self.file) throws -> SessionSidebarOrder {
-        guard FileManager.default.fileExists(atPath: file.path) else { return SessionSidebarOrder() }
-        return try JSONDecoder().decode(SessionSidebarOrder.self, from: Data(contentsOf: file))
-    }
-
-    public static func save(_ order: SessionSidebarOrder, to file: URL = Self.file) throws {
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(order).write(to: file, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 }
 

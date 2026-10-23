@@ -22,6 +22,7 @@ import { MOBILE_METHODS } from './mobile-methods.ts'
 import { mobileTerminalMethods } from './mobile-terminal.ts'
 import { terminalMultiplex } from './multiplex.ts'
 import { rexHandlers, RexSync } from './rex.ts'
+import { orderHandlers, SessionOrder } from './session-order.ts'
 import { PhonePage } from './phone-page.ts'
 import { TerminalSizes } from './terminal-sizes.ts'
 import { nativeChatMethods } from './native-chat/methods.ts'
@@ -117,11 +118,14 @@ const subscriptions = new ConnectionSubscriptions()
 const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
 const sizes = new TerminalSizes(log)
 const notifications = new NotificationQueue()
+// The owner's order of the sessions, which Orc.app's sidebar and Rex's tabs show.
+const order = new SessionOrder(profile)
+await order.load()
 // The Rex server `orc rex start` linked, kept in sync with these sessions.
-const rex = new RexSync({ profile, store, catalog, log })
+const rex = new RexSync({ profile, store, catalog, order, log })
 await rex.load()
 const phonePage = await PhonePage.load(values['phone-page']!, VERSION)
-const runtime = { runtimeId, version: VERSION, store, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions, rex, phonePage }
+const runtime = { runtimeId, version: VERSION, store, order, projects, agents, wakes, notifications, pullRequests, sizes, history, catalog, subscriptions, rex, phonePage }
 // A phone asks for a durable agent's chat by the conversation its tab reports (see catalog.ts).
 const nativeChat = nativeChatMethods(subscriptions, (sessionId, transcriptPath) => {
   for (const session of store.list()) {
@@ -143,6 +147,7 @@ const usage = new UsageService({
 // devices, never to phones.
 const ownerHandlers: Handlers = {
   ...hostDataHandlers({ store, catalog, projects }),
+  ...orderHandlers(order),
   'brief.list': () => ({ briefs: briefs.list() }),
   'brief.refresh': async (params) => briefs.refresh(String(params.name ?? ''), { wait: params.wait === true }),
   'brief.dismiss': async (params) => briefs.dismiss(String(params.name ?? ''), String(params.question ?? '')),

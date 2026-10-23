@@ -394,6 +394,12 @@ Phones size the PTY ahead of its desktop owner (see [Phones](#phones)).
   - `config.get` and `config.set` (`defaultSessionType`, `defaultProject`, null to remove it) read and
     change the New Session defaults in `ORC_CONFIG_DIR/config.json`, keeping other settings; a file that
     is not a JSON object fails with `invalid_config` and is left as it is.
+- **Session order**, served on the local socket and to runtime-scope devices, is the order the owner gave the
+  sessions, which Orc.app's sidebar shows and Rex's tabs follow (`session-order.ts`, `session-order.json` in the
+  profile). `session.order.get` returns `keys`, session names, and `set`, false until an order is first saved;
+  `session.order.set` (`keys`) replaces them. Names of ended sessions are kept, so a session that comes back keeps
+  its place, and `terminal.rename` renames a session's key. Each project's sessions show in the order of their
+  keys, each parent followed by its children, then sessions without a key in the order they were created.
 
 ## Rex
 
@@ -404,8 +410,8 @@ and `orc.rex.status` reports it; all four are on the local socket only. The link
 project and the tab made for each Orc session, by handle, are kept in `rex.json` in the profile (`rex.ts`),
 through a stop until a clear.
 
-While syncing, the runtime syncs when it starts, when linked, and 300 ms after a session is added, renamed or
-ends, one sync at a time. A sync runs `rex --autostart=false [-S server] do rex-sync.lua --json --args -` with the
+While syncing, the runtime syncs when it starts, when linked, 300 ms after a session is added, renamed or
+ends or the session order changes, and every 3 s otherwise, one sync at a time. A sync runs `rex --autostart=false [-S server] do rex-sync.lua --json --args -` with the
 running sessions and what earlier syncs made on stdin. The script keeps one Rex session per project (a session's
 worktree), labeled with its name, with a tab per Orc session, labeled with the session's name, that runs
 `orc attach NAME --no-session-switch --client-id rex-HANDLE --viewport-ownership`, started directly
@@ -416,7 +422,11 @@ sessions, and removes a Rex session it made or closed a tab in once no windows a
 session closed in Rex leaves its Orc sessions dismissed until the next `orc.rex.start`. A `terminal.create` with `rexTab` (`session`, `window`, `server`), which `orc new` sends from a Rex
 tab it attaches in, adopts that tab as the session's when its server is the linked one: syncs relabel it and make
 no other tab, and leave it open when the session ends. A clear closes every tab
-the sync made and removes their Rex sessions once empty, reporting those that other tabs keep open. A failed sync
+the sync made and removes their Rex sessions once empty, reporting those that other tabs keep open. The synced
+tabs in each Rex session follow the [session order](#computers) with `session.move_window`, among the user's own
+tabs, which stay where they are; the order each sync leaves is kept in `rex.json` as `seen`. When the synced tabs
+are in another order than the last sync left them, they were moved in Rex: the sync leaves them, and their sessions
+take the places those sessions held in the session order, in the tabs' order. A failed sync
 is logged once per distinct error and reported as `lastError`; the next change retries.
 
 ## Phones

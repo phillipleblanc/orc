@@ -20,7 +20,7 @@ final class SessionWindowTests: XCTestCase {
             try decode(["handle": $0, "title": $0, "worktreeId": "window-fixture", "worktreePath": "/code/project",
                         "connected": false, "writable": false, "agentIdentity": "pi"])
         }
-        let view = SessionWindow(model: model, sidebarOrder: SessionSidebarModel(file: root.appendingPathComponent("order.json")),
+        let view = SessionWindow(model: model, sidebarOrder: SessionSidebarModel(store: .memory(), monitor: false),
                                  usage: UsageModel(monitor: false), briefs: BriefModel(monitor: false))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)

@@ -5,13 +5,6 @@ import OrcKit
 @testable import OrcApp
 
 final class SessionSidebarTests: XCTestCase {
-    private var root: URL!
-    override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("orc-sidebar-window-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    }
-    override func tearDownWithError() throws { try FileManager.default.removeItem(at: root) }
-
     private func sessions() throws -> [Session] {
         try ["alpha", "alpha-review", "beta", "gamma"].map {
             try decode(["handle": $0, "title": $0, "worktreeId": "sidebar-fixture", "worktreePath": "/code/project",
@@ -19,56 +12,66 @@ final class SessionSidebarTests: XCTestCase {
         }
     }
 
-    @MainActor func testMovePersistsAcrossReloadAndRefreshWithoutChangingSelection() throws {
+    @MainActor func testMoveIsSavedToTheRuntimeAndReadBackWithoutChangingSelection() async throws {
         let model = SessionModel(monitorSessions: false)
         model.sessions = try sessions()
         model.selected = "alpha-review"
-        let file = root.appendingPathComponent("order.json")
-        let sidebar = SessionSidebarModel(file: file)
+        let runtime = RuntimeOrder()
+        let sidebar = SessionSidebarModel(store: .memory(runtime), monitor: false)
+        sidebar.move(fromOffsets: [0], toOffset: 1, rows: sidebar.order.rows(in: model.hierarchy), search: "")
+        XCTAssertEqual(sidebar.order, SessionSidebarOrder(), "nothing moves until the order is read")
+        await sidebar.reload()
         XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["alpha", "alpha-review", "beta", "gamma"])
         sidebar.move(fromOffsets: [3], toOffset: 0, rows: sidebar.order.rows(in: model.hierarchy), search: "")
+        XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["gamma", "alpha", "alpha-review", "beta"], "a drag shows at once")
+        try await until { runtime.keys == ["gamma", "alpha", "beta"] }
         XCTAssertNil(sidebar.error)
-        XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["gamma", "alpha", "alpha-review", "beta"])
         XCTAssertEqual(model.selected, "alpha-review")
         XCTAssertNil(model.attachmentRequest)
         model.sessions.reverse()
         XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["gamma", "alpha", "alpha-review", "beta"])
-        let reloaded = SessionSidebarModel(file: file)
-        XCTAssertEqual(reloaded.order, sidebar.order)
-        reloaded.move(fromOffsets: [0], toOffset: 3, rows: reloaded.order.rows(in: model.hierarchy), search: "")
-        XCTAssertEqual(reloaded.order.rows(in: model.hierarchy).map(\.id), ["alpha", "alpha-review", "gamma", "beta"])
+
+        // The order changed elsewhere, as by a tab moved in Rex.
+        runtime.keys = ["beta", "gamma", "alpha"]
+        await sidebar.reload()
+        XCTAssertEqual(sidebar.order.rows(in: model.hierarchy).map(\.id), ["beta", "gamma", "alpha", "alpha-review"])
     }
 
-    @MainActor func testSearchDisablesReordering() throws {
+    @MainActor func testSearchDisablesReordering() async throws {
         let hierarchy = SessionHierarchy(sessions: try sessions())
-        let file = root.appendingPathComponent("order.json")
-        let sidebar = SessionSidebarModel(file: file)
+        let runtime = RuntimeOrder()
+        let sidebar = SessionSidebarModel(store: .memory(runtime), monitor: false)
+        await sidebar.reload()
         let rows = sidebar.order.rows(in: hierarchy, matching: "a")
         sidebar.move(fromOffsets: [3], toOffset: 0, rows: rows, search: "a")
         XCTAssertEqual(sidebar.order, SessionSidebarOrder())
-        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(runtime.saves, 0)
     }
 
-    @MainActor func testFailedLoadPreservesFileAndFailedSavePreservesVisibleOrder() throws {
+    @MainActor func testAFailedSaveIsReportedAndTheRuntimesOrderComesBack() async throws {
         let hierarchy = SessionHierarchy(sessions: try sessions())
-        let file = root.appendingPathComponent("order.json")
-        let invalid = Data("not JSON".utf8)
-        try invalid.write(to: file)
-        let sidebar = SessionSidebarModel(file: file)
+        let runtime = RuntimeOrder()
+        runtime.reachable = false
+        let sidebar = SessionSidebarModel(store: .memory(runtime), monitor: false)
+        await sidebar.reload()
         XCTAssertFalse(sidebar.loaded)
-        XCTAssertNotNil(sidebar.error)
-        sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
-        XCTAssertEqual(try Data(contentsOf: file), invalid)
-        try SessionSidebarOrderStore.save(SessionSidebarOrder(), to: file)
-        sidebar.reload()
+        runtime.reachable = true
+        await sidebar.reload()
+        runtime.reachable = false
         sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
         XCTAssertEqual(sidebar.order.rows(in: hierarchy).map(\.id), ["alpha", "alpha-review", "gamma", "beta"])
-        let saved = sidebar.order
-        try FileManager.default.removeItem(at: file)
-        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-        sidebar.move(fromOffsets: [3], toOffset: 2, rows: sidebar.order.rows(in: hierarchy), search: "")
-        XCTAssertEqual(sidebar.order, saved)
-        XCTAssertNotNil(sidebar.error)
+        try await until { sidebar.error != nil }
+        runtime.reachable = true
+        await sidebar.reload()
+        XCTAssertEqual(sidebar.order, SessionSidebarOrder())
+    }
+
+    @MainActor private func until(_ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition() {
+            guard Date() < deadline else { throw OrcError("Timed out") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     @MainActor func testSidebarListShowsCollapsibleProjectSectionsWithNativeReordering() async throws {
@@ -76,7 +79,8 @@ final class SessionSidebarTests: XCTestCase {
         let model = SessionModel(monitorSessions: false)
         model.sessions = try sessions() + [try decode(["handle": "delta", "title": "delta", "worktreeId": "other-fixture",
             "worktreePath": "/code/other", "connected": false, "writable": false, "tabId": "delta", "leafId": "leaf"])]
-        let sidebar = SessionSidebarModel(file: root.appendingPathComponent("order.json"))
+        let sidebar = SessionSidebarModel(store: .memory(), monitor: false)
+        await sidebar.reload()
         var collapsed: Set<String> = []
         func list() -> SessionSidebarList<Text> {
             SessionSidebarList(organization: sidebar, sections: sidebar.order.sections(of: model.sessions, workspaces: []),
@@ -117,5 +121,29 @@ final class SessionSidebarTests: XCTestCase {
     @MainActor private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
         if let match = view as? T { return match }
         return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first
+    }
+}
+
+/// The order as a runtime keeps it, in memory.
+final class RuntimeOrder: @unchecked Sendable {
+    var keys: [String] = []
+    var reachable = true
+    private(set) var saves = 0
+
+    func load() throws -> [String] {
+        guard reachable else { throw OrcError("The runtime is not running.") }
+        return keys
+    }
+
+    func save(_ keys: [String]) throws {
+        guard reachable else { throw OrcError("The runtime is not running.") }
+        self.keys = keys
+        saves += 1
+    }
+}
+
+extension SessionOrderStore {
+    static func memory(_ runtime: RuntimeOrder = RuntimeOrder()) -> SessionOrderStore {
+        SessionOrderStore(load: { try runtime.load() }, save: { try runtime.save($0) })
     }
 }

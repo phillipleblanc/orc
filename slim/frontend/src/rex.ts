@@ -5,12 +5,15 @@ import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Catalog } from './catalog.ts'
 import { RpcError, type Handlers } from './rpc-server.ts'
+import { reorder, sidebarOrder, type SessionOrder } from './session-order.ts'
 import type { SessionStore } from './session-store.ts'
 import type { TerminalSession } from './terminal-session.ts'
 
 const SCRIPT = fileURLToPath(new URL('./rex-sync.lua', import.meta.url))
 // Sessions often come and go together, as when a computer restart restores them.
 const SYNC_DELAY_MS = 300
+// How often a sync looks for tabs moved in Rex.
+const POLL_MS = 3000
 const SYNC_TIMEOUT_MS = 60_000
 // Rex picks a tab's icon from the name its program was started by; an agent's tab starts `orc` under the agent's.
 const AGENT_PROGRAMS: Record<string, string> = { claude: 'claude', codex: 'codex', pi: 'pi', durable: 'pi' }
@@ -20,15 +23,18 @@ export type RexLink = { rex: string; server: string | null; orc: string; config:
 /** A tab showing an Orc session: one the sync made, or, `adopted`, the user's own in which `orc new` started it. */
 type RexTab = { session: string; window: string; name: string; project: string; adopted?: boolean }
 type RexProject = { session: string; name: string }
-type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[] }
+/** `seen` is the order of the synced tabs in each Rex session as the last sync left it, to tell when they are moved in Rex. */
+type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[]; seen: Record<string, string[]> }
 type SyncSession = { handle: string; name: string; cwd: string; command: string[]; project: { id: string; name: string } }
 export type RexSyncResult = { created: string[]; renamed: string[]; closed: string[]; removed: string[]; kept: string[]; errors: string[] }
 
 /**
  * Keeps a Rex server in sync with this runtime's sessions once `orc rex start` links it: one Rex session per Orc
  * project, labeled with the project's name, with a tab for each of its Orc sessions, labeled with the session's
- * name, that runs `orc attach` for it as a viewer that leaves the session's size alone until someone types there. It syncs when linked, when the frontend starts, and when a session is added, renamed
- * or ends, by running `rex-sync.lua` with Rex's own CLI. A Rex session or tab closed in Rex stays out of Rex until
+ * name, that runs `orc attach` for it as a viewer that leaves the session's size alone until someone types there. The
+ * tabs follow the sessions' order, and tabs moved in Rex change it. It syncs when linked, when the frontend starts,
+ * when a session is added, renamed or ends, when the order changes, and every few seconds to find tabs moved in Rex,
+ * by running `rex-sync.lua` with Rex's own CLI. A Rex session or tab closed in Rex stays out of Rex until
  * `orc rex start` runs again. `orc rex stop` stops syncing and keeps the Rex sessions; `orc rex clear` then removes
  * them. The link, the Rex session made for each project and the tab made for each Orc session are kept in
  * `rex.json` in the profile.
@@ -36,29 +42,35 @@ export type RexSyncResult = { created: string[]; renamed: string[]; closed: stri
 export class RexSync {
   private state: RexState | null = null
   private timer: NodeJS.Timeout | null = null
+  private poll: NodeJS.Timeout | null = null
+  private running = false
+  private saved = ''
   private queue: Promise<unknown> = Promise.resolve()
   private lastError: string | null = null
   private lastSyncAt: number | null = null
 
-  private readonly options: { profile: string; store: SessionStore; catalog: Catalog; log: (line: string) => void }
+  private readonly options: { profile: string; store: SessionStore; catalog: Catalog; order: SessionOrder; log: (line: string) => void }
 
-  constructor(options: { profile: string; store: SessionStore; catalog: Catalog; log: (line: string) => void }) {
+  constructor(options: { profile: string; store: SessionStore; catalog: Catalog; order: SessionOrder; log: (line: string) => void }) {
     this.options = options
     for (const event of ['added', 'ended', 'renamed']) options.store.on(event, () => this.schedule())
+    options.order.on('change', () => this.schedule())
   }
 
   private get file(): string { return join(this.options.profile, 'rex.json') }
 
   async load(): Promise<void> {
-    this.state = await readFile(this.file, 'utf8').then((text) => ({ syncing: true, projects: {}, ...JSON.parse(text) }) as RexState, () => null)
+    this.state = await readFile(this.file, 'utf8').then((text) => ({ syncing: true, projects: {}, seen: {}, ...JSON.parse(text) }) as RexState, () => null)
     this.schedule()
+    this.polling()
   }
 
   /** Links a Rex server, brings back every Orc session closed in Rex, and syncs now. */
   async start(link: RexLink): Promise<RexSyncResult> {
     const same = this.state?.link.server === link.server
-    this.state = { link, syncing: true, map: same ? this.state!.map : {}, projects: same ? this.state!.projects : {}, dismissed: [] }
+    this.state = { link, syncing: true, map: same ? this.state!.map : {}, projects: same ? this.state!.projects : {}, dismissed: [], seen: same ? this.state!.seen : {} }
     await this.save(this.state)
+    this.polling()
     return this.enqueue(() => this.syncOnce())
   }
 
@@ -67,6 +79,7 @@ export class RexSync {
     if (!this.state?.syncing) return false
     this.state.syncing = false
     if (this.timer) clearTimeout(this.timer)
+    this.polling()
     await this.save(this.state)
     return true
   }
@@ -81,6 +94,7 @@ export class RexSync {
       if (Object.keys(state.map).length === 0 && Object.keys(state.projects).length === 0) {
         this.state = null
         await rm(this.file, { force: true })
+        this.saved = ''
       }
       return result
     })
@@ -115,6 +129,15 @@ export class RexSync {
     this.timer.unref()
   }
 
+  /** While syncing, a sync every few seconds unless one is due or under way. */
+  private polling(): void {
+    if (this.poll) clearInterval(this.poll)
+    this.poll = null
+    if (!this.state?.syncing) return
+    this.poll = setInterval(() => { if (!this.timer && !this.running) this.schedule() }, POLL_MS)
+    this.poll.unref()
+  }
+
   /** Runs `work` after any sync or clear already under way. */
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const run = this.queue.then(work)
@@ -125,20 +148,32 @@ export class RexSync {
   private async syncOnce(): Promise<RexSyncResult> {
     const state = this.state
     if (!state?.syncing) return emptyResult()
-    await this.linkPrograms(state.link)
-    return this.run(state, this.options.store.list().filter((session) => session.connected).map((session) => {
-      const worktree = this.options.catalog.worktreeFor(session)
-      return { handle: session.handle, name: session.meta.name, cwd: worktree.path, command: attachCommand(state.link, this.options.profile, session),
-        project: { id: worktree.id, name: worktree.name } }
-    }), false)
+    this.running = true
+    try {
+      await this.linkPrograms(state.link)
+      return await this.run(state, this.options.store.list().filter((session) => session.connected).map((session) => {
+        const worktree = this.options.catalog.worktreeFor(session)
+        return { handle: session.handle, name: session.meta.name, cwd: worktree.path, command: attachCommand(state.link, this.options.profile, session),
+          project: { id: worktree.id, name: worktree.name } }
+      }), false)
+    } finally {
+      this.running = false
+    }
   }
 
   /** Runs the script with `sessions`, or to `clear`, and keeps what it made unless the link changed meanwhile. */
   private async run(state: RexState, sessions: SyncSession[], clear: boolean): Promise<RexSyncResult> {
     const sent = state.map
+    // The sessions as Orc.app's sidebar shows them, each project's in their order.
+    const keys = this.options.order.get().keys
+    const projects = new Map<string, SyncSession[]>()
+    for (const session of sessions) projects.set(session.project.id, [...projects.get(session.project.id) ?? [], session])
+    const byName = new Map(sessions.map((session) => [session.name, session]))
+    const shown = [...projects.values()].flatMap((members) => sidebarOrder(members.map((session) => session.name), keys))
+    const order = shown.map((name) => byName.get(name)!.handle)
     let output: Record<string, unknown>
     try {
-      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: sent, projects: state.projects, dismissed: state.dismissed, clear })))
+      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: sent, projects: state.projects, dismissed: state.dismissed, order, seen: state.seen ?? {}, clear })))
     } catch (error) {
       const message = (error as Error).message
       if (message !== this.lastError) this.options.log(`rex sync failed: ${message}`)
@@ -153,7 +188,12 @@ export class RexSync {
       state.map = { ...record(output.map) as Record<string, RexTab>, ...Object.fromEntries(adopted) }
       state.projects = record(output.projects) as Record<string, RexProject>
       state.dismissed = strings(output.dismissed)
+      state.seen = Object.fromEntries(Object.entries(record(output.seen)).map(([session, windows]) => [session, strings(windows)]))
       await this.save(state)
+      // Tabs moved in Rex move their sessions.
+      const names = new Map(sessions.map((session) => [session.handle, session.name]))
+      const moved = (Array.isArray(output.reordered) ? output.reordered : []).map((handles) => strings(handles).flatMap((handle) => names.get(handle) ?? []))
+      if (moved.length) await this.options.order.replace(moved.reduce((next, tabs) => reorder(next, shown, tabs), this.options.order.get().keys))
     }
     this.lastSyncAt = Date.now()
     this.lastError = result.errors[0] ?? null
@@ -176,9 +216,12 @@ export class RexSync {
   }
 
   private async save(state: RexState): Promise<void> {
+    const text = JSON.stringify(state, null, 2)
+    if (text === this.saved) return
     const temporary = `${this.file}.${process.pid}.tmp`
-    await writeFile(temporary, JSON.stringify(state, null, 2), { mode: 0o600 })
+    await writeFile(temporary, text, { mode: 0o600 })
     await rename(temporary, this.file)
+    this.saved = text
   }
 }
 

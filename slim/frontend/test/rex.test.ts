@@ -100,3 +100,66 @@ process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
   assert.deepEqual(await rpc('orc.rex.status').then(({ syncing, sessions, projects }) => ({ syncing, sessions, projects })), { syncing: false, sessions: 0, projects: 0 })
   await assert.rejects(readFile(join(profile, 'rex.json')), { code: 'ENOENT' })
 })
+
+test('the runtime keeps the sessions\' order, Rex\'s tabs follow it, and tabs moved in Rex change it', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  // Stands in for Rex's CLI: records each sync's input, and answers with `reply.json` added to its answer once.
+  const rex = join(profile, 'rex')
+  const calls = join(profile, 'rex-calls.jsonl')
+  const reply = join(profile, 'reply.json')
+  await writeFile(rex, `#!${process.execPath}
+const fs = require('node:fs')
+let input = ''
+process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
+  const args = JSON.parse(input)
+  fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n')
+  const map = {}, projects = {}
+  for (const session of args.sessions) {
+    projects[session.project.id] = { session: 'session:1', name: session.project.name }
+    map[session.handle] = { session: 'session:1', window: 'window:' + session.handle, name: session.name, project: session.project.id }
+  }
+  let extra = {}
+  try { extra = JSON.parse(fs.readFileSync(${JSON.stringify(reply)}, 'utf8')); fs.rmSync(${JSON.stringify(reply)}) } catch {}
+  process.stdout.write(JSON.stringify({ map, projects, dismissed: [], seen: { 'session:1': args.order.map((handle) => 'window:' + handle) },
+    created: [], renamed: [], closed: [], removed: [], kept: [], errors: [], ...extra }))
+})
+`, { mode: 0o755 })
+  const synced = async () => (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  const names = (call: { order: string[]; sessions: { handle: string; name: string }[] }) =>
+    call.order.map((handle) => call.sessions.find((session) => session.handle === handle)!.name)
+  const lastOrder = async () => { const last = (await synced()).at(-1); return last ? names(last).join() : '' }
+
+  let frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const rpc = (method: string, params?: Record<string, unknown>) => frontend.rpc(method, params)
+  assert.deepEqual(await rpc('session.order.get'), { keys: [], set: false })
+  await assert.rejects(rpc('session.order.set', { keys: [1] }), { code: 'invalid_argument' })
+  const handles: Record<string, string> = {}
+  for (const name of ['alpha', 'beta', 'alpha-review', 'gamma']) {
+    handles[name] = (await rpc('terminal.create', { name, cwd: profile, argv: ['/bin/sh', '-c', 'exec cat'] })).terminal.handle
+  }
+
+  await rpc('orc.rex.start', { rex, orc: process.execPath })
+  assert.equal(await lastOrder(), 'alpha,alpha-review,beta,gamma', 'tabs go in the sidebar\'s order, a child after its parent')
+  assert.deepEqual(await rpc('session.order.set', { keys: ['gamma', 'beta', 'gamma'] }), { keys: ['gamma', 'beta'], set: true })
+  await until(async () => await lastOrder() === 'gamma,beta,alpha,alpha-review', 5000, 'a sync in the new order')
+  assert.deepEqual((await synced()).at(-1).seen, { 'session:1': ['alpha', 'alpha-review', 'beta', 'gamma'].map((name) => 'window:' + handles[name]) },
+    'each sync gets the tab order the last one left')
+
+  await rpc('terminal.rename', { terminal: 'beta', title: 'delta' })
+  assert.deepEqual((await rpc('session.order.get')).keys, ['gamma', 'delta'], 'a renamed session keeps its place')
+
+  // gamma's tab moved to the end in Rex.
+  await writeFile(reply, JSON.stringify({ reordered: [['alpha', 'alpha-review', 'beta', 'gamma'].map((name) => handles[name])] }))
+  await until(async () => (await rpc('session.order.get')).keys.join() === 'alpha,alpha-review,delta,gamma', 8000, 'the order of the tabs in Rex')
+  await until(async () => await lastOrder() === 'alpha,alpha-review,delta,gamma', 5000, 'a sync in that order')
+
+  // Syncs keep looking for tabs moved in Rex.
+  const before = (await synced()).length
+  await until(async () => (await synced()).length > before, 8000, 'another sync')
+
+  await frontend.kill('SIGTERM')
+  frontend = await Frontend.start(profile)
+  assert.deepEqual(await rpc('session.order.get'), { keys: ['alpha', 'alpha-review', 'delta', 'gamma'], set: true })
+})

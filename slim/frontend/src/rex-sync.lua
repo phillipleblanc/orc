@@ -6,14 +6,18 @@
 -- tab made for each Orc session, by handle ({session, window, name, project, adopted}), where an adopted tab is one
 -- of the user's own in which `orc new` started the session; `projects`, the Rex session made for
 -- each project, by project id ({session, name}); `dismissed`, the handles of Orc sessions whose tab or project
--- session was closed in Rex, which stay out of Rex until `orc rex start` runs again; and `clear`, true to close
--- everything in `map` and forget every project, as `orc rex clear` does.
--- Returns the new `map`, `projects` and `dismissed`; the session names `created`, `renamed` and `closed`; the
--- project names `removed`, and when clearing, `kept` (a project session that other tabs keep open); and `errors`.
+-- session was closed in Rex, which stay out of Rex until `orc rex start` runs again; `order`, the handles of the
+-- sessions in the order their tabs go in; `seen`, the order of the synced tabs in each Rex session as the last sync
+-- left it ({[session] = {window, ...}}); and `clear`, true to close everything in `map` and forget every project, as
+-- `orc rex clear` does.
+-- Returns the new `map`, `projects`, `dismissed` and `seen`; `reordered`, for each Rex session whose synced tabs were
+-- moved in Rex since the last sync, their handles in their new order, which the sync leaves for the runtime to adopt;
+-- the session names `created`, `renamed` and `closed`; the project names `removed`, and when clearing, `kept` (a
+-- project session that other tabs keep open); and `errors`.
 
 local TERMINAL = "com.superlogical.terminal.shell"
 local args = rex.args or {}
-local result = { map = {}, projects = {}, dismissed = {}, created = {}, renamed = {}, closed = {}, removed = {}, kept = {}, errors = {} }
+local result = { map = {}, projects = {}, dismissed = {}, seen = {}, reordered = {}, created = {}, renamed = {}, closed = {}, removed = {}, kept = {}, errors = {} }
 
 local function call(method, params)
   local value, err = rex.call(method, params)
@@ -90,6 +94,57 @@ for _, session in ipairs(args.clear and {} or args.sessions or {}) do
       call("session.disown_block", { session_id = project.session, block_ids = window.block_ids })
     end)
   end
+end
+
+-- Tabs in each Rex session in `order`, unless they were moved in Rex since the last sync. Other tabs stay where they are.
+local function same_order(left, right)
+  local inside = {}
+  for _, window in ipairs(right) do inside[window] = true end
+  local common = {}
+  for _, window in ipairs(left) do if inside[window] then table.insert(common, window) end end
+  local index = 1
+  for _, window in ipairs(right) do
+    if window == common[index] then index = index + 1 end
+  end
+  return index > #common
+end
+local function synced_tabs(session_id, wanted)
+  local tabs = {}
+  for _, window in ipairs(call("session.view", { session_id = session_id }).windows or {}) do
+    if wanted[window.window_id] then table.insert(tabs, window.window_id) end
+  end
+  return tabs
+end
+local desired, handles, wanted = {}, {}, {}
+for _, handle in ipairs(args.clear and {} or args.order or {}) do
+  local entry = result.map[handle]
+  if entry then
+    desired[entry.session] = desired[entry.session] or {}
+    table.insert(desired[entry.session], entry.window)
+    handles[entry.window] = handle
+    wanted[entry.window] = true
+  end
+end
+for session_id, windows in pairs(desired) do
+  guarded(function()
+    call("session.attach", { session_id = session_id })
+    local current = synced_tabs(session_id, wanted)
+    local seen = (args.seen or {})[session_id]
+    if seen and not same_order(current, seen) then
+      local moved = {}
+      for _, window in ipairs(current) do table.insert(moved, handles[window]) end
+      table.insert(result.reordered, moved)
+      result.seen[session_id] = current
+      return
+    end
+    if table.concat(current, " ") ~= table.concat(windows, " ") then
+      for index = #windows - 1, 1, -1 do
+        call("session.move_window", { session_id = session_id, window_id = windows[index], before_window_id = windows[index + 1] })
+      end
+      current = synced_tabs(session_id, wanted)
+    end
+    result.seen[session_id] = current
+  end)
 end
 
 -- Rex sessions with no synced tab left, the projects' and any a tab was closed in, are removed once empty.
