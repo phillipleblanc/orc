@@ -46,6 +46,8 @@ internal sealed class FakeRuntime : IAsyncDisposable
     public JsonObject ViewReply = new() { ["owner"] = false, ["cols"] = 120, ["rows"] = 40, ["ownerDevice"] = "Studio" };
     /// <summary>The headline of the terminal's brief, from a host with owner methods.</summary>
     public volatile string Headline = "Writing the tests";
+    /// <summary>The session order session.order.get serves, from a host with owner methods.</summary>
+    public volatile string[] Order = ["fake-agent"];
     /// <summary>`orc notify` messages kept, oldest first, numbered from 1; notify.since serves them as notifications.ts does.</summary>
     public readonly List<string> Notices = [];
 
@@ -231,6 +233,9 @@ internal sealed class FakeRuntime : IAsyncDisposable
                     break;
                 case "notify.since" when runtime.Capabilities.Contains("orc.notify-cursor.v1"):
                     await ReplyAsync(id, runtime.NotifySince(parameters));
+                    break;
+                case "session.order.get" when runtime.Capabilities.Contains("orc.owner-methods.v1"):
+                    await ReplyAsync(id, new JsonObject { ["keys"] = new JsonArray([.. runtime.Order.Select(k => (JsonNode?)JsonValue.Create(k))]), ["set"] = true });
                     break;
                 case "brief.list" when runtime.Capabilities.Contains("orc.owner-methods.v1"):
                     await ReplyAsync(id, new JsonObject

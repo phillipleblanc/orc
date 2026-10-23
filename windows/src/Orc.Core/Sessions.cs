@@ -151,9 +151,12 @@ public static class SessionSections
 /// What the host's sessions are and do; from hosts that serve them, their agents' briefs by session name and the
 /// <c>orc notify</c> messages that arrived since the last snapshot.
 /// </summary>
+/// <summary>The host's session order (slim/frontend/src/session-order.ts), and when this PC asked for it.</summary>
+public sealed record SessionOrderRead(IReadOnlyList<string> Keys, DateTimeOffset AskedAt);
+
 public sealed record HostSnapshot(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<Project> Projects,
     IReadOnlyDictionary<string, AgentActivity> Activity, DateTimeOffset At, IReadOnlyDictionary<string, AgentBrief>? Briefs = null,
-    NotificationBatch? Notifications = null)
+    NotificationBatch? Notifications = null, SessionOrderRead? Order = null)
 {
     public AgentActivity ActivityOf(SessionInfo session) =>
         !session.Connected ? AgentActivity.Offline : Activity.GetValueOrDefault(session.Handle, AgentActivity.Unknown);

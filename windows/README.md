@@ -109,6 +109,9 @@ comes forward, and every 15 minutes while it is in front. New Session starts fro
 Settings, `orc new`), and **Add Project…** (in New Session, or when the host has none) browses the host's home folder
 for one, made the default for new sessions unless that is turned off.
 
+Sessions dragged in the sidebar, or moved with Alt+Up and Alt+Down, keep their place in the host's session order
+(`session.order.get`, read on every refresh), which Orc.app on the Mac and the Mac's Rex tabs share.
+
 Like Orc.app, the app notifies when an agent it saw working finishes its turn (not for the session you are looking
 at) and for each `orc notify` message, read through this PC's own cursor so the Mac and the PC both show them.
 Sessions with something to review show a blue bell until you view them, and their count is on the taskbar button.

@@ -5,8 +5,8 @@ using Orc.Protocol;
 namespace Orc.Core;
 
 /// <summary>
-/// Where the person dragged sessions in the sidebar, as Orc.app keeps it (Sources/OrcKit/SessionSidebarOrder.swift):
-/// session names in order. Sessions it does not name keep the host's order after those it does. Placement never
+/// Where the person dragged sessions in the sidebar, as Orc.app orders them (Sources/OrcKit/SessionSidebarOrder.swift):
+/// session names in order, which the host keeps (<c>session.order.get</c>) for every computer and for Rex's tabs. Sessions it does not name keep the host's order after those it does. Placement never
 /// changes name-based parentage: a top-level session moves among top-level sessions, a child among its siblings.
 /// </summary>
 public sealed class SidebarOrder
@@ -72,44 +72,6 @@ public sealed class SidebarOrder
         if (direction < 0) return at > 0 ? siblings[at - 1] : null;
         if (at >= siblings.Count - 1) return null;
         return at + 2 < siblings.Count ? siblings[at + 2] : parent is null ? rows.Count : siblings[^1] + 1;
-    }
-
-    /// <summary>A session was renamed: it keeps its place.</summary>
-    public bool Rename(string name, string newName)
-    {
-        if (!keys.Contains(name)) return false;
-        keys.RemoveAll(k => k == newName);
-        keys[keys.IndexOf(name)] = newName;
-        return true;
-    }
-
-    private sealed record Stored([property: JsonPropertyName("keys")] List<string> Keys);
-
-    /// <summary>This PC's order for the host with <paramref name="pairing"/>'s key, in <c>%LOCALAPPDATA%\Orc\sidebar-order</c>.</summary>
-    public static string FileFor(Pairing pairing) => Path.Combine(PairingStore.Directory, "sidebar-order", pairing.Fingerprint + ".json");
-
-    public static SidebarOrder Load(string file)
-    {
-        try
-        {
-            if (File.Exists(file) && JsonSerializer.Deserialize<Stored>(File.ReadAllText(file)) is { Keys: { } stored }) return new SidebarOrder(stored);
-        }
-        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException) { }
-        return new SidebarOrder();
-    }
-
-    /// <summary>Saves the order; false when it could not be written.</summary>
-    public bool Save(string file)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            var temp = file + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new Stored(keys)));
-            File.Move(temp, file, overwrite: true);
-            return true;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
     }
 }
 

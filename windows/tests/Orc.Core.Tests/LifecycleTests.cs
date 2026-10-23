@@ -369,24 +369,6 @@ public sealed class SidebarOrderTests
     }
 
     [Fact]
-    public void KeepsItsPlaceWhenRenamedAndRoundTrips()
-    {
-        var file = Path.Combine(Path.GetTempPath(), $"orc-order-{Guid.NewGuid():N}.json");
-        try
-        {
-            var order = new SidebarOrder();
-            order.Move(5, 0, order.Rows(Hierarchy, None));
-            Assert.True(order.Rename("c", "z"));
-            Assert.True(order.Save(file));
-            Assert.Equal(order.Keys, SidebarOrder.Load(file).Keys);
-            Assert.Equal("z", SidebarOrder.Load(file).Keys[0]);
-            File.WriteAllText(file, "not json");
-            Assert.Empty(SidebarOrder.Load(file).Keys);
-        }
-        finally { File.Delete(file); }
-    }
-
-    [Fact]
     public void SectionsFollowTheirFirstSession()
     {
         var sessions = new[] { Session("a", project: "one"), Session("b", project: "two"), Session("c", project: "one") };

@@ -28,7 +28,7 @@ public sealed record HostStatus(HostState State, string? Detail = null, int Fail
 /// Keeps one control connection to the host and refreshes what Orc.app's sidebar shows, on the Mac app's schedule:
 /// every 2 seconds, terminal.list and worktree.list, then terminal.agentStatus for each running session, at most 8 at
 /// a time with a 3-second limit each (Sources/OrcApp/OrcApp.swift, Sources/OrcKit/AgentActivity.swift); from hosts
-/// that serve them, agents' briefs every 5 seconds and new <c>orc notify</c> messages. After a failure it retries with
+/// that serve them, the session order, agents' briefs every 5 seconds and new <c>orc notify</c> messages. After a failure it retries with
 /// backoff (1 s up to 30 s); a refused pairing waits for <see cref="RetryNow"/>.
 /// </summary>
 public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func<int, TimeSpan>? backoff = null)
@@ -93,7 +93,7 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
                     connection = opened;
                 }
                 var snapshot = await PollAsync(connection, stop);
-                if (info?.Has(HostInfo.OwnerMethods) == true) snapshot = snapshot with { Briefs = await BriefsAsync(connection) };
+                if (info?.Has(HostInfo.OwnerMethods) == true) snapshot = snapshot with { Briefs = await BriefsAsync(connection), Order = await OrderAsync(connection) };
                 if (info?.Has(HostInfo.NotifyCursor) == true) snapshot = snapshot with { Notifications = await NotificationsAsync(connection) };
                 failures = 0;
                 everConnected = true;
@@ -150,6 +150,18 @@ public sealed class HostMonitor(Pairing pairing, TimeSpan? interval = null, Func
         // A host whose briefs are unavailable leaves the last ones.
         catch (Exception error) when (error is TimeoutException or RpcException) { }
         return briefs;
+    }
+
+    /// <summary>The host's session order, or null when it does not serve one.</summary>
+    private static async Task<SessionOrderRead?> OrderAsync(RuntimeConnection current)
+    {
+        var asked = DateTimeOffset.Now;
+        try
+        {
+            var result = await current.RequestAsync("session.order.get", timeout: StatusTimeout);
+            return new SessionOrderRead((result["keys"] as JsonArray ?? new JsonArray()).Select(k => k?.ToString()).OfType<string>().ToList(), asked);
+        }
+        catch (Exception error) when (error is TimeoutException or RpcException) { return null; }
     }
 
     /// <summary>

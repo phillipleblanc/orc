@@ -60,6 +60,26 @@ public sealed class HostMonitorTests
     }
 
     [Fact]
+    public async Task ReadsTheHostsSessionOrderOnEachPoll()
+    {
+        await using var runtime = new FakeRuntime { Capabilities = [HostInfo.OwnerMethods] };
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var monitor = new HostMonitor(runtime.Pairing(), TimeSpan.FromMilliseconds(100));
+        var snapshots = new Recorder<HostSnapshot>();
+        monitor.Updated += snapshots.Add;
+        var run = monitor.RunAsync(stop.Token);
+        Assert.True(await Eventually(() => snapshots.Count > 0));
+        Assert.Equal(["fake-agent"], snapshots.Latest.Order?.Keys);
+        // The order changed elsewhere, as by another computer or a tab moved in Rex.
+        runtime.Order = ["coord", "fake-agent"];
+        Assert.True(await Eventually(() => snapshots.Latest.Order?.Keys.SequenceEqual(["coord", "fake-agent"]) == true));
+        var section = Assert.Single(SessionSections.Build(snapshots.Latest.Sessions, snapshots.Latest.Projects, new SidebarOrder(snapshots.Latest.Order!.Keys)));
+        Assert.Equal(["fake-agent"], section.Sessions.Select(s => s.Name));
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task ReadsNotificationsThroughItsOwnCursor()
     {
         await using var runtime = new FakeRuntime { Capabilities = [HostInfo.NotifyCursor] };
@@ -107,6 +127,7 @@ public sealed class HostMonitorTests
         var run = monitor.RunAsync(stop.Token);
         Assert.True(await Eventually(() => snapshots.Count > 0));
         Assert.Null(snapshots.Latest.Briefs);
+        Assert.Null(snapshots.Latest.Order);
         Assert.Equal("claude", snapshots.Latest.DetailOf(snapshots.Latest.Sessions[0]));
         stop.Cancel();
         await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);

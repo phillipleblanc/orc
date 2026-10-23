@@ -48,7 +48,9 @@ public sealed partial class MainWindow : Window
     private readonly SessionMutes mutes = SessionMutes.Load();
     // Where sessions were dragged, for this host; and each section's rows as last laid out, which drags move within.
     private SidebarOrder order = new();
-    private string? orderFile;
+    /// <summary>Saves of the order under way, and when the last one ended: the host's order read before then may not have it.</summary>
+    private int savingOrder;
+    private DateTimeOffset orderSavedAt;
     private Dictionary<string, IReadOnlyList<SidebarRow>> sectionRows = [];
     private SessionRow? dragging;
     private (string Section, int Index, int Destination)? dropTarget;
@@ -275,8 +277,6 @@ public sealed partial class MainWindow : Window
         pairing = next;
         var host = new HostMonitor(next) { NotificationCursor = SavedCursor() };
         monitor = host;
-        orderFile = SidebarOrder.FileFor(next);
-        order = SidebarOrder.Load(orderFile);
         hostStop = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);
         host.Updated += update => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) Apply(update); });
         host.StatusChanged += status => DispatcherQueue.TryEnqueue(() => { if (!IsClosed && monitor == host) ShowHostState(status); });
@@ -307,7 +307,7 @@ public sealed partial class MainWindow : Window
         shape = [];
         collapsedParents.Clear();
         order = new SidebarOrder();
-        orderFile = null;
+        orderSavedAt = DateTimeOffset.MinValue;
         sectionRows = [];
         notices.Clear();
         hostNotice = null;
@@ -410,6 +410,7 @@ public sealed partial class MainWindow : Window
     {
         snapshot = update;
         Review(update);
+        if (update.Order is { } read && savingOrder == 0 && read.AskedAt > orderSavedAt) order = new SidebarOrder(read.Keys);
         var sections = SessionSections.Build(update.Sessions, update.Projects, order);
         // A child about to be selected is shown even when its parent is collapsed.
         if (pendingSelect is { } wanted)
@@ -538,10 +539,28 @@ public sealed partial class MainWindow : Window
 
     private void Reorder(int index, int destination, IReadOnlyList<SidebarRow> list)
     {
-        if (snapshot is null || !order.Move(index, destination, list)) return;
-        if (orderFile is not null && !order.Save(orderFile))
-            SetNotice(visible ?? "", new Notice(InfoBarSeverity.Warning, "Couldn't save the sidebar order", "The new order lasts until Orc closes."));
+        if (snapshot is null || monitor is not { } host || !order.Move(index, destination, list)) return;
+        _ = SaveOrderAsync(host, [.. order.Keys]);
         Apply(snapshot);
+    }
+
+    /// <summary>Saves the order on the host, which keeps it for every computer showing its sessions and for Rex's tabs.</summary>
+    private async Task SaveOrderAsync(HostMonitor host, List<string> keys)
+    {
+        savingOrder++;
+        try
+        {
+            await host.RequestAsync("session.order.set", new JsonObject { ["keys"] = new JsonArray([.. keys.Select(k => (JsonNode?)JsonValue.Create(k))]) });
+        }
+        catch (Exception failure)
+        {
+            if (monitor == host) SetNotice(visible ?? "", new Notice(InfoBarSeverity.Warning, "Couldn't save the session order", failure.Message));
+        }
+        finally
+        {
+            savingOrder--;
+            orderSavedAt = DateTimeOffset.Now;
+        }
     }
 
     private void OnDragStarting(object sender, DragItemsStartingEventArgs e)
@@ -1061,8 +1080,7 @@ public sealed partial class MainWindow : Window
             {
                 var name = box.Text.Trim();
                 await SessionCommands.RenameAsync(host.RequestAsync, session.Handle, name);
-                // Its place in the sidebar and a mute go with it.
-                if (order.Rename(session.Name, name) && orderFile is not null) order.Save(orderFile);
+                // A mute goes with it; the host keeps its place in the order.
                 mutes.Rename(session.Name, name);
                 dialog.Hide();
                 host.RefreshNow();
