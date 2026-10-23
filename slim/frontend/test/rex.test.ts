@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, readlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import { destroyProfile, Frontend, makeProfile, sleep, until } from './harness.ts'
@@ -162,4 +162,55 @@ process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
   await frontend.kill('SIGTERM')
   frontend = await Frontend.start(profile)
   assert.deepEqual(await rpc('session.order.get'), { keys: ['alpha', 'alpha-review', 'delta', 'gamma'], set: true })
+})
+
+test('projects\' Rex sessions go in Orc\'s project order, and Rex sessions moved in Rex move their projects', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const rex = join(profile, 'rex')
+  const calls = join(profile, 'rex-calls.jsonl')
+  const reply = join(profile, 'reply.json')
+  await writeFile(rex, `#!${process.execPath}
+const fs = require('node:fs')
+let input = ''
+process.stdin.on('data', (chunk) => { input += chunk }).on('end', () => {
+  const args = JSON.parse(input)
+  fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n')
+  const map = {}, projects = {}
+  for (const session of args.sessions) {
+    projects[session.project.id] = { session: 'session:' + session.project.name, name: session.project.name }
+    map[session.handle] = { session: 'session:' + session.project.name, window: 'window:' + session.handle, name: session.name, project: session.project.id }
+  }
+  let extra = {}
+  try { extra = JSON.parse(fs.readFileSync(${JSON.stringify(reply)}, 'utf8')); fs.rmSync(${JSON.stringify(reply)}) } catch {}
+  process.stdout.write(JSON.stringify({ map, projects, dismissed: [], seen: {}, seen_sessions: args.project_order.map((id) => projects[id].session),
+    created: [], renamed: [], closed: [], removed: [], kept: [], errors: [], ...extra }))
+})
+`, { mode: 0o755 })
+  const synced = async () => (await readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  const frontend = await Frontend.start(profile)
+  t.after(() => frontend.kill('SIGKILL'))
+  const rpc = (method: string, params?: Record<string, unknown>) => frontend.rpc(method, params)
+  const ids: Record<string, string> = {}
+  for (const name of ['one', 'two']) {
+    await mkdir(join(profile, name))
+    ids[name] = 'id:' + (await rpc('repo.add', { path: join(profile, name) })).repo.id
+  }
+  for (const [name, project] of [['a', 'one'], ['b', 'two'], ['c', 'one']]) await rpc('terminal.create', { name, cwd: join(profile, project), argv: ['/bin/sh', '-c', 'exec cat'] })
+  await rpc('orc.rex.start', { rex, orc: process.execPath })
+  const projectNames = async () => {
+    const last = (await synced()).at(-1)
+    const names = Object.fromEntries(last.sessions.map((session: any) => [session.project.id, session.project.name]))
+    return last.project_order.map((id: string) => names[id]).join()
+  }
+  assert.equal(await projectNames(), 'one,two')
+  await rpc('session.order.set', { keys: ['b'] })
+  await until(async () => await projectNames() === 'two,one', 5000, 'a sync in the new project order')
+  assert.deepEqual((await synced()).at(-1).seen_sessions, ['session:one', 'session:two'], 'each sync gets the order the last one left')
+
+  // one's Rex session moved before two's in Rex: its sessions go before two's.
+  const order = (await synced()).at(-1).project_order
+  await writeFile(reply, JSON.stringify({ projects_reordered: [order[1], order[0]] }))
+  await until(async () => (await rpc('session.order.get')).keys.join() === 'a,c,b', 8000, 'the project order from Rex')
+  await until(async () => await projectNames() === 'one,two', 5000, 'a sync in that order')
 })

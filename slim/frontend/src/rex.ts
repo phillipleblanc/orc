@@ -23,8 +23,11 @@ export type RexLink = { rex: string; server: string | null; orc: string; config:
 /** A tab showing an Orc session: one the sync made, or, `adopted`, the user's own in which `orc new` started it. */
 type RexTab = { session: string; window: string; name: string; project: string; adopted?: boolean }
 type RexProject = { session: string; name: string }
-/** `seen` is the order of the synced tabs in each Rex session as the last sync left it, to tell when they are moved in Rex. */
-type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[]; seen: Record<string, string[]> }
+/**
+ * `seen` is the order of the synced tabs in each Rex session, and `seenSessions` the order of the projects' Rex sessions,
+ * as the last sync left them, to tell when they are moved in Rex.
+ */
+type RexState = { link: RexLink; syncing: boolean; map: Record<string, RexTab>; projects: Record<string, RexProject>; dismissed: string[]; seen: Record<string, string[]>; seenSessions?: string[] }
 type SyncSession = { handle: string; name: string; cwd: string; command: string[]; project: { id: string; name: string } }
 export type RexSyncResult = { created: string[]; renamed: string[]; closed: string[]; removed: string[]; kept: string[]; errors: string[] }
 
@@ -32,7 +35,8 @@ export type RexSyncResult = { created: string[]; renamed: string[]; closed: stri
  * Keeps a Rex server in sync with this runtime's sessions once `orc rex start` links it: one Rex session per Orc
  * project, labeled with the project's name, with a tab for each of its Orc sessions, labeled with the session's
  * name, that runs `orc attach` for it as a viewer that leaves the session's size alone until someone types there. The
- * tabs follow the sessions' order, and tabs moved in Rex change it. It syncs when linked, when the frontend starts,
+ * projects' Rex sessions and their tabs follow the sessions' order, as Orc.app's sidebar shows it, and moving either in
+ * Rex changes it. It syncs when linked, when the frontend starts,
  * when a session is added, renamed or ends, when the order changes, and every few seconds to find tabs moved in Rex,
  * by running `rex-sync.lua` with Rex's own CLI. A Rex session or tab closed in Rex stays out of Rex until
  * `orc rex start` runs again. `orc rex stop` stops syncing and keeps the Rex sessions; `orc rex clear` then removes
@@ -68,7 +72,8 @@ export class RexSync {
   /** Links a Rex server, brings back every Orc session closed in Rex, and syncs now. */
   async start(link: RexLink): Promise<RexSyncResult> {
     const same = this.state?.link.server === link.server
-    this.state = { link, syncing: true, map: same ? this.state!.map : {}, projects: same ? this.state!.projects : {}, dismissed: [], seen: same ? this.state!.seen : {} }
+    this.state = { link, syncing: true, map: same ? this.state!.map : {}, projects: same ? this.state!.projects : {}, dismissed: [], seen: same ? this.state!.seen : {},
+      seenSessions: same ? this.state!.seenSessions : undefined }
     await this.save(this.state)
     this.polling()
     return this.enqueue(() => this.syncOnce())
@@ -164,16 +169,18 @@ export class RexSync {
   /** Runs the script with `sessions`, or to `clear`, and keeps what it made unless the link changed meanwhile. */
   private async run(state: RexState, sessions: SyncSession[], clear: boolean): Promise<RexSyncResult> {
     const sent = state.map
-    // The sessions as Orc.app's sidebar shows them, each project's in their order.
+    // The sessions as Orc.app's sidebar shows them: each project where its first session is in the order of all of
+    // them, and its sessions in their order.
     const keys = this.options.order.get().keys
-    const projects = new Map<string, SyncSession[]>()
-    for (const session of sessions) projects.set(session.project.id, [...projects.get(session.project.id) ?? [], session])
     const byName = new Map(sessions.map((session) => [session.name, session]))
-    const shown = [...projects.values()].flatMap((members) => sidebarOrder(members.map((session) => session.name), keys))
+    const projectOrder = [...new Set(sidebarOrder(sessions.map((session) => session.name), keys).map((name) => byName.get(name)!.project.id))]
+    const members = new Map(projectOrder.map((id) => [id, sidebarOrder(sessions.filter((session) => session.project.id === id).map((session) => session.name), keys)]))
+    const shown = projectOrder.flatMap((id) => members.get(id)!)
     const order = shown.map((name) => byName.get(name)!.handle)
     let output: Record<string, unknown>
     try {
-      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: sent, projects: state.projects, dismissed: state.dismissed, order, seen: state.seen ?? {}, clear })))
+      output = JSON.parse(await runRex(state.link, JSON.stringify({ sessions, map: sent, projects: state.projects, dismissed: state.dismissed, order, seen: state.seen ?? {},
+        project_order: projectOrder, seen_sessions: state.seenSessions ?? null, clear })))
     } catch (error) {
       const message = (error as Error).message
       if (message !== this.lastError) this.options.log(`rex sync failed: ${message}`)
@@ -189,11 +196,16 @@ export class RexSync {
       state.projects = record(output.projects) as Record<string, RexProject>
       state.dismissed = strings(output.dismissed)
       state.seen = Object.fromEntries(Object.entries(record(output.seen)).map(([session, windows]) => [session, strings(windows)]))
+      state.seenSessions = strings(output.seen_sessions)
       await this.save(state)
-      // Tabs moved in Rex move their sessions.
+      // Tabs moved in Rex move their sessions, and Rex sessions moved there move their projects' sessions together.
       const names = new Map(sessions.map((session) => [session.handle, session.name]))
       const moved = (Array.isArray(output.reordered) ? output.reordered : []).map((handles) => strings(handles).flatMap((handle) => names.get(handle) ?? []))
-      if (moved.length) await this.options.order.replace(moved.reduce((next, tabs) => reorder(next, shown, tabs), this.options.order.get().keys))
+      const projectsMoved = strings(output.projects_reordered).filter((id) => members.has(id))
+      let next = this.options.order.get().keys
+      for (const tabs of moved) next = reorder(next, shown, tabs)
+      if (projectsMoved.length) next = reorder(next, shown, projectsMoved.flatMap((id) => sidebarOrder(members.get(id)!, next)))
+      if (moved.length || projectsMoved.length) await this.options.order.replace(next)
     }
     this.lastSyncAt = Date.now()
     this.lastError = result.errors[0] ?? null

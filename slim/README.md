@@ -426,7 +426,10 @@ the sync made and removes their Rex sessions once empty, reporting those that ot
 tabs in each Rex session follow the [session order](#computers) with `session.move_window`, among the user's own
 tabs, which stay where they are; the order each sync leaves is kept in `rex.json` as `seen`. When the synced tabs
 are in another order than the last sync left them, they were moved in Rex: the sync leaves them, and their sessions
-take the places those sessions held in the session order, in the tabs' order. A failed sync
+take the places those sessions held in the session order, in the tabs' order. The projects' Rex sessions go in the
+order of the projects in Orc.app's sidebar (each where its first session is) with `session.move`, among other Rex
+sessions, which stay where they are, and their order is kept as `seenSessions`. Rex sessions moved in Rex move their
+projects' sessions the same way, a project's sessions together. A failed sync
 is logged once per distinct error and reported as `lastError`; the next change retries.
 
 ## Phones
