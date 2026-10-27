@@ -53,3 +53,21 @@ test('phones pair over a LAN address, keep their grant across restarts, and lose
   await assert.rejects(RuntimeClient.connect(claims, loopback))
   await until(async () => (await frontend.rpc('orc.phone.status')).devices.length === 0, 2000, 'grant removal')
 })
+
+test('a phone pairs through a relay, a host that forwards the runtime\'s port to this one', async (t) => {
+  const profile = await makeProfile()
+  t.after(() => destroyProfile(profile))
+  const port = await freePort()
+  const frontend = await Frontend.start(profile, ['--port', String(port)])
+  t.after(() => frontend.kill('SIGKILL'))
+
+  await assert.rejects(frontend.rpc('orc.phone.create', { address: '192.0.2.10' }), /address of this host/)
+  for (const address of ['', 'ws://192.0.2.10', '192.0.2.10:6768', 'relay.example/path', '-relay']) {
+    await assert.rejects(frontend.rpc('orc.phone.create', { address, relay: true }), /host name or IPv4 address/)
+  }
+  for (const address of ['192.0.2.10', 'relay.example']) {
+    const offer = await frontend.rpc('orc.phone.create', { address, relay: true })
+    assert.equal(offer.endpoint, `ws://${address}:${port}`)
+    assert.equal((parsePairingLink(offer.pairingUrl) as any).endpoint, offer.endpoint)
+  }
+})

@@ -14,6 +14,7 @@ In Orc, choose **Pair Device…** from the menu or click the devices icon below 
 orc pair-phone                         # QR code, preferring Tailscale when available
 orc phones                             # Addresses, paired phones, and pending grants
 orc pair-phone --address 100.64.1.20   # Choose one of this Mac's listed addresses
+orc pair-phone --relay relay.example   # Pair through a relay; see below
 orc pair-phone --link                  # Private link for pasting into Orca Mobile
 orc pair-phone --rotate                # Replace the unused code; paired phones keep access
 orc phones revoke DEVICE_ID            # Disconnect and revoke that phone
@@ -22,3 +23,14 @@ orc phones revoke DEVICE_ID            # Disconnect and revoke that phone
 `pair-phone` and `phones` accept `--json` for automation. Pairing output contains a credential; keep it private. Reopening pairing reuses an unused grant, while pairing another phone after a successful connection creates a separate grant. The app displays paired and pending grants under **Phone Access** and can revoke either. Creating, replacing, and revoking phone grants leave running sessions and Orc's local access intact. Grants persist across runtime restarts.
 
 The runtime listens on port 6768 on every interface. Pairing does not use Orca Relay; both devices need a reachable private network path and the Mac must remain awake. Push notifications to the phone are not supported.
+
+## Through a relay
+
+A Mac that refuses incoming connections, such as one with its firewall set to block them all, can still reach a phone through a host both can reach. The Mac keeps an SSH tunnel open to that host, which listens on the same port and passes connections back over the tunnel:
+
+```sh
+ssh -N -R 0.0.0.0:6768:127.0.0.1:6768 relay.example    # The relay's sshd needs `GatewayPorts clientspecified`
+orc pair-phone --relay relay.example
+```
+
+The relay carries only the encrypted connection: it never sees the phone's token or what the phone shows. Anything that can reach its port can try to pair, so let only your phone's network reach it. A phone paired directly must pair again to use a relay, and keep the tunnel running with something that restarts it, such as a launchd agent.

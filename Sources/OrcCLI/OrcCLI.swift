@@ -340,21 +340,26 @@ import COrcSupport
                 selector = nil; selectedHandle = terminal.handle
             }
         case "pair-phone":
-            let requestedAddress = try value("--address")
+            let requestedAddress = try value("--address"), relay = try value("--relay")
             let rotate = flag("--rotate"), linkOnly = flag("--link")
-            guard options.isEmpty, !(json && linkOnly) else {
-                throw OrcError("Usage: orc pair-phone [--address IP] [--rotate] [--link | --json]")
+            guard options.isEmpty, !(json && linkOnly), requestedAddress == nil || relay == nil else {
+                throw OrcError("Usage: orc pair-phone [--address IP | --relay HOST] [--rotate] [--link | --json]")
             }
-            let status = try await PhonePairingService.status()
-            guard let address = requestedAddress ?? status.defaultAddress,
-                  status.interfaces.contains(where: { $0.address == address }) else {
-                throw OrcError("Choose a reachable address with --address IP. Run `orc phones` to list this Mac's addresses.")
+            let address: String
+            if let relay { address = relay } else {
+                let status = try await PhonePairingService.status()
+                guard let chosen = requestedAddress ?? status.defaultAddress,
+                      status.interfaces.contains(where: { $0.address == chosen }) else {
+                    throw OrcError("Choose a reachable address with --address IP. Run `orc phones` to list this Mac's addresses.")
+                }
+                address = chosen
             }
-            let offer = try await PhonePairingService.create(address: address, rotate: rotate)
+            let offer = try await PhonePairingService.create(address: address, rotate: rotate, relay: relay != nil)
             if json { try emit(try JSONSerialization.jsonObject(with: JSONEncoder().encode(offer))) }
             else if linkOnly { print(offer.pairingUrl) }
             else {
-                print("On the same Wi-Fi or Tailscale network, open Orca Mobile → Pair and scan this private QR code.")
+                print(relay == nil ? "On the same Wi-Fi or Tailscale network, open Orca Mobile → Pair and scan this private QR code."
+                                   : "On a network that reaches \(address), open Orca Mobile → Pair and scan this private QR code.")
                 let qr = try PhonePairingQR(link: offer.pairingUrl)
                 var dimensions = winsize()
                 if isatty(STDOUT_FILENO) == 1, ioctl(STDOUT_FILENO, TIOCGWINSZ, &dimensions) == 0,
@@ -362,7 +367,7 @@ import COrcSupport
                     print("The QR code needs \(qr.minimumTerminalColumns) columns. Widen the terminal, or paste this private link into Orca Mobile:")
                     print(offer.pairingUrl)
                 } else { print(qr.terminal) }
-                print("Server: \(offer.endpoint)\nFor a link to paste into the phone, run orc pair-phone --address \(address) --link.")
+                print("Server: \(offer.endpoint)\nFor a link to paste into the phone, run orc pair-phone \(relay == nil ? "--address" : "--relay") \(address) --link.")
             }
         case "phones":
             if options.first == "revoke" {
@@ -532,7 +537,7 @@ import COrcSupport
     orc pr watch|unwatch NAME URL [--json]   Link a pull request to an agent, or unlink it
     orc wake DURATION|pid PID|SCRIPT [MSG]  Message this agent session later (orc wake --help)
     orc notify MESSAGE [--json]              Show MESSAGE as an Orc notification, even for a muted session
-    orc pair-phone [--address IP]            Show a phone pairing QR (LAN/Tailscale)
+    orc pair-phone [--address IP | --relay HOST] Show a phone pairing QR (LAN/Tailscale, or a relay)
                    [--rotate] [--link | --json]
     orc phones [--json]                      List phone grants and network addresses
     orc phones revoke DEVICE_ID [--json]     Revoke a phone's access

@@ -6,6 +6,8 @@ import type { WebSocketRpcServer } from './websocket-server.ts'
 
 export type Address = { name: string; address: string }
 
+const RELAY_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/
+
 /** This host's IPv4 addresses a phone could reach: LAN interfaces and Tailscale. */
 export function reachableAddresses(): Address[] {
   const result: Address[] = []
@@ -24,8 +26,9 @@ function isTailscale(address: string): boolean {
 
 /**
  * `orc.phone.*`, served only on the owner-authenticated local socket: phones never administer
- * pairing. Offers use mobile scope and a direct endpoint on the chosen address; the WebSocket
- * listens on every interface.
+ * pairing. Offers use mobile scope and an endpoint on the chosen address, one of this host's (the
+ * WebSocket listens on every interface) or, with `relay`, a host that forwards this runtime's port
+ * here.
  */
 export function phonePairingHandlers(options: { runtimeId: string; devices: Devices; keypair: ServerKeypair; websocket: WebSocketRpcServer }): Handlers {
   const { runtimeId, devices, keypair, websocket } = options
@@ -44,7 +47,9 @@ export function phonePairingHandlers(options: { runtimeId: string; devices: Devi
 
     'orc.phone.create': async (params) => {
       const address = typeof params.address === 'string' ? params.address : ''
-      if (!reachableAddresses().some((entry) => entry.address === address)) throw new RpcError('invalid_argument', 'choose an address of this host')
+      if (params.relay === true) {
+        if (!RELAY_HOST.test(address)) throw new RpcError('invalid_argument', 'name the relay by its host name or IPv4 address')
+      } else if (!reachableAddresses().some((entry) => entry.address === address)) throw new RpcError('invalid_argument', 'choose an address of this host')
       const unused = phones().filter((device) => device.lastSeenAt === 0)
       if (params.rotate === true) for (const device of unused) await devices.revoke(device.deviceId)
       const device = params.rotate === true || unused.length === 0 ? await devices.create('mobile', 'Phone', 'phone') : unused[0]

@@ -69,8 +69,9 @@ public enum PhonePairingService {
         try await PairingAdministration.request("orc.phone.status") { response, _ in try decode(response) }
     }
 
-    public static func create(address: String, rotate: Bool = false) async throws -> PairingOffer {
-        try await PairingAdministration.request("orc.phone.create", ["address": address, "rotate": rotate]) { response, metadata in
+    /// A `relay` address is another host's, which forwards the runtime's port to this one.
+    public static func create(address: String, rotate: Bool = false, relay: Bool = false) async throws -> PairingOffer {
+        try await PairingAdministration.request("orc.phone.create", ["address": address, "rotate": rotate, "relay": relay]) { response, metadata in
             try PairingAdministration.offer(response, metadata: metadata, address: address, scope: "mobile")
         }
     }

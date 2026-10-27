@@ -440,9 +440,10 @@ The unmodified Orca mobile app pairs with this runtime and shows its sessions.
 
 - **Pairing:** `orc pair-phone` calls `orc.phone.create` with one of the host's IPv4 addresses
   (Tailscale first) and returns an `orca://pair` link to that address with a mobile-scope device
-  token. The WebSocket listens on every interface at port 6768 (Orca's port; `--port` overrides it),
-  so paired phones reconnect after restarts. A phone whose token is revoked with `orc.phone.revoke`
-  is disconnected.
+  token. With `relay: true` the address is instead another host's, which forwards the same port
+  here, and is not checked against this host's. The WebSocket listens on every interface at port
+  6768 (Orca's port; `--port` overrides it), so paired phones reconnect after restarts. A phone
+  whose token is revoked with `orc.phone.revoke` is disconnected.
 - **Branches:** a project whose folder is a Git checkout shows its branch; other folders show none.
 - **Scope:** a mobile token may call only the methods in `mobile-methods.ts`; others fail with
   `forbidden`.
