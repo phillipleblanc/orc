@@ -59,8 +59,9 @@ export type PullRequestSummary = {
  * Pull requests linked to agent sessions, watched on GitHub without a model: an agent that has been idle a while is
  * told about failing checks, unresolved Copilot comments and merge conflicts on its pull requests, by the rules in
  * `rules.ts`. A pull request is linked by the status brief's model, which reports the ones an agent is responsible
- * for, or by its person; it is dropped once merged or closed. Kept in each session's `pull-requests.json`, and the
- * ignored checks in `<profile>/pull-request-settings.json`.
+ * for, or by its person; it is dropped once merged or closed. One its person unlinks is not linked to that agent by
+ * the brief's model again, until its person links it. Kept in each session's `pull-requests.json`, with the ones its
+ * person unlinked, and the ignored checks in `<profile>/pull-request-settings.json`.
  */
 export class PullRequestWatch {
   private readonly settingsPath: string
@@ -70,6 +71,8 @@ export class PullRequestWatch {
   private readonly fetch: (refs: PullRequestRef[]) => Promise<FetchResult>
   private readonly now: () => number
   private readonly lists = new Map<string, Promise<Watched[]>>()
+  /** Each session's pull requests its person unlinked, as `owner/name#number`, by the session's folder. */
+  private readonly unlinkedKeys = new Map<string, string[]>()
   private ignore: string[] = DEFAULT_IGNORED
   private timer: NodeJS.Timeout | null = null
   private ticking: Promise<void> | null = null
@@ -119,6 +122,14 @@ export class PullRequestWatch {
     return agent ? (await this.loaded(agent)).map(refKey) : []
   }
 
+  /** The pull requests its person unlinked from an agent, as `owner/name#number`, which the brief's model does not link again. */
+  async unlinked(name: string): Promise<string[]> {
+    const agent = this.agent(name)
+    if (!agent) return []
+    await this.loaded(agent)
+    return [...this.unlinkedKeys.get(agent.dir) ?? []]
+  }
+
   /**
    * Links a pull request the status brief's model says the agent is responsible for, and answers the model. It is
    * linked only if `shown`, what the model was given, names it, and it is open and opened by `gh`'s user.
@@ -140,20 +151,32 @@ export class PullRequestWatch {
     if (!this.agent(name)) throw new Error(`${name} is not a running agent session`)
     const linked = await this.link(name, ref, 'person')
     if ('reason' in linked) throw new Error(linked.reason)
+    const agent = this.agent(name)!
+    const unlinked = this.unlinkedKeys.get(agent.dir) ?? []
+    if (unlinked.includes(refKey(ref))) {
+      this.unlinkedKeys.set(agent.dir, unlinked.filter((key) => key !== refKey(ref)))
+      await this.save(agent, await this.loaded(agent))
+    }
     if (linked.already) return `${name} already watches ${refKey(ref)}.`
     return `${name} watches ${refKey(ref)}${linked.from ? ` instead of ${linked.from}` : ''}.`
   }
 
+  /**
+   * Unlinks a pull request from an agent at its person's request, and keeps the brief's model from linking it to that
+   * agent again; returns whether it was linked.
+   */
   async unwatch(name: string, url: string): Promise<boolean> {
     const ref = parsePullRequest(url)
+    if (!ref) throw new Error(`${url} is not a GitHub pull request link or owner/name#number`)
     const agent = this.agent(name)
-    if (!ref || !agent) return false
+    if (!agent) throw new Error(`${name} is not a running agent session`)
     const list = await this.loaded(agent)
     const index = list.findIndex((pr) => refKey(pr) === refKey(ref))
-    if (index < 0) return false
-    list.splice(index, 1)
+    if (index >= 0) list.splice(index, 1)
+    const unlinked = this.unlinkedKeys.get(agent.dir) ?? []
+    if (!unlinked.includes(refKey(ref))) this.unlinkedKeys.set(agent.dir, [...unlinked, refKey(ref)])
     await this.save(agent, list)
-    return true
+    return index >= 0
   }
 
   /** Answers a check handed over to the agent's person: ignore it from now on, or keep reporting it to the agent. */
@@ -190,7 +213,11 @@ export class PullRequestWatch {
 
   private async look(): Promise<void> {
     const agents = this.agents()
-    for (const dir of this.lists.keys()) if (!agents.some((agent) => agent.dir === dir)) this.lists.delete(dir)
+    for (const dir of this.lists.keys()) {
+      if (agents.some((agent) => agent.dir === dir)) continue
+      this.lists.delete(dir)
+      this.unlinkedKeys.delete(dir)
+    }
     const now = this.now()
     const due: { agent: WatchAgent; pr: Watched }[] = []
     for (const agent of agents) {
@@ -253,6 +280,7 @@ export class PullRequestWatch {
     const key = refKey(ref)
     const list = await this.loaded(agent)
     if (list.some((pr) => refKey(pr) === key)) return { already: true }
+    if (by === 'brief' && this.unlinkedKeys.get(agent.dir)?.includes(key)) return { reason: `this agent's person unlinked ${key} from it` }
     let previous: { owner: WatchAgent; list: Watched[]; pr: Watched } | null = null
     for (const other of this.agents()) {
       if (other.dir === agent.dir) continue
@@ -326,7 +354,10 @@ export class PullRequestWatch {
     let list = this.lists.get(agent.dir)
     if (!list) {
       list = readFile(join(agent.dir, 'pull-requests.json'), 'utf8').then((text) => {
-        const saved = JSON.parse(text)?.pullRequests
+        const file = JSON.parse(text)
+        const unlinked = file?.unlinked
+        this.unlinkedKeys.set(agent.dir, Array.isArray(unlinked) ? unlinked.filter((key: unknown): key is string => typeof key === 'string') : [])
+        const saved = file?.pullRequests
         return Array.isArray(saved) ? saved.map((pr: Watched) => ({ ...pr, state: { ...emptyState(), ...pr.state } })) : []
       }, () => [])
       this.lists.set(agent.dir, list)
@@ -335,7 +366,8 @@ export class PullRequestWatch {
   }
 
   private save(agent: WatchAgent, list: Watched[]): Promise<void> {
-    return writeJsonFile(join(agent.dir, 'pull-requests.json'), { pullRequests: list }).catch(() => {})
+    const unlinked = this.unlinkedKeys.get(agent.dir) ?? []
+    return writeJsonFile(join(agent.dir, 'pull-requests.json'), { pullRequests: list, ...(unlinked.length ? { unlinked } : {}) }).catch(() => {})
   }
 }
 

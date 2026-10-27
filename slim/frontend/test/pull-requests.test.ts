@@ -200,8 +200,19 @@ test('the watch links an agent’s pull requests, tells it once it is idle, and 
   assert.match(await watch.claim('coord', 'https://github.com/spiceai/spiceai/pull/14791', log), /^Recorded/)
   assert.match(await watch.claim('coord/worker', 'https://github.com/spiceai/spiceai/pull/14791', log), /^Recorded: .* instead of coord\.$/)
   assert.deepEqual([await watch.linked('coord'), await watch.linked('coord/worker')], [[], ['spiceai/spiceai#14785', 'spiceai/spiceai#14791']])
-  await watch.unwatch('coord/worker', 'spiceai/spiceai#14791')
+  assert.equal(await watch.unwatch('coord/worker', 'spiceai/spiceai#14791'), true)
   assert.deepEqual(await watch.linked('coord/worker'), ['spiceai/spiceai#14785'])
+  // One its person unlinked is not linked again by the brief's model, until its person links it.
+  assert.deepEqual(await watch.unlinked('coord/worker'), ['spiceai/spiceai#14791'])
+  assert.match(await watch.claim('coord/worker', 'https://github.com/spiceai/spiceai/pull/14791', log), /^Not recorded: this agent's person unlinked spiceai\/spiceai#14791/)
+  assert.match(await watch.watch('coord/worker', 'spiceai/spiceai#14791'), /^coord\/worker watches spiceai\/spiceai#14791\.$/)
+  assert.deepEqual(await watch.unlinked('coord/worker'), [])
+  // One not linked can be unlinked ahead of the brief's model.
+  assert.equal(await watch.unwatch('coord/worker', 'spiceai/spiceai#14791'), true)
+  assert.equal(await watch.unwatch('coord', 'spiceai/spiceai#14785'), false)
+  assert.match(await watch.claim('coord', 'https://github.com/spiceai/spiceai/pull/14785', log), /^Not recorded: this agent's person unlinked/)
+  await assert.rejects(watch.unwatch('coord/gone', 'spiceai/spiceai#14785'), /not a running agent session/)
+  await assert.rejects(watch.unwatch('coord', 'not a pull request'), /not a GitHub pull request/)
 
   // A working agent is not told; once idle a while with nothing queued, it is told once.
   github.asked.length = 0
@@ -231,6 +242,7 @@ test('the watch links an agent’s pull requests, tells it once it is idle, and 
   assert.deepEqual(saved.pullRequests.map((pr: { number: number }) => pr.number), [14785])
   const again = new PullRequestWatch(options)
   assert.deepEqual(await again.linked('coord/worker'), ['spiceai/spiceai#14785'])
+  assert.deepEqual([await again.unlinked('coord/worker'), await again.unlinked('coord')], [['spiceai/spiceai#14791'], ['spiceai/spiceai#14785']])
   prs.set('spiceai/spiceai#14785', snapshot({ state: 'MERGED' }))
   now += POLL_MS
   await watch.tick()

@@ -51,8 +51,13 @@ The sidebar shows each agent's status headline after its agent, and the [Status 
 ```sh
 orc brief cayenne-caching-cdc            # The latest status
 orc brief cayenne-caching-cdc --refresh  # Write a new one now and print it
+orc brief cayenne-caching-cdc --clear-needs-you                  # Mark what it waits on from you as read
+orc brief cayenne-caching-cdc --add-pr OWNER/REPO#123            # Link a pull request the status missed
+orc brief cayenne-caching-cdc --remove-pr OWNER/REPO#124         # Unlink one it got wrong
 orc brief --eval                         # Check the status model on sample statuses
 ```
+
+`--clear-needs-you` does what marking the question read in Orc does: the status drops it, and later statuses don't ask it again. `--add-pr` and `--remove-pr` link and unlink [pull requests](#pull-requests), as `orc pr watch` and `orc pr unwatch` do.
 
 Choosing a status model checks it first: Orc asks it for four sample statuses, from transcripts of an agent that opened a pull request, one that pushed to another, one asking you a question, and one at work, and grades each answer by fixed rules (a well-formed status with three next steps, the question noticed, the right pull requests reported and no others). Settings shows what it got wrong, with **Check Again**; `orc brief --eval [PROVIDER/MODEL]` runs the same checks from the terminal.
 
@@ -60,7 +65,7 @@ Statuses are kept in the runtime profile under `briefs/`, the model in `brief-se
 
 ## Pull requests
 
-Writing an agent's status also links the GitHub pull requests the agent opened or pushes commits to: Orc asks the status model about every pull request the transcript names that is not linked yet, the model reports the agent's own, and Orc links each that is open and that you (as `gh` is signed in) opened. A pull request belongs to one agent; one that a coordinator and an agent it started both report goes to the latter. Orc then checks each linked pull request on GitHub every 3 minutes, without a model, until it is merged or closed.
+Writing an agent's status also links the GitHub pull requests the agent opened or pushes commits to: Orc asks the status model about every pull request the transcript names that is not linked yet, the model reports the agent's own, and Orc links each that is open and that you (as `gh` is signed in) opened. A pull request belongs to one agent; one that a coordinator and an agent it started both report goes to the latter. One you unlink from an agent is not linked to it again by its status, until you link it yourself. Orc then checks each linked pull request on GitHub every 3 minutes, without a model, until it is merged or closed.
 
 Once the agent has been idle for 30 seconds with nothing queued, Orc sends it a message, as `orc agent send` does, about what is new: checks of the latest commit that failed, unresolved Copilot review comments, merge conflicts, and the pull request's removal from the merge queue (other than by merging, or by hand), so the agent can fix it and queue it again. It waits for the commit's other checks to finish first, or until a failure is 15 minutes old. Each finding is reported once, and a check once per commit, so an agent that leaves a check red is not told again until it pushes. Checks named under Settings → **Pull Requests** → **Ignored checks** (Attestation unless you change it; `*` matches anything) are never reported. A check that fails again after the agent was told about it on two commits in a row goes to you instead: the agent's session moves to **Needs You** in the overview, where **Ignore Check** adds it to the ignored checks and **Keep Telling Agent** reports it to the agent every time it fails.
 

@@ -20,7 +20,7 @@ export type BriefRequest = {
   digest: Digest
   about: { name: string; agent: string; state: string }
   model: string
-  /** The pull requests already linked to the agent, and how to link another, answered for the model. */
+  /** The pull requests the model is not asked about, linked to the agent or unlinked by its person, and how to link another, answered for the model. */
   pullRequests?: { linked: string[]; report: (url: string) => Promise<string> }
   /** The question its person last marked read, which the brief must not raise again. */
   dismissed?: string
@@ -29,6 +29,8 @@ export type BriefRequest = {
 /** Pull requests linked to agents, which a brief's model can add to. */
 export type BriefPullRequests = {
   linked(name: string): Promise<string[]>
+  /** The ones its person unlinked from the agent, which the model does not link again. */
+  unlinked(name: string): Promise<string[]>
   /** Links a pull request the model reported, if `shown`, what it was given, names it; the answer is for the model. */
   claim(name: string, url: string, shown: string): Promise<string>
 }
@@ -262,7 +264,7 @@ export class BriefService {
       const brief = await this.write({
         digest: transcript.digest, about: { name, agent: source.agent, state: source.state }, model,
         ...(previous.dismissed ? { dismissed: previous.dismissed } : {}),
-        ...(pullRequests ? { pullRequests: { linked: await pullRequests.linked(name), report: (url: string) => pullRequests.claim(name, url, shown) } } : {})
+        ...(pullRequests ? { pullRequests: { linked: [...await pullRequests.linked(name), ...await pullRequests.unlinked(name)], report: (url: string) => pullRequests.claim(name, url, shown) } } : {})
       })
       record = { name, brief, generatedAt: this.now(), model, error: null, mark: transcript.mark, failures: 0, retryAt: null, dismissed: previous.dismissed ?? null, generating: false }
     } catch (error) {

@@ -174,7 +174,7 @@ const ownerHandlers: Handlers = {
   },
   'pr.list': async (params) => ({ agents: await pullRequests.list(typeof params.name === 'string' ? params.name : undefined) }),
   'pr.watch': async (params) => ({ message: await rpcError(() => pullRequests.watch(String(params.name ?? ''), String(params.url ?? ''))) }),
-  'pr.unwatch': async (params) => ({ removed: await pullRequests.unwatch(String(params.name ?? ''), String(params.url ?? '')) }),
+  'pr.unwatch': async (params) => ({ removed: await rpcError(() => pullRequests.unwatch(String(params.name ?? ''), String(params.url ?? ''))) }),
   'pr.resolve': async (params) => {
     if (params.choice !== 'ignore' && params.choice !== 'keep') throw new RpcError('invalid_argument', 'choice must be ignore or keep')
     await rpcError(() => pullRequests.resolve(String(params.name ?? ''), String(params.url ?? ''), String(params.check ?? ''), params.choice as 'ignore' | 'keep'))

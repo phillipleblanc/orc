@@ -263,3 +263,21 @@ test('a question marked read leaves the brief and is not raised again, across a 
   await again.refresh('changesink', { wait: true })
   assert.equal(requests.at(-1)?.dismissed, 'Rebase PR3, or open a new pull request?')
 })
+
+test('the brief’s model is not asked about pull requests linked to the agent or unlinked by its person', async (t) => {
+  const profile = await temporary(t)
+  const source: BriefSource = {
+    name: 'worker', agent: 'codex', state: 'idle', mark: async () => 'm1',
+    transcript: async () => ({ digest: { summary: 'Goal', items: [], truncated: false }, mark: 'm1' })
+  }
+  const requests: BriefRequest[] = []
+  const service = new BriefService({
+    profile, sessions: () => [source], write: async (request) => { requests.push(request); return BRIEF },
+    pullRequests: { linked: async () => ['spiceai/spiceai#1'], unlinked: async () => ['spiceai/spiceai#2'], claim: async () => 'Recorded' }
+  })
+  t.after(() => service.stop())
+  await service.start()
+  await service.configure('lab/qwen')
+  await service.refresh('worker', { wait: true })
+  assert.deepEqual(requests.at(-1)?.pullRequests?.linked, ['spiceai/spiceai#1', 'spiceai/spiceai#2'])
+})

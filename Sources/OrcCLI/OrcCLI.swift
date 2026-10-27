@@ -189,6 +189,39 @@ import COrcSupport
                 if json { try emit(record) } else { print(try BriefEvaluation(record: record).text) }
                 break
             }
+            let addPullRequest = try value("--add-pr"), removePullRequest = try value("--remove-pr"), clearNeedsYou = flag("--clear-needs-you")
+            if addPullRequest != nil || removePullRequest != nil || clearNeedsYou {
+                guard options.count == 1, !options[0].hasPrefix("--") else {
+                    throw OrcError("Usage: orc brief NAME [--add-pr URL] [--remove-pr URL] [--clear-needs-you] [--json]")
+                }
+                let name = options[0]
+                var result: [String: Any] = [:]
+                if let url = addPullRequest {
+                    let message = try await LocalRPC.call("pr.watch", ["name": name, "url": url])["message"] as? String ?? ""
+                    result["added"] = message
+                    if !json { print(safe(message)) }
+                }
+                if let url = removePullRequest {
+                    let removed = try await LocalRPC.call("pr.unwatch", ["name": name, "url": url])["removed"] as? Bool == true
+                    result["removed"] = removed
+                    if !json { print("\(safe(name)) \(removed ? "no longer watches" : "does not watch") \(safe(url)), and its status won't link it again.") }
+                }
+                if clearNeedsYou {
+                    let record = (try await LocalRPC.call("brief.list")["briefs"] as? [[String: Any]] ?? []).first { $0["name"] as? String == name }
+                    guard let record else { throw OrcError("\(name) is not a running agent session. Run `orc agent list` for their names.") }
+                    if let question = (record["brief"] as? [String: Any])?["needsYou"] as? String {
+                        // Marked read: later statuses don't ask it again.
+                        _ = try await LocalRPC.call("brief.dismiss", ["name": name, "question": question])
+                        result["cleared"] = question
+                        if !json { print("Cleared from \(safe(name))'s status: \(safe(question))") }
+                    } else {
+                        result["cleared"] = NSNull()
+                        if !json { print("Nothing in \(safe(name))'s status needs you.") }
+                    }
+                }
+                if json { try emit(result) }
+                break
+            }
             let refresh = flag("--refresh")
             guard options.count == 1, !options[0].hasPrefix("--") else { throw OrcError("Usage: orc brief NAME [--refresh] [--json]") }
             // Writing a brief takes a model a minute or more on a long transcript.
@@ -203,7 +236,7 @@ import COrcSupport
                 let result = try await LocalRPC.call("pr.\(action)", ["name": options[1], "url": options[2]])
                 if json { try emit(result) }
                 else if action == "watch" { print(result["message"] as? String ?? "") }
-                else { print(result["removed"] as? Bool == true ? "\(safe(options[1])) no longer watches \(safe(options[2]))." : "\(safe(options[1])) does not watch \(safe(options[2])).") }
+                else { print("\(safe(options[1])) \(result["removed"] as? Bool == true ? "no longer watches" : "does not watch") \(safe(options[2])), and its status won't link it again.") }
             } else {
                 guard options.count <= 1, !(options.first?.hasPrefix("--") ?? false) else { throw OrcError("Usage: orc pr [NAME] [--json]") }
                 let result = try await LocalRPC.call("pr.list", options.isEmpty ? [:] : ["name": options[0]])
@@ -491,6 +524,9 @@ import COrcSupport
     orc reopen NAME|ID [--name NEW] [--json] Reopen one, resuming its conversation, and attach
     orc close NAME [--json]                  End a session; a closed agent session can be reopened
     orc brief NAME [--refresh] [--json]      Where an agent's work stands: goal, progress, now, next
+    orc brief NAME --add-pr URL              Link a pull request to an agent's status, from another agent if need be
+    orc brief NAME --remove-pr URL           Unlink one; the agent's status won't link it again
+    orc brief NAME --clear-needs-you         Mark what the agent's status says it needs from you as read
     orc brief --eval [MODEL] [--json]        Check how well a status model writes statuses (default: the chosen one)
     orc pr [NAME] [--json]                   Pull requests Orc watches for agents
     orc pr watch|unwatch NAME URL [--json]   Link a pull request to an agent, or unlink it

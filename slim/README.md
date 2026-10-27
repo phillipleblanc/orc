@@ -315,7 +315,9 @@ The frontend writes `orca-runtime.json` (runtime id, auth token, unix and WebSoc
   only here. `usage.read` reports Claude's and Codex's subscription usage with their sign-ins, `brief.*` serves
   agents' status briefs written from their transcripts, and `pr.*` the pull requests Orc watches for them.
   `brief.dismiss` (`name`, `question`) drops a question its person marked read from the brief and keeps it, the
-  latest only, so later briefs' prompts tell the model not to raise it again.
+  latest only, so later briefs' prompts tell the model not to raise it again. `pr.unwatch` (`name`, `url`) unlinks a
+  pull request from an agent and keeps it in the session's `pull-requests.json` as `unlinked`, which the brief's
+  model is not asked about and cannot link to that agent again; `pr.watch` links it and drops it from `unlinked`.
 - **WebSocket:** E2EE v1 (X25519, XSalsa20-Poly1305, random nonces) authenticated by a device token.
   It serves the same methods except those served only on the local socket, plus the streams
   `terminal.multiplex`, `terminal.subscribe`, `session.tabs.subscribe`, `runtime.clientEvents.subscribe` and
