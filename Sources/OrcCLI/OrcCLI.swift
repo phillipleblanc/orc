@@ -474,6 +474,8 @@ import COrcSupport
                     print("Orc stopped syncing sessions to Rex; the Rex sessions it made remain. `orc rex clear` removes them, `orc rex start` resumes.")
                 } else { print("Orc is not syncing sessions to Rex. Run `orc rex start` in a Rex terminal.") }
             }
+        case "sandbox":
+            try await sandbox(options, json: json, emit: emit)
         case "status":
             guard options.isEmpty else { throw OrcError("Usage: orc status [--json]") }
             let result = try await LocalRPC.call("status.get")
@@ -506,6 +508,59 @@ import COrcSupport
         }
         let handle = try await service.create(name: name, worktree: "id:" + project.id, command: command ?? type.command, mcp: mcp, rexTab: rexTab)
         return (handle, name, command == nil ? type.rawValue : "custom", project.name)
+    }
+    /// `orc sandbox`: the machines sandboxed agents run in, and the folders granted to agent names.
+    @MainActor static func sandbox(_ arguments: [String], json: Bool, emit: (Any) throws -> Void) async throws {
+        var words = arguments
+        let action = words.isEmpty ? "list" : words.removeFirst()
+        switch action {
+        case "list":
+            guard words.isEmpty else { throw OrcError("Usage: orc sandbox [list] [--json]") }
+            let result = try await LocalRPC.call("sandbox.list")
+            if json { try emit(result); return }
+            let sessions = result["sessions"] as? [[String: Any]] ?? []
+            if sessions.isEmpty { print("No sandboxed agents are running.") }
+            for session in sessions {
+                print("\(safe(session["name"] as? String ?? "?"))\t\(session["state"] as? String ?? "?")\t\(session["machine"] as? String ?? "?")")
+                for folder in session["folders"] as? [String] ?? [] { print("  \(safe(folder))") }
+            }
+        case "grant", "revoke":
+            let now = words.contains("--now")
+            words.removeAll { $0 == "--now" }
+            guard words.count == 2, action == "revoke" || !now else { throw OrcError("Usage: orc sandbox grant NAME PATH | orc sandbox revoke NAME PATH [--now]") }
+            let path = URL(fileURLWithPath: words[1], relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)).absoluteURL.path
+            let result = try await LocalRPC.call("sandbox.\(action)", ["name": words[0], "path": path, "now": now], timeout: 900)
+            if json { try emit(result); return }
+            if action == "grant" {
+                let when = ["when idle": "It restarts with it when it is next idle.", "none": "It already has it.", "at start": "It gets it when it starts."][result["relaunch"] as? String ?? ""] ?? ""
+                print("Granted \(safe(path)) to \(safe(words[0])). \(when)")
+            } else {
+                print("Took \(safe(path)) back from \(safe(words[0]))\(result["relaunched"] as? Bool == true ? "; it restarted without it" : "").")
+            }
+        case "template":
+            guard words.isEmpty else { throw OrcError("Usage: orc sandbox template [--json]") }
+            let result = try await LocalRPC.call("sandbox.template", timeout: 7200)
+            if json { try emit(result) } else { print("Built the template \(safe(result["template"] as? String ?? "")) in \(result["seconds"] as? Int ?? 0) s.") }
+        case "exec":
+            var grants: [String] = [], cwd: String?
+            while let first = words.first, first != "--" {
+                guard words.count >= 2, first == "--grant" || first == "--cwd" else { throw OrcError("Usage: orc sandbox exec --grant PATH [--grant PATH]... [--cwd PATH] -- COMMAND...") }
+                let path = URL(fileURLWithPath: words[1], relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)).absoluteURL.path
+                if first == "--grant" { grants.append(path) } else { cwd = path }
+                words.removeFirst(2)
+            }
+            guard words.first == "--", words.count > 1, !grants.isEmpty else { throw OrcError("Usage: orc sandbox exec --grant PATH [--grant PATH]... [--cwd PATH] -- COMMAND...") }
+            var params: [String: Any] = ["grants": grants, "argv": Array(words.dropFirst())]
+            if let cwd { params["cwd"] = cwd }
+            let result = try await LocalRPC.call("sandbox.exec", params, timeout: 3600)
+            if json { try emit(result); return }
+            FileHandle.standardOutput.write(Data((result["stdout"] as? String ?? "").utf8))
+            FileHandle.standardError.write(Data((result["stderr"] as? String ?? "").utf8))
+            let code = result["code"] as? Int ?? 1
+            if code != 0 { exit(Int32(truncatingIfNeeded: code)) }
+        default:
+            throw OrcError("Use `orc sandbox [list] | grant NAME PATH | revoke NAME PATH [--now] | template | exec --grant PATH -- COMMAND`.")
+        }
     }
     static func safe(_ text: String) -> String { String(text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }) }
     static let help = """
@@ -549,6 +604,10 @@ import COrcSupport
     orc rex stop [--json]                    Stop syncing sessions to Rex
     orc rex clear [--json]                   Once stopped, remove the Rex sessions the sync made
     orc rex [--json]                         Whether sessions are synced to Rex
+    orc sandbox [--json]                     Sandboxed agents' machines and the folders they mount
+    orc sandbox grant|revoke NAME PATH       Give an agent name a folder, or take it back [--now]
+    orc sandbox template                     Build the machine sandboxed agents' machines are cloned from
+    orc sandbox exec --grant PATH -- CMD     Run CMD in a throwaway machine that mounts only PATH
     orc status [--json]                      Start the runtime if needed and report it
 
     Press Ctrl-' to switch sessions; Ctrl-] to detach. Sessions keep running.

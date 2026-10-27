@@ -1,12 +1,13 @@
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { AgentDirectory } from './agents.ts'
 import { writeJsonFile } from './json-file.ts'
 import { loginEnvironment } from './login-environment.ts'
 import { RpcError } from './rpc-server.ts'
+import { sandboxOf, type Sandboxes } from './sandbox/sandboxes.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import type { TerminalSession } from './terminal-session.ts'
@@ -16,7 +17,7 @@ type Common = { id: string; message: string; createdAt: number }
 export type Wake =
   | Common & { kind: 'timer'; dueAt: number }
   | Common & { kind: 'pid'; pid: number; command: string; started: string }
-  | Common & { kind: 'script'; script: string; cwd: string; pid: number; started: string }
+  | Common & { kind: 'script'; script: string; cwd: string; pid: number; started: string; exit?: string; label?: string }
 
 const TICK_MS = 1000
 // Signal 0 cannot tell a zombie or a reused pid from the watched process; `ps` can, at a higher cost.
@@ -38,16 +39,18 @@ export class WakeDirectory {
   private readonly store: SessionStore
   private readonly agents: AgentDirectory
   private readonly profile: string
+  private readonly sandboxes: Sandboxes | undefined
   private readonly logs: string
   private readonly lists = new Map<TerminalSession, Promise<Wake[]>>()
   private verifiedAt = 0
   private timer: NodeJS.Timeout | null = null
   private closed = false
 
-  constructor(store: SessionStore, agents: AgentDirectory, profile: string) {
+  constructor(store: SessionStore, agents: AgentDirectory, profile: string, sandboxes?: Sandboxes) {
     this.store = store
     this.agents = agents
     this.profile = profile
+    this.sandboxes = sandboxes
     this.logs = join(profile, 'wake-logs')
     store.on('added', (session: TerminalSession) => void this.loaded(session))
     store.on('ended', (session: TerminalSession) => void this.drop(session))
@@ -62,6 +65,14 @@ export class WakeDirectory {
       const delay = Number(params.delayMs)
       if (!Number.isFinite(delay) || delay <= 0) throw new RpcError('invalid_argument', 'delayMs must be a positive number')
       wake = { ...common, kind: 'timer', message: common.message || DEFAULT_MESSAGE, dueAt: common.createdAt + Math.ceil(delay) }
+    } else if (params.kind === 'pid' && sandboxOf(session)) {
+      // The process is in the agent's machine, where a script watches it.
+      const pid = Number(params.pid)
+      if (!Number.isInteger(pid) || pid <= 0) throw new RpcError('invalid_argument', 'pid must be a process id')
+      const script = join(this.sandboxes!.stateDir(sandboxOf(session)!.machine), 'wakes', `${common.id}.pid.sh`)
+      await mkdir(join(script, '..'), { recursive: true, mode: 0o700 })
+      await writeFile(script, `#!/bin/sh\nkill -0 ${pid} 2>/dev/null || exit 1\nwhile kill -0 ${pid} 2>/dev/null; do sleep 2; done\n`, { mode: 0o700 })
+      wake = { ...await this.start(session, common, script, session.meta.cwd), label: `pid ${pid}` }
     } else if (params.kind === 'pid') {
       const pid = Number(params.pid)
       const info = Number.isInteger(pid) && pid > 0 ? await processInfo(pid) : null
@@ -121,21 +132,27 @@ export class WakeDirectory {
     for (const wake of (await list) ?? []) await this.stop(wake)
   }
 
-  private async start(session: TerminalSession, common: Common, script: unknown, cwd: unknown): Promise<Wake> {
+  private async start(session: TerminalSession, common: Common, script: unknown, cwd: unknown): Promise<Wake & { kind: 'script' }> {
+    const sandbox = sandboxOf(session)
     if (typeof script !== 'string' || !isAbsolute(script)) throw new RpcError('invalid_argument', 'script must be an absolute path')
-    if (!(await stat(script).then((info) => info.isFile(), () => false))) throw new RpcError('not_found', `no script ${script}`)
-    if (typeof cwd !== 'string' || !isAbsolute(cwd) || !(await stat(cwd).then((info) => info.isDirectory(), () => false))) {
+    // A sandboxed agent's script and folder are in its machine, which checks them.
+    if (!sandbox && !(await stat(script).then((info) => info.isFile(), () => false))) throw new RpcError('not_found', `no script ${script}`)
+    if (typeof cwd !== 'string' || !isAbsolute(cwd) || (!sandbox && !(await stat(cwd).then((info) => info.isDirectory(), () => false)))) {
       throw new RpcError('invalid_argument', 'cwd must be an existing absolute directory')
     }
     await mkdir(this.logs, { recursive: true, mode: 0o700 })
     await this.prune()
-    const env = sessionEnvironment(await loginEnvironment(), session.meta.name, { ORC_RUNTIME_DIR: this.profile })
+    // The machine writes a sandboxed script's exit status into its own state folder, which Orc reads.
+    const exit = sandbox ? join(this.sandboxes!.stateDir(sandbox.machine), 'wakes', `${common.id}.exit`) : undefined
+    if (exit) await mkdir(join(exit, '..'), { recursive: true, mode: 0o700 })
+    const wrapper = ['/bin/sh', '-c', WRAPPER, 'orc-wake', script, exit ?? join(this.logs, `${common.id}.exit`)]
+    const argv = sandbox ? [this.sandboxes!.orb.orb, ...this.sandboxes!.orb.execArgs(sandbox.machine, sandbox.user, wrapper, cwd)] : wrapper
+    const env = sandbox ? { HOME: sandbox.home, PATH: process.env.PATH ?? '/usr/bin:/bin', TERM: 'dumb' }
+      : sessionEnvironment(await loginEnvironment(), session.meta.name, { ORC_RUNTIME_DIR: this.profile })
     const log = await open(this.logPath(common.id), 'w', 0o600)
     let pid: number
     try {
-      const child = spawn('/bin/sh', ['-c', WRAPPER, 'orc-wake', script, this.exitPath(common.id)], {
-        cwd, env, detached: true, stdio: ['ignore', log.fd, log.fd]
-      })
+      const child = spawn(argv[0], argv.slice(1), { cwd: sandbox ? session.meta.cwd : cwd, env, detached: true, stdio: ['ignore', log.fd, log.fd] })
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
       child.unref()
       pid = child.pid!
@@ -144,7 +161,7 @@ export class WakeDirectory {
     }
     // A script that has already finished has written its exit status, so no start time is needed.
     const started = (await processInfo(pid))?.started ?? ''
-    return { ...common, kind: 'script', script, cwd, pid, started }
+    return { ...common, kind: 'script', script, cwd, pid, started, ...(exit ? { exit } : {}) }
   }
 
   private async stop(wake: Wake): Promise<void> {
@@ -153,7 +170,7 @@ export class WakeDirectory {
     if (wake.started && await running(wake.pid, wake.started, true)) {
       try { process.kill(-wake.pid, 'SIGTERM') } catch {}
     }
-    await rm(this.exitPath(wake.id), { force: true })
+    await rm(this.exitPath(wake), { force: true })
   }
 
   /** Stops checking wakes. Pending wakes and their scripts are left for the next frontend. */
@@ -179,7 +196,7 @@ export class WakeDirectory {
         list.splice(list.indexOf(wake), 1)
         await this.agents.deliver(session, text, 'wake').catch(() => {})
         await this.save(session, list)
-        await rm(this.exitPath(wake.id), { force: true })
+        await rm(this.exitPath(wake), { force: true })
       }
     }
   }
@@ -191,7 +208,7 @@ export class WakeDirectory {
       if (await running(wake.pid, wake.started, verify)) return null
       return withMessage(wake.message, `pid ${wake.pid} (${wake.command}) exited`)
     }
-    const status = () => readFile(this.exitPath(wake.id), 'utf8').then((text) => text.trim(), () => null)
+    const status = () => readFile(this.exitPath(wake), 'utf8').then((text) => text.trim(), () => null)
     let code = await status()
     if (code === null) {
       if (await running(wake.pid, wake.started, verify)) return null
@@ -199,7 +216,7 @@ export class WakeDirectory {
       code = await status()
     }
     const output = await this.output(wake.id)
-    const result = `${wake.script} ${code === null ? 'finished (exit status unknown)' : `exited ${code}`}`
+    const result = `${wake.label ?? wake.script} ${code === null ? 'finished (exit status unknown)' : `exited ${code}`}`
     return withMessage(wake.message, output ? `${result}\noutput:\n${output}` : result)
   }
 
@@ -234,8 +251,8 @@ export class WakeDirectory {
     return join(this.logs, `${id}.log`)
   }
 
-  private exitPath(id: string): string {
-    return join(this.logs, `${id}.exit`)
+  private exitPath(wake: Wake): string {
+    return wake.kind === 'script' && wake.exit ? wake.exit : join(this.logs, `${wake.id}.exit`)
   }
 
   private save(session: TerminalSession, list: Wake[]): Promise<void> {

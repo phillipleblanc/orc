@@ -18,7 +18,7 @@ public struct SessionAgentCommand {
         }
         let allowed: Set<String>
         switch action {
-        case .spawn: allowed = ["name", "project", "prompt-file", "model", "effort", "mcp", "timeout-seconds"]
+        case .spawn: allowed = ["name", "project", "prompt-file", "model", "effort", "mcp", "timeout-seconds", "grant"]
         case .send: allowed = ["file", "prompt-file"]
         case .wait: allowed = ["timeout-seconds"]
         case .list, .status: allowed = []
@@ -87,7 +87,7 @@ public struct SessionAgentCommand {
 
     public static let help = """
     orc agent spawn [codex|claude|pi|durable] NAME [--project SELECTOR] [--prompt-file FILE]
-        [--model MODEL] [--effort LEVEL] [--mcp NAME[,NAME]] [--timeout-seconds SECONDS] [--json]
+        [--model MODEL] [--effort LEVEL] [--mcp NAME[,NAME]] [--grant PATH] [--timeout-seconds SECONDS] [--json]
     orc agent send NAME [--file FILE] [--when-idle] [--json]
     orc agent list [--json]
     orc agent status NAME [--json]
@@ -102,7 +102,8 @@ public struct SessionAgentCommand {
     Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent
     has finished working on everything sent to it. --mcp adds the servers of the project's
     .mcp/NAME.json (an mcpServers file, as Claude's --mcp-config reads) to the agent's own; Codex,
-    Claude and Pi take them. orc close NAME ends an agent's session. A
+    Claude and Pi take them. --grant gives a sandboxed agent PATH as well as its project
+    (orc sandbox grant). orc close NAME ends an agent's session. A
     durable agent is Orc's own experimental agent on pi-durable: it signs in with Pi's credentials
     and keeps its conversation in SQLite.
     """
@@ -127,6 +128,11 @@ public enum SessionAgentService {
             if let model = command.options["model"] { params["model"] = model }
             if let effort = command.options["effort"] { params["effort"] = effort }
             if let mcp = command.options["mcp"] { params["mcp"] = SessionService.mcpNames(mcp) }
+            if let grant = command.options["grant"] {
+                // A sandboxed agent mounts the folders granted to its name, so the grant comes first.
+                let path = URL(fileURLWithPath: grant, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)).absoluteURL.path
+                _ = try await RuntimeRPC.call("sandbox.grant", ["name": command.name!, "path": path])
+            }
             let result = try await RuntimeRPC.call("agent.spawn", params, timeout: timeout + 30)
             return (result, params["prompt"] == nil || result["delivered"] as? Bool == true)
         case .send:

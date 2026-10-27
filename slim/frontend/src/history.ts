@@ -7,6 +7,7 @@ import { createTerminal, write } from './emulator.ts'
 import { loginEnvironment } from './login-environment.ts'
 import type { Projects } from './projects.ts'
 import { RpcError } from './rpc-server.ts'
+import { programArgv } from './sandbox/sandboxes.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import type { SessionMeta, TerminalSession } from './terminal-session.ts'
@@ -61,8 +62,10 @@ export async function startAgain(runtime: Runtime, ended: EndedSession, name = e
   if (isAgentMeta(meta)) {
     session = await agents.launch({
       agent: meta.agent, name, cwd: meta.cwd, project: project && `id:${project.id}`, parent: meta.parent,
-      args: callerArguments(meta.agent, meta.argv), resume: (await agentRecord(meta)).conversation,
-      files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json')]
+      args: callerArguments(meta.agent, programArgv(meta)), resume: (await agentRecord(meta)).conversation,
+      files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json')],
+      // A sandboxed agent starts again in its machine; one that ran on the Mac, on the Mac.
+      sandbox: Boolean(meta.sandbox)
     })
   } else if (loginShell(meta)) {
     session = await store.create({
@@ -89,6 +92,8 @@ function loginShell(meta: SessionMeta): boolean {
 export async function restartSession(runtime: Runtime, session: TerminalSession): Promise<TerminalSession> {
   const { name } = session.meta
   if (!isAgentMeta(session.meta) && !loginShell(session.meta)) throw new RpcError('invalid_argument', `${name} runs a command Orc cannot start again`)
+  // Its machine stays for the agent to start again in.
+  runtime.agents.sandboxes?.keep(session)
   await runtime.store.end(session)
   const ended = (await endedSessions(runtime.store)).find((candidate) => candidate.meta.id === session.meta.id)
   if (!ended) throw new Error(`${name}'s ended session record is missing`)

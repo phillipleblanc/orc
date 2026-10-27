@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { lstat, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import type { AgentMonitor } from './agent-monitor.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Project, Projects } from './projects.ts'
@@ -188,14 +188,29 @@ export class Catalog extends EventEmitter {
     const cached = this.branches.get(path)
     if (!cached || Date.now() - cached.at > BRANCH_TTL_MS) {
       this.branches.set(path, { branch: cached?.branch ?? '', at: Date.now() })
-      execFile('git', ['-C', path, 'symbolic-ref', '--short', '-q', 'HEAD'], { timeout: 2000 }, (error, stdout) => {
-        const branch = error ? '' : `refs/heads/${stdout.trim()}`
+      void checkedOutBranch(path).then((branch) => {
         if (branch !== cached?.branch) this.changed()
         this.branches.set(path, { branch, at: Date.now() })
       })
     }
     return cached?.branch ?? ''
   }
+}
+
+/**
+ * The branch checked out in a Git working copy, as `refs/heads/NAME`, or '' when none is. HEAD is read as a file:
+ * running git would run what the repository's configuration names, and an agent may have written that configuration.
+ */
+export async function checkedOutBranch(path: string): Promise<string> {
+  let gitDir = join(path, '.git')
+  const info = await lstat(gitDir).catch(() => null)
+  if (info?.isFile()) {
+    const pointer = /^gitdir:\s*(.+)$/m.exec(await readFile(gitDir, 'utf8').catch(() => ''))
+    if (!pointer) return ''
+    gitDir = resolve(path, pointer[1].trim())
+  } else if (!info?.isDirectory()) return ''
+  const head = await readFile(join(gitDir, 'HEAD'), 'utf8').catch(() => '')
+  return /^ref:\s*(refs\/heads\/\S+)\s*$/.exec(head)?.[1] ?? ''
 }
 
 /**

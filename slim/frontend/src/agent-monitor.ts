@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { open, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, open } from 'node:fs/promises'
 import type { AgentKind, ProviderSession } from './agent-hooks.ts'
 import { ClaudeQueue } from './claude-queue.ts'
 import type { TerminalSession } from './terminal-session.ts'
@@ -115,9 +116,11 @@ export class AgentMonitor extends EventEmitter {
   }
 
   private async readNew(live: boolean): Promise<void> {
-    const size = (await stat(this.file).catch(() => null))?.size ?? 0
+    // A sandboxed agent writes its events file, so it could put a link to another file there; only the file itself is read.
+    const info = await lstat(this.file).catch(() => null)
+    const size = info?.isFile() ? info.size : 0
     if (size <= this.offset) return
-    const handle = await open(this.file, 'r')
+    const handle = await open(this.file, constants.O_RDONLY | constants.O_NOFOLLOW)
     let text: string
     try {
       const buffer = Buffer.alloc(size - this.offset)

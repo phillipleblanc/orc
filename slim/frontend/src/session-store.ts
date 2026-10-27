@@ -5,6 +5,7 @@ import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile 
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { HolderClient } from './holder-client.ts'
+import type { SandboxMeta } from './sandbox/sandboxes.ts'
 import { TerminalSession, type CheckpointPolicy, type SessionMeta } from './terminal-session.ts'
 
 const SOCKET_PATH_LIMIT = 103
@@ -31,6 +32,8 @@ export type CreateOptions = {
   events?: string
   /** Files copied into the session directory before the session starts; missing ones are skipped. */
   files?: string[]
+  /** The machine a sandboxed agent runs in; `argv` runs it there. */
+  sandbox?: SandboxMeta
 }
 
 export type StoreOptions = {
@@ -118,7 +121,8 @@ export class SessionStore extends EventEmitter {
       ...(options.project ? { project: options.project } : {}),
       ...(options.agent ? { agent: options.agent } : {}),
       ...(options.parent ? { parent: options.parent } : {}),
-      ...(options.events ? { events: options.events } : {})
+      ...(options.events ? { events: options.events } : {}),
+      ...(options.sandbox ? { sandbox: options.sandbox } : {})
     }
     try {
       await writeFile(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), { mode: 0o600 })

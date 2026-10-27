@@ -35,6 +35,9 @@ import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import { Projects } from './projects.ts'
 import { BootRecord, restoreSessions } from './restore.ts'
 import { RpcError, UnixRpcServer, type Handlers } from './rpc-server.ts'
+import { sandboxHandlers } from './sandbox/methods.ts'
+import { Sandboxes } from './sandbox/sandboxes.ts'
+import { sandboxService } from './sandbox/serve.ts'
 import { SessionStore } from './session-store.ts'
 import { PullRequestWatch } from './pull-requests/watch.ts'
 import { fetchClaudeUsage } from './usage/claude.ts'
@@ -86,8 +89,11 @@ await projects.load()
 const devices = new Devices(profile)
 await devices.load()
 const keypair = await loadOrCreateKeypair(profile)
-const agents = new AgentDirectory(store, projects, profile)
-const wakes = new WakeDirectory(store, agents, profile)
+const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
+// Machines for sandboxed agents, one per session.
+const sandboxes = new Sandboxes({ profile, store, log })
+const agents = new AgentDirectory(store, projects, profile, sandboxes)
+const wakes = new WakeDirectory(store, agents, profile, sandboxes)
 const history = new SessionHistory({ store, agents, projects }, new ConversationIndex(profile))
 const discovered = await store.discover()
 // Durable agents left on older code by an update restart on this frontend's code.
@@ -115,7 +121,6 @@ await briefs.start()
 const evaluations = new BriefEvaluations({ profile, write: (request) => writeBrief(request) })
 const catalog = new Catalog(store, projects, agents, runtimeId)
 const subscriptions = new ConnectionSubscriptions()
-const log = (line: string) => process.stderr.write(`orc-frontend: ${line}\n`)
 const sizes = new TerminalSizes(log)
 const notifications = new NotificationQueue()
 // The owner's order of the sessions, which Orc.app's sidebar and Rex's tabs show.
@@ -201,6 +206,8 @@ const durableSocketOf = (name: string) => {
 }
 const durableChat = durableChatMethods(durableSocketOf, subscriptions)
 const handlers = { ...createHandlers(runtime), ...mobileTerminal.handlers, ...clientEvents.handlers, ...phonePage.handlers(), ...durableChat.handlers }
+// A sandboxed agent's `orc` reaches a few of these, always as itself.
+sandboxes.serve(sandboxService({ store, projects, sandboxes, handlers: { ...handlers, ...ownerHandlers }, profile, log }))
 const streaming = {
   'terminal.multiplex': terminalMultiplex(store, sizes, agents),
   ...createSessionStreams(runtime),
@@ -248,6 +255,7 @@ const rpc = new UnixRpcServer(rpcPath, authToken, runtimeId, {
   ...phonePairingHandlers({ runtimeId, devices, keypair, websocket }),
   ...desktopPairingHandlers({ runtimeId, devices, keypair, websocket }),
   ...rexHandlers(rex),
+  ...sandboxHandlers({ store, agents, projects, sandboxes, log }),
   'slim.pairing.list': () => ({ devices: devices.list() }),
   'durable.chat': async (params) => {
     const name = String(params.name ?? '')
@@ -277,12 +285,15 @@ if (values.json) {
 }
 
 const restartedSince = bootRecord.restartedSince
+// Machines whose sessions ended while no frontend ran are deleted once the sessions to restore have started.
+const sweepMachines = () => void sandboxes.sweep().then((deleted) => { if (deleted.length) log(`deleted unused machines ${deleted.join(', ')}`) })
 if (restartedSince !== null) {
   void restoreSessions({ store, agents, projects }, restartedSince, (line) => process.stderr.write(`orc-frontend: ${line}\n`))
     .catch((error) => process.stderr.write(`orc-frontend: restoring sessions failed: ${(error as Error).message}\n`))
-    .then(() => bootRecord.keep())
+    .then(() => { bootRecord.keep(); sweepMachines() })
 } else {
   bootRecord.keep()
+  sweepMachines()
 }
 
 let stopping = false

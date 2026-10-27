@@ -2,6 +2,7 @@ import { isAgentKind, resumedConversation } from '../agent-hooks.ts'
 import type { AgentDirectory } from '../agents.ts'
 import { durableSnapshot } from '../durable/connection.ts'
 import { durableSocket } from '../durable/paths.ts'
+import { readableTranscript } from '../sandbox/sandboxes.ts'
 import type { SessionStore } from '../session-store.ts'
 import type { BriefSource } from './service.ts'
 import { durableDigest, transcriptDigest, transcriptMark } from './transcript.ts'
@@ -16,11 +17,11 @@ export function briefSources(store: SessionStore, agents: AgentDirectory): () =>
     const kind = session.meta.agent
     if (!isAgentKind(kind)) return []
     const monitor = agents.monitor(session)
-    const path = () => kind === 'durable' || !monitor?.providerSession.transcriptPath
+    const path = () => readableTranscript(session.meta, kind === 'durable' || !monitor?.providerSession.transcriptPath
       ? resumedConversation(kind, session.meta.argv).transcriptPath
-      : monitor.providerSession.transcriptPath
+      : monitor.providerSession.transcriptPath)
     const mark = async () => {
-      const file = path()
+      const file = await path()
       if (!file) return null
       return kind === 'durable' ? `${await transcriptMark(file)}|${await transcriptMark(`${file}-wal`)}` : transcriptMark(file)
     }
@@ -30,7 +31,7 @@ export function briefSources(store: SessionStore, agents: AgentDirectory): () =>
       state: monitor?.effectiveState ?? 'starting',
       mark,
       async transcript() {
-        const file = path()
+        const file = await path()
         const current = await mark()
         if (!file || !current) return null
         const digest = kind === 'durable' ? durableDigest(await durableSnapshot(durableSocket(file))) : await transcriptDigest(kind, file)

@@ -10,6 +10,7 @@ import { loginEnvironment, resolveExecutable } from './login-environment.ts'
 import { mcpArguments, resolveMcpConfigs } from './mcp-configs.ts'
 import type { Projects } from './projects.ts'
 import { RpcError } from './rpc-server.ts'
+import type { Sandboxes } from './sandbox/sandboxes.ts'
 import { sessionEnvironment } from './session-environment.ts'
 import type { SessionStore } from './session-store.ts'
 import type { TerminalSession } from './terminal-session.ts'
@@ -45,6 +46,8 @@ export type SpawnOptions = {
   resume?: ProviderSession
   /** Files copied into the new session's directory, such as a queue to keep. */
   files?: string[]
+  /** Run the agent in its own machine, or on the Mac; unset follows the sandbox settings. */
+  sandbox?: boolean
   cols?: number
   rows?: number
   timeoutMs?: number
@@ -71,15 +74,17 @@ export class AgentDirectory extends EventEmitter {
   private readonly store: SessionStore
   private readonly projects: Projects
   private readonly profile: string
+  readonly sandboxes: Sandboxes | undefined
   private readonly records = new Map<TerminalSession, AgentRecord>()
   private readonly typed = new WeakSet<QueuedMessage>()
   private hooks: Promise<AgentHooks> | null = null
 
-  constructor(store: SessionStore, projects: Projects, profile: string) {
+  constructor(store: SessionStore, projects: Projects, profile: string, sandboxes?: Sandboxes) {
     super()
     this.store = store
     this.projects = projects
     this.profile = profile
+    this.sandboxes = sandboxes
     store.on('added', (session: TerminalSession) => void this.attach(session))
     store.on('ended', (session: TerminalSession) => this.detach(session))
   }
@@ -92,26 +97,40 @@ export class AgentDirectory extends EventEmitter {
     const cwd = options.cwd ?? project?.path
     if (!cwd) throw new RpcError('invalid_argument', 'choose a project or a working directory')
     const mcp = resolveMcpConfigs(project?.path ?? cwd, options.mcp ?? [], options.agent)
+    const sandboxed = options.agent !== 'durable' && this.sandboxes ? await this.sandboxes.wanted(options.agent, cwd, options.sandbox) : false
+    if (options.sandbox === true && !this.sandboxes) throw new RpcError('unavailable', 'this runtime cannot run sandboxed agents')
     const login = await loginEnvironment()
-    const executable = options.agent === 'durable' ? process.execPath : resolveExecutable(options.agent, login)
+    // A sandboxed agent's program is the machine's own, found on its PATH.
+    const executable = options.agent === 'durable' ? process.execPath : resolveExecutable(options.agent, login) ?? (sandboxed ? options.agent : null)
     if (!executable) throw new RpcError('not_found', `${options.agent} is not on the login shell's PATH`)
     const resume = options.agent === 'durable' && !options.resume?.transcriptPath ? { transcriptPath: newDurableStorage(this.profile) } : options.resume
     this.hooks ??= installAgentHooks(this.profile)
     const hooks = await this.hooks
+    const program = () => agentArgv(options.agent, executable, hooks, { ...options, args: [...mcpArguments(options.agent, mcp), ...(options.args ?? [])], resume })
+    const common = {
+      name: options.name, cwd, cols: options.cols ?? 120, rows: options.rows ?? 40, project: project?.id, agent: options.agent,
+      parent: options.parent, files: options.files
+    }
+    if (sandboxed) {
+      // Its machine is named after the session, so a taken name must not reach the machine.
+      if (this.store.get(options.name)) throw new RpcError('name_taken', `a session named ${options.name} already exists`)
+      const prepared = await this.sandboxes!.prepare({ name: options.name, kind: options.agent, cwd, hooks: hooks.script })
+      const env = sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: prepared.events })
+      const { argv, env: holderEnv, programIndex } = prepared.wrap(program(), env)
+      try {
+        return await this.store.create({ ...common, argv, env: holderEnv, events: prepared.events, sandbox: { ...prepared.meta, programIndex } })
+      } catch (error) {
+        await this.sandboxes!.discard(prepared.meta.machine)
+        throw error
+      }
+    }
     await mkdir(join(this.profile, 'agent-events'), { recursive: true, mode: 0o700 })
     const events = join(this.profile, 'agent-events', `${randomUUID()}.jsonl`)
     return this.store.create({
-      name: options.name,
-      cwd,
-      argv: agentArgv(options.agent, executable, hooks, { ...options, args: [...mcpArguments(options.agent, mcp), ...(options.args ?? [])], resume }),
+      ...common,
+      argv: program(),
       env: sessionEnvironment(login, options.name, { ORC_AGENT_EVENTS: events, ORC_RUNTIME_DIR: this.profile }),
-      cols: options.cols ?? 120,
-      rows: options.rows ?? 40,
-      project: project?.id,
-      agent: options.agent,
-      parent: options.parent,
-      events,
-      files: options.files
+      events
     })
   }
 

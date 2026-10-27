@@ -100,6 +100,60 @@ Put MCP servers that only some agents need in the project's `.mcp/` folder, one 
 
 No agent loads them until you turn one on: `orc agent spawn claude vanta-check --mcp vanta` or `orc new claude --mcp vanta` (several as `--mcp vanta,jira`), or tick it under **MCP servers** in the New Session sheet, which lists the project's configs. The servers are added to the agent's own, so its user-level servers stay available, and they stay on when the session is restarted or reopened. Claude reads the file with `--mcp-config`, Pi through Orc's extension, and Codex takes each server as `-c mcp_servers.…` settings, written as they are in the file (Codex does not expand `${VAR}`). Durable agents do not take MCP servers.
 
+## Sandboxed agents
+
+Claude agents can run in machines of their own, so an agent sees only the folders it works in. Each sandboxed agent gets an [OrbStack](https://orbstack.dev) machine, an isolated Linux system with no access to the Mac's files, its other machines, or the Mac's own network services, that Orc creates when the agent starts and deletes when its session closes. Starting one takes a few seconds; the session otherwise looks and behaves like any other.
+
+A machine mounts, each at its Mac path: the agent's folder, the folders granted to its name, a state folder Orc keeps for it, and its Claude project folder in `~/.claude/projects`, which holds its transcripts and memory. It runs as you, without `sudo`, with copies of your Claude settings, skills, plugins, `~/.gitconfig`, jj configuration and SSH known hosts. Inside, `orc` acts as that agent only: it messages, wakes, notifies and spawns as itself, closes only itself and the agents it started, and its children are sandboxed too. A wake script runs in the agent's machine.
+
+Turn it on in the runtime profile's `sandbox.json` (`~/.config/orc/runtime/sandbox.json`), then build the template machine every agent's machine is cloned from:
+
+```json
+{
+  "agents": ["claude"],
+  "exclude": ["/Users/you/code/a-macos-app"],
+  "sshAgent": { "keys": ["~/.ssh/id_ecdsa_sk"], "provider": "/usr/lib/ssh-keychain.dylib" },
+  "caches": [{ "path": ".cargo/registry", "seed": ["index", "cache"] }, { "path": ".cargo/git", "seed": ["db"] }],
+  "home": [".pi/agent/AGENTS.md"]
+}
+```
+
+```sh
+orc sandbox template
+```
+
+- `agents` lists the agents that run sandboxed; only `claude` can.
+- `exclude` lists folders whose agents run on the Mac, such as projects that build with Xcode.
+- `sshAgent` names the keys of an SSH agent Orc runs for the machines, with the provider that loads security keys, such as the Secure Enclave's. Agents sign commits and log in to hosts through it; the keys never leave the Mac. Without `sshAgent`, machines use your login shell's agent; `false` gives them none.
+- `caches` are folders in the machine's home kept per working folder, so every agent that works in a checkout reuses its downloads, and no other agent sees them. A new cache starts with copies of the `seed` folders of the same path on your Mac, which APFS makes without using space; above, Cargo's downloaded crates and Git repositories, from which it builds the rest offline. Build output inside the checkout, such as `target/`, is kept with the checkout anyway.
+- `home` adds files and folders under your home to copy into every machine.
+- `cpus` and `memoryMib` cap each machine.
+
+Agents started after that run sandboxed; agents already running keep running on the Mac, also when they restart or are reopened. `orc sandbox template` builds the template from Ubuntu with the versions of jj, gh and Claude Code your Mac has, then runs `sandbox-provision.sh` from the runtime profile as root, if there is one, to install what your projects build with. Run it again to update the template; running agents keep their machines.
+
+A sandboxed Claude signs in with a long-lived token. Create one with `claude setup-token` and store it in the keychain as `Orc sandbox Claude`:
+
+```sh
+security add-generic-password -U -a "$USER" -s "Orc sandbox Claude" -w
+```
+
+Agents get your GitHub CLI's token as `GH_TOKEN`, so `gh` and Git over HTTPS work. The stdio MCP servers in `~/.claude.json`, yours and those of the agent's folder, run on the Mac, as they do for any agent, and reach the agent through Orc, which tells each server the agent's name in `ORC_SESSION_NAME`. A project's own MCP configs (`--mcp`) run in the agent's machine.
+
+### Granting folders
+
+```sh
+orc sandbox grant fix-ci ~/code/repo-two        # fix-ci gets the folder too
+orc sandbox revoke fix-ci ~/code/repo-two       # and loses it; --now skips waiting for it to be idle
+orc agent spawn claude fix-ci --project my-project --grant ~/code/repo-two
+orc sandbox                                     # Sandboxed agents and what each mounts
+```
+
+A grant belongs to an agent's name, so an agent started later under that name gets the folder when it starts. A running agent restarts to take a new folder, or give one back, when it is next idle, continuing its conversation, and Orc tells it why. Grants come only from the Mac: an agent can start another only in a folder granted to the new agent's name or to itself. Your home folder, the folders that hold its keys and settings, such as `~/.ssh`, `~/.config` and `~/Library`, and Orc's runtime profile cannot be granted.
+
+`orc sandbox exec --grant PATH -- COMMAND` runs a command in a throwaway machine that mounts only `PATH`, with the agents' settings, SSH agent and GitHub token. Use it for tools you should not run on the Mac in a folder an agent writes, since the folder's own configuration can make tools such as jj run programs.
+
+What sandboxed agents cannot do: run macOS programs, including Xcode, `open`, `pbcopy` and the keychain, so put such projects in `exclude`; and reach services on the Mac, including other runtimes and `localhost` ports. They can reach the internet and the networks your Mac routes to. A program listening in a machine can be reached from the Mac's `localhost`, unless OrbStack's `machines.forward_ports` setting is off.
+
 ## Durable agents (experimental)
 
 `orc new durable` or `orc agent spawn durable NAME` starts Orc's own agent, built on [pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable). It signs in with Pi's credentials (`pi /login`), uses Pi's default model unless given `--model PROVIDER/ID` (Pi's custom providers in `models.json` work too) and offers the models you scoped in Pi with `/scoped-models`, and keeps its conversation in a database, so it continues mid-turn after a crash or a restart.

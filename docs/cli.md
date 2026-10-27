@@ -17,7 +17,7 @@ orc attach fleet-rules --read-only
 orc close fleet-rules
 ```
 
-Commands for agents (`orc agent`, `orc wake`, `orc notify`, `orc brief`, `orc pr`) are described in [Agents](agents.md), `orc history` and `orc reopen` in [Sessions](sessions.md#recently-closed-agents), `orc pair-phone` in [Pair a phone](phone.md), and `orc pair-computer` in [Pair a computer](computers.md).
+Commands for agents (`orc agent`, `orc wake`, `orc notify`, `orc brief`, `orc pr`) are described in [Agents](agents.md), `orc sandbox` in [Sandboxed agents](agents.md#sandboxed-agents), `orc history` and `orc reopen` in [Sessions](sessions.md#recently-closed-agents), `orc pair-phone` in [Pair a phone](phone.md), and `orc pair-computer` in [Pair a computer](computers.md).
 
 ## Creating sessions
 

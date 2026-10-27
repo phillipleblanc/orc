@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { HolderClient, type HolderExit, type HolderInfo } from './holder-client.ts'
+import type { SandboxMeta } from './sandbox/sandboxes.ts'
 import {
   createTerminal,
   extrasSequence,
@@ -27,6 +28,8 @@ export type SessionMeta = {
   parent?: string
   /** Where the agent's status hooks append lifecycle events. */
   events?: string
+  /** The machine a sandboxed agent runs in. */
+  sandbox?: SandboxMeta
 }
 
 /**

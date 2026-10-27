@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""orc in a sandboxed agent's machine. It reaches Orc through the machine's bridge, which acts as this
+machine's agent: messages are from it, wakes and notifications are its own."""
+import json
+import os
+import re
+import socket
+import sys
+import threading
+import time
+import uuid
+
+SOCKET = '/run/orc/orc.sock'
+MAX_TEXT = 262144
+
+
+class OrcError(Exception):
+    pass
+
+
+def connect():
+    client = socket.socket(socket.AF_UNIX)
+    try:
+        client.connect(SOCKET)
+    except OSError as error:
+        raise OrcError(f'cannot reach Orc through {SOCKET}: {error.strerror}')
+    return client
+
+
+def call(method, params=None, timeout=120):
+    client = connect()
+    client.settimeout(timeout)
+    request_id = str(uuid.uuid4())
+    client.sendall((json.dumps({'id': request_id, 'method': method, 'params': params or {}}) + '\n').encode())
+    buffered = b''
+    try:
+        while b'\n' not in buffered:
+            chunk = client.recv(65536)
+            if not chunk:
+                raise OrcError(f'Orc disconnected during {method}')
+            buffered += chunk
+    except socket.timeout:
+        raise OrcError(f'Orc did not answer {method} in time')
+    finally:
+        client.close()
+    response = json.loads(buffered.split(b'\n', 1)[0])
+    if not response.get('ok'):
+        raise OrcError((response.get('error') or {}).get('message') or 'Orc rejected the request')
+    return response.get('result') or {}
+
+
+def emit(value):
+    print(json.dumps(value, indent=2, sort_keys=True))
+
+
+def text_from(path, required):
+    if path:
+        with open(path, 'rb') as handle:
+            data = handle.read(MAX_TEXT + 1)
+    elif not sys.stdin.isatty():
+        data = sys.stdin.buffer.read(MAX_TEXT + 1)
+    elif required:
+        raise OrcError('Give the message with --file FILE or on standard input.')
+    else:
+        return None
+    if len(data) > MAX_TEXT or b'\0' in data:
+        raise OrcError('Text must be UTF-8, at most 256 KiB, without NUL bytes.')
+    text = data.decode('utf-8')
+    if not text.strip():
+        if required:
+            raise OrcError('The message is empty.')
+        return None
+    return text
+
+
+def options(args, allowed, flags=()):
+    positional, values, seen = [], {}, set()
+    index = 0
+    while index < len(args):
+        word = args[index]
+        if word in flags:
+            seen.add(word)
+            index += 1
+        elif word.startswith('--'):
+            key = word[2:]
+            if key not in allowed:
+                raise OrcError(f'Unknown option {word}.')
+            if index + 1 >= len(args):
+                raise OrcError(f'Missing value after {word}.')
+            values[key] = args[index + 1]
+            index += 2
+        else:
+            positional.append(word)
+            index += 1
+    return positional, values, seen
+
+
+def agent_line(agent):
+    parts = [agent.get('name', '?'), agent.get('agent', '?'), agent.get('state', '?')]
+    if agent.get('queued'):
+        parts.append(f"{agent['queued']} queued")
+    if agent.get('parent'):
+        parts.append(f"from {agent['parent']}")
+    if agent.get('dialog'):
+        parts.append(f"waiting at: {agent['dialog']}")
+    return '  '.join(str(part) for part in parts)
+
+
+def agent(args):
+    if not args or args[0] in ('--help', 'help'):
+        print('orc agent spawn [claude] NAME [--project SELECTOR] [--prompt-file FILE] [--model MODEL] [--effort LEVEL]\n'
+              '    [--mcp NAME[,NAME]] [--timeout-seconds SECONDS] [--json]\n'
+              'orc agent send NAME [--file FILE] [--when-idle] [--json]\norc agent list [--json]\n'
+              'orc agent status NAME [--json]\norc agent wait NAME [--timeout-seconds SECONDS] [--json]')
+        return 0
+    action, rest = args[0], args[1:]
+    allowed = {'spawn': {'name', 'project', 'prompt-file', 'model', 'effort', 'mcp', 'timeout-seconds'},
+               'send': {'file', 'prompt-file'}, 'wait': {'timeout-seconds'}, 'list': set(), 'status': set()}
+    if action not in allowed:
+        raise OrcError('Use `orc agent spawn|send|list|status|wait`.')
+    positional, values, seen = options(rest, allowed[action], ('--json', '--when-idle'))
+    as_json = '--json' in seen
+    timeout = int(values.get('timeout-seconds', 600 if action == 'wait' else 120))
+    succeeded = True
+    if action == 'spawn':
+        kind = positional.pop(0) if positional and positional[0] in ('codex', 'claude', 'pi', 'durable') else 'claude'
+        name = values.get('name') or (positional[0] if positional else None)
+        if not name or len(positional) > 1:
+            raise OrcError('Usage: orc agent spawn [claude] NAME [--prompt-file FILE]')
+        params = {'agent': kind, 'name': name, 'timeoutMs': timeout * 1000}
+        # A folder granted to the new agent may not be mounted here, so it can be named by its path.
+        if values.get('project', '').startswith('/'):
+            params['cwd'] = values['project']
+        elif 'project' in values:
+            params['project'] = values['project']
+        else:
+            params['cwd'] = os.getcwd()
+        prompt = text_from(values.get('prompt-file'), False)
+        if prompt:
+            params['prompt'] = prompt
+        for key in ('model', 'effort'):
+            if key in values:
+                params[key] = values[key]
+        if 'mcp' in values:
+            params['mcp'] = [part.strip() for part in values['mcp'].split(',') if part.strip()]
+        result = call('agent.spawn', params, timeout + 30)
+        succeeded = 'prompt' not in params or result.get('delivered') is True
+        text = agent_line(result) + ('' if 'delivered' not in result else '\nPrompt delivered.' if result['delivered'] else '\nPrompt queued; the agent is not ready yet.')
+    elif action == 'send':
+        if len(positional) != 1:
+            raise OrcError('Agent send takes one agent name.')
+        body = text_from(values.get('prompt-file') or values.get('file'), True)
+        result = call('agent.send', {'to': positional[0], 'text': body, 'whenIdle': '--when-idle' in seen})
+        text = agent_line(result) + ('\nMessage sent.' if result.get('delivered') else '\nMessage queued.')
+    elif action == 'list':
+        result = call('agent.list')
+        agents = result.get('agents') or []
+        text = '\n'.join(agent_line(entry) for entry in agents) or 'No agents.'
+    elif action == 'status':
+        if len(positional) != 1:
+            raise OrcError('Agent status takes one agent name.')
+        result = call('agent.status', {'name': positional[0]})
+        text = agent_line(result) + (f"\n\n{result['lastAssistantMessage']}" if result.get('lastAssistantMessage') else '')
+    else:
+        if len(positional) != 1:
+            raise OrcError('Agent wait takes one agent name.')
+        deadline = time.time() + timeout
+        while True:
+            remaining = max(1, int((deadline - time.time()) * 1000))
+            result = call('agent.wait', {'name': positional[0], 'timeoutMs': min(remaining, 25000)}, 40)
+            if result.get('done') or time.time() >= deadline:
+                break
+        succeeded = result.get('done') is True
+        text = agent_line(result) + ('' if succeeded else '\nTimed out before the agent finished.')
+    if as_json:
+        emit(result)
+    else:
+        print(text)
+    return 0 if succeeded else 2
+
+
+def milliseconds(text):
+    units = {'ms': 1, 's': 1000, 'm': 60000, 'h': 3600000, 'd': 86400000}
+    parts = re.findall(r'(\d+(?:\.\d+)?)(ms|s|m|h|d)', text.lower())
+    if not parts or ''.join(a + b for a, b in parts) != text.lower():
+        return None
+    total = sum(float(amount) * units[unit] for amount, unit in parts)
+    return int(-(-total // 1)) if 0 < total <= 365 * 86400000 else None
+
+
+def wake(args):
+    if not args or args[0] in ('--help', 'help'):
+        print('orc wake DURATION [MESSAGE]\norc wake pid PID [MESSAGE]\norc wake SCRIPT [MESSAGE]\norc wake list [--json]\norc wake cancel ID [--json]')
+        return 0
+    as_json = '--json' in args
+    words = [word for word in args if word != '--json']
+    first = words[0]
+    if first == 'list':
+        result = call('wake.list')
+        lines = [f"{entry['id'][:8]}  {entry.get('kind')}  {entry.get('message', '')}" for entry in result.get('wakes', [])]
+        text = '\n'.join(lines) or 'No wakes.'
+    elif first == 'cancel':
+        if len(words) != 2:
+            raise OrcError('Usage: orc wake cancel ID [--json]')
+        result = call('wake.cancel', {'id': words[1]})
+        text = f"Cancelled {result.get('id', '?')[:8]}"
+    else:
+        message = ' '.join(words[2:] if first == 'pid' else words[1:])
+        if first == 'pid':
+            if len(words) < 2 or not words[1].isdigit():
+                raise OrcError('Usage: orc wake pid PID [MESSAGE]')
+            params = {'kind': 'pid', 'pid': int(words[1])}
+        elif milliseconds(first) is not None:
+            params = {'kind': 'timer', 'delayMs': milliseconds(first)}
+        else:
+            path = os.path.abspath(first)
+            if not os.path.isfile(path):
+                raise OrcError(f"'{first}' is not a duration (such as 90s, 30m or 1h30m), `pid PID`, or a script file.")
+            params = {'kind': 'script', 'script': path, 'cwd': os.getcwd()}
+        result = call('wake.create', {**params, 'message': message})
+        text = f"Wake {result.get('id', '?')[:8]}  {result.get('kind')}"
+    emit(result) if as_json else print(text)
+    return 0
+
+
+def hook(args):
+    if args != ['claude-session-name']:
+        raise OrcError('Usage: orc hook claude-session-name')
+    try:
+        request = json.loads(sys.stdin.read() or '{}')
+    except ValueError:
+        request = {}
+    name = os.environ.get('ORC_SESSION_NAME')
+    event = request.get('hook_event_name')
+    response = {}
+    if name and 'agent_id' not in request and (event == 'UserPromptSubmit' or (event == 'SessionStart' and request.get('source') in ('startup', 'resume', 'fork'))):
+        response = {'hookSpecificOutput': {'hookEventName': event, 'sessionTitle': name}}
+    print(json.dumps(response))
+    return 0
+
+
+def mcp(args):
+    """Carries an MCP server's standard streams: the server runs on the Mac."""
+    if len(args) != 1:
+        raise OrcError('Usage: orc mcp NAME')
+    client = connect()
+    client.sendall((json.dumps({'mcp': args[0]}) + '\n').encode())
+
+    def upstream():
+        try:
+            while True:
+                data = os.read(0, 65536)
+                if not data:
+                    break
+                client.sendall(data)
+        except OSError:
+            pass
+        try:
+            client.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    threading.Thread(target=upstream, daemon=True).start()
+    while True:
+        data = client.recv(65536)
+        if not data:
+            break
+        os.write(1, data)
+    return 0
+
+
+def main(args):
+    if not args or args[0] in ('--help', 'help'):
+        print('orc agent|wake|notify|close|list|brief|pr|mcp — this machine\'s orc reaches Orc as its agent.')
+        return 0
+    command, rest = args[0], args[1:]
+    if command == 'agent':
+        return agent(rest)
+    if command == 'wake':
+        return wake(rest)
+    if command == 'hook':
+        return hook(rest)
+    if command == 'mcp':
+        return mcp(rest)
+    as_json = '--json' in rest
+    rest = [word for word in rest if word != '--json']
+    if command == 'notify':
+        message = ' '.join(rest)
+        if not message.strip():
+            raise OrcError('Usage: orc notify MESSAGE [--json]')
+        result = call('notify.post', {'message': message})
+        emit(result) if as_json else (result.get('appOpen') is False and print('Orc is not open; it shows the notification when it opens.'))
+    elif command == 'close':
+        if len(rest) != 1:
+            raise OrcError('Usage: orc close NAME [--json]')
+        result = call('terminal.close', {'terminal': rest[0]})
+        emit(result) if as_json else print(f'Closed {rest[0]}.')
+    elif command in ('list', 'ls'):
+        result = call('terminal.list')
+        if as_json:
+            emit(result.get('terminals', []))
+        else:
+            print('SESSION\tSTATE\tPROJECT')
+            for entry in result.get('terminals', []):
+                print(f"{entry.get('title')}\t{'running' if entry.get('connected') else 'offline'}\t{entry.get('worktreePath', '')}")
+    elif command == 'brief':
+        if len(rest) != 1:
+            raise OrcError('Usage: orc brief NAME [--json]')
+        record = next((entry for entry in call('brief.list').get('briefs', []) if entry.get('name') == rest[0]), None)
+        if record is None:
+            raise OrcError(f'{rest[0]} is not a running agent session. Run `orc agent list` for their names.')
+        emit(record) if as_json else print(json.dumps(record.get('brief') or {}, indent=2))
+    elif command == 'pr':
+        if rest and rest[0] in ('watch', 'unwatch'):
+            if len(rest) != 3:
+                raise OrcError(f'Usage: orc pr {rest[0]} NAME URL [--json]')
+            result = call(f'pr.{rest[0]}', {'name': rest[1], 'url': rest[2]})
+            emit(result) if as_json else print(result.get('message') or ('Removed.' if result.get('removed') else 'Not watched.'))
+        else:
+            result = call('pr.list', {'name': rest[0]} if rest else {})
+            emit(result) if as_json else print(json.dumps(result, indent=2))
+    else:
+        raise OrcError(f'{command} is not available in a sandboxed agent\'s machine.')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OrcError as error:
+        sys.stderr.write(f'orc: {error}\n')
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
