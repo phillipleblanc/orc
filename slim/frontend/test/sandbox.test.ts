@@ -162,7 +162,8 @@ test('a sandboxed agent acts only as itself through its orc channel', async (t) 
   assert.equal(sent('wake.create')[0].name, 'agent')
   assert.equal(sent('notify.post')[0].name, 'agent')
   assert.deepEqual(sent('terminal.close'), [{ terminal: 'child' }])
-  assert.deepEqual(sent('agent.spawn').map((params) => [params.name, params.parent, params.sandbox]), [['newcomer', 'agent', true], ['helper', 'agent', true]])
+  // Requests are handled concurrently, so the spawns may finish in either order.
+  assert.deepEqual(sent('agent.spawn').map((params) => [params.name, params.parent, params.sandbox]).sort(), [['helper', 'agent', true], ['newcomer', 'agent', true]])
   assert.ok(frames().some((entry) => entry.type === END && entry.id === 1))
 })
 
