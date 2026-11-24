@@ -9,6 +9,7 @@ import OrcKit
     @StateObject private var usage = UsageModel()
     @StateObject private var briefs = BriefModel()
     @StateObject private var overviewAgents = OverviewAgents()
+    @AppStorage("sidebarHidden") private var sidebarHidden = false
     @Environment(\.openWindow) private var openWindow
     init() { HostSelection.apply() }
     var body: some Scene {
@@ -33,6 +34,10 @@ import OrcKit
                     Button("Refresh Sessions") { Task { await model.refresh() } }.keyboardShortcut("r")
                     Button("Reopen Closed Session") { model.revealWindow?(); Task { try? await model.reopenLatest() } }
                         .keyboardShortcut("t", modifiers: [.command, .shift]).disabled(model.closed.isEmpty)
+                }
+                CommandGroup(before: .sidebar) {
+                    Button(sidebarHidden ? "Show Sidebar" : "Hide Sidebar") { sidebarHidden.toggle() }
+                        .keyboardShortcut("s", modifiers: [.control, .command])
                 }
                 CommandMenu("Host") {
                     Picker("Host", selection: Binding(get: { HostSelection.current?.id ?? "" }, set: { id in
@@ -336,6 +341,13 @@ struct SessionWindow: View {
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
     @AppStorage("sidebarHidden") private var sidebarHidden = false
+    /// Whether the sidebar is in place rather than slid out to the left; it slides when `sidebarHidden` changes.
+    @State private var sidebarShown = !UserDefaults.standard.bool(forKey: "sidebarHidden")
+    /// Whether the terminal sits beside the sidebar. The terminal resizes once per slide, never during it: it widens
+    /// before the sidebar slides out and narrows after the sidebar has slid in over it.
+    @State private var terminalBesideSidebar = !UserDefaults.standard.bool(forKey: "sidebarHidden")
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    static let sidebarWidth: CGFloat = 260
     /// The height of the row at the top of the sidebar and of the terminal: the title bar's, so the row's buttons
     /// are level with the window's buttons.
     static let headerHeight: CGFloat = 28
@@ -365,16 +377,20 @@ struct SessionWindow: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                if !sidebarHidden {
-                    sidebar.frame(width: 260)
-                    theme.line.color.frame(width: 1)
-                }
+            ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
                     detailHeader
                     detail.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .background(theme.background.color)
+                .padding(.leading, terminalBesideSidebar ? Self.sidebarWidth + 1 : 0)
+                HStack(spacing: 0) {
+                    sidebar.frame(width: Self.sidebarWidth)
+                    theme.line.color.frame(width: 1)
+                }
+                .offset(x: sidebarShown ? 0 : -(Self.sidebarWidth + 1))
+                .allowsHitTesting(sidebarShown)
+                .accessibilityHidden(!sidebarShown)
             }
             if let error = sidebarOrder.error ?? model.reviewError ?? model.error ?? notifications.warning {
                 theme.line.color.frame(height: 1)
@@ -433,6 +449,7 @@ struct SessionWindow: View {
             openRequestedAttachment()
         }
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
+        .onChange(of: sidebarHidden) { _, hidden in slideSidebar(hidden: hidden) }
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
@@ -477,15 +494,27 @@ struct SessionWindow: View {
         // A translucent terminal makes the window clear; the sidebar keeps its own background.
         .background(theme.sidebar.color)
     }
-    /// Hides or shows the sidebar (⌃⌘S); while it is hidden, the button is at the start of the terminal's top row.
+    /// Hides or shows the sidebar, as View › Hide Sidebar (⌃⌘S) does; while it is hidden, the button is at the start of
+    /// the terminal's top row.
     private var sidebarToggle: some View {
         ChromeButton(title: sidebarHidden ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left", shortcut: "⌃⌘S") { sidebarHidden.toggle() }
-            .keyboardShortcut("s", modifiers: [.control, .command])
+    }
+    private func slideSidebar(hidden: Bool) {
+        let animation: Animation? = reduceMotion ? nil : .easeInOut(duration: 0.25)
+        if hidden {
+            terminalBesideSidebar = false
+            withAnimation(animation) { sidebarShown = false }
+        } else {
+            withAnimation(animation) { sidebarShown = true } completion: {
+                // A hide that started during the slide keeps the terminal wide.
+                if !sidebarHidden { terminalBesideSidebar = true }
+            }
+        }
     }
     /// The selected session's program, name and status headline above its terminal.
     private var detailHeader: some View {
         HStack(spacing: 8) {
-            if sidebarHidden { sidebarToggle }
+            if !terminalBesideSidebar { sidebarToggle }
             if let selected {
                 ProgramTile(session: selected, size: 16)
                 Text(selected.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
@@ -498,7 +527,7 @@ struct SessionWindow: View {
             Spacer(minLength: 0)
         }
         // While the sidebar is hidden, its toggle sits where the sidebar's own row has it.
-        .padding(.leading, sidebarHidden ? Self.windowButtonsWidth : 14).padding(.trailing, 10)
+        .padding(.leading, terminalBesideSidebar ? 14 : Self.windowButtonsWidth).padding(.trailing, 10)
         .frame(height: Self.headerHeight)
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
