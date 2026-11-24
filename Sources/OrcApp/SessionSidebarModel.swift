@@ -36,7 +36,7 @@ struct SessionSidebarList<RowContent: View>: View {
         .listStyle(.sidebar)
         // The sidebar's color shows through, in place of the system's sidebar material.
         .scrollContentBackground(.hidden)
-        .background(SystemSelectionHidden())
+        .background(SidebarTableSettings())
     }
 }
 
@@ -50,9 +50,10 @@ struct SelectionPill: View {
     }
 }
 
-/// Stops the window's lists from drawing the system's selection, so their rows draw `SelectionPill` instead.
-/// SwiftUI has no setting for it; the table's highlight style is set again whenever the list updates.
-private struct SystemSelectionHidden: NSViewRepresentable {
+/// Stops the window's lists from drawing the system's selection, so their rows draw `SelectionPill` instead, and from
+/// taking the keyboard focus when clicked, so typing keeps going to the selected session's terminal. SwiftUI has no
+/// setting for either; they are set again whenever the list updates.
+private struct SidebarTableSettings: NSViewRepresentable {
     func makeNSView(context: Context) -> Applier { Applier() }
     func updateNSView(_ view: Applier, context: Context) { view.apply() }
 
@@ -61,7 +62,10 @@ private struct SystemSelectionHidden: NSViewRepresentable {
         func apply() {
             DispatchQueue.main.async { [weak self] in
                 guard let root = self?.window?.contentView else { return }
-                for table in Self.tables(in: root) where table.selectionHighlightStyle != .none { table.selectionHighlightStyle = .none }
+                for table in Self.tables(in: root) {
+                    if table.selectionHighlightStyle != .none { table.selectionHighlightStyle = .none }
+                    if !table.refusesFirstResponder { table.refusesFirstResponder = true }
+                }
             }
         }
         private static func tables(in view: NSView) -> [NSTableView] {
