@@ -446,14 +446,13 @@ struct SessionWindow: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
-                Spacer().frame(width: Self.windowButtonsWidth)
                 sidebarToggle
                 Spacer(minLength: 0)
                 ChromeButton(title: "Session Overview", systemImage: "square.grid.2x2", shortcut: "⇧⌘O") { openWindow(id: "overview") }
                     .accessibilityIdentifier("session-overview")
                 ChromeButton(title: "New Session", systemImage: "plus", shortcut: "⌘N") { model.showCreate = true }
             }
-            .padding(.trailing, 10)
+            .padding(.leading, Self.windowButtonsWidth).padding(.trailing, 10)
             .frame(height: Self.headerHeight)
             SessionSidebarList(organization: sidebarOrder, sections: sections, collapsedProjects: collapsedProjects,
                                selection: $model.selected) { section, row in
@@ -486,10 +485,7 @@ struct SessionWindow: View {
     /// The selected session's program, name and status headline above its terminal.
     private var detailHeader: some View {
         HStack(spacing: 8) {
-            if sidebarHidden {
-                Spacer().frame(width: Self.windowButtonsWidth - 8)
-                sidebarToggle
-            }
+            if sidebarHidden { sidebarToggle }
             if let selected {
                 ProgramTile(session: selected, size: 16)
                 Text(selected.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
@@ -501,7 +497,8 @@ struct SessionWindow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, sidebarHidden ? 0 : 14).padding(.trailing, 10)
+        // While the sidebar is hidden, its toggle sits where the sidebar's own row has it.
+        .padding(.leading, sidebarHidden ? Self.windowButtonsWidth : 14).padding(.trailing, 10)
         .frame(height: Self.headerHeight)
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
