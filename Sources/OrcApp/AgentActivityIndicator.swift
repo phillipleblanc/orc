@@ -90,7 +90,7 @@ struct ProgramTile: View {
 
     private var color: Color {
         switch program {
-        case "claude": return Color(red: 0.85, green: 0.47, blue: 0.34)
+        case "claude": return Color(red: 0.76, green: 0.37, blue: 0.24)
         case "codex": return Color(red: 0.06, green: 0.64, blue: 0.5)
         case "pi": return Color(red: 0.43, green: 0.34, blue: 0.81)
         case "durable": return Color(red: 0.18, green: 0.49, blue: 0.6)
