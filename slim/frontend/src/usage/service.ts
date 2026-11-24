@@ -12,6 +12,11 @@ const KEEP_RATE_LIMITED_MS = 24 * 60 * 60_000
 const PROVIDERS: UsageProvider[] = ['claude', 'codex']
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
+/** Usage that shows 0% in every window. */
+function unused(usage: ProviderUsage): boolean {
+  return usage.windows.length > 0 && usage.windows.every((window) => Math.round(window.usedPercent) === 0)
+}
+
 /** `none` returns what is known; `stale` fetches what is old or due a retry; `force` fetches everything now. */
 export type UsageRefresh = 'none' | 'stale' | 'force'
 
@@ -32,10 +37,13 @@ export class UsageService {
     this.now = now
   }
 
-  /** Each provider's usage once the fetches `refresh` calls for have settled; providers never fetched are left out. */
+  /**
+   * Each provider's usage once the fetches `refresh` calls for have settled. Providers never fetched are left out,
+   * and so are providers at 0% in every window, which are not being used.
+   */
   async read(refresh: UsageRefresh = 'stale'): Promise<ProviderUsage[]> {
     await Promise.all(PROVIDERS.map((provider) => this.due(provider, refresh) ? this.fetch(provider) : this.states[provider].fetching))
-    return PROVIDERS.flatMap((provider) => this.states[provider].usage ?? [])
+    return PROVIDERS.flatMap((provider) => this.states[provider].usage ?? []).filter((usage) => !unused(usage))
   }
 
   private due(provider: UsageProvider, refresh: UsageRefresh): boolean {

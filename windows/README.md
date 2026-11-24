@@ -104,7 +104,7 @@ without host data takes text only.
 ## Sidebar and notifications
 
 On a host that serves them, each agent's row shows its status headline (from `brief.list`, every 5 seconds), and
-**Usage** under the sessions shows Claude's and Codex's plan windows: read when the host connects, when the window
+**Usage** under the sessions shows Claude's and Codex's plan windows, leaving out an agent at 0% of every window: read when the host connects, when the window
 comes forward, and every 15 minutes while it is in front. New Session starts from the host's own defaults (Orc's
 Settings, `orc new`), and **Add Project…** (in New Session, or when the host has none) browses the host's home folder
 for one, made the default for new sessions unless that is turned off.

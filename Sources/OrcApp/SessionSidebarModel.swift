@@ -31,6 +31,8 @@ struct SessionSidebarList<RowContent: View>: View {
             }
         }
         .listStyle(.sidebar)
+        // The sidebar's color shows through, in place of the system's sidebar material.
+        .scrollContentBackground(.hidden)
     }
 }
 

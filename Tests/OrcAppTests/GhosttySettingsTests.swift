@@ -8,14 +8,15 @@ final class GhosttySettingsTests: XCTestCase {
     private var root: URL!
     private var previous: [String: String?] = [:]
 
-    /// The developer's own Ghostty configuration would load after the fixture, so both the
-    /// configuration directory and the home directory point into the fixture.
+    /// The developer's own Ghostty and Orc terminal settings would load after the fixture, so the
+    /// configuration directories and the home directory point into the fixture.
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("orc-ghostty-settings-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("ghostty"), withIntermediateDirectories: true)
-        for key in ["XDG_CONFIG_HOME", "HOME"] { previous[key] = ProcessInfo.processInfo.environment[key] }
+        for key in ["XDG_CONFIG_HOME", "HOME", "ORC_CONFIG_DIR"] { previous[key] = ProcessInfo.processInfo.environment[key] }
         setenv("XDG_CONFIG_HOME", root.path, 1)
         setenv("HOME", root.path, 1)
+        setenv("ORC_CONFIG_DIR", root.appendingPathComponent("orc").path, 1)
     }
 
     override func tearDownWithError() throws {
@@ -25,6 +26,11 @@ final class GhosttySettingsTests: XCTestCase {
 
     private func writeGhosttyConfig(_ text: String) throws {
         try Data(text.utf8).write(to: root.appendingPathComponent("ghostty/config"))
+    }
+
+    private func writeOrcTerminalSettings(_ text: String) throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("orc"), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: GhosttyEngine.orcConfigFile)
     }
 
     private func string(_ key: String, in config: ghostty_config_t) -> String? {
@@ -43,6 +49,23 @@ final class GhosttySettingsTests: XCTestCase {
         XCTAssertEqual(fontSize, 17)
         XCTAssertEqual(string("confirm-close-surface", in: config), "false")
         XCTAssertEqual(string("shell-integration", in: config), "none")
+    }
+
+    @MainActor func testOrcsTerminalSettingsApplyOverGhosttysOrOrcsDefaults() throws {
+        _ = GhosttyEngine.shared
+        try writeGhosttyConfig("font-size = 17\nbackground-opacity = 0.8\nbackground = 282c34\n")
+        try writeOrcTerminalSettings("background-opacity = 1\nbackground = 10151c\nforeground = c2cedb\nshell-integration = zsh\n")
+        for usingGhosttySettings in [true, false] {
+            let config = try XCTUnwrap(GhosttyEngine.makeConfig(usingGhosttySettings: usingGhosttySettings))
+            defer { ghostty_config_free(config) }
+            var fontSize: Float = 0
+            XCTAssertTrue(ghostty_config_get(config, &fontSize, "font-size", UInt("font-size".utf8.count)))
+            XCTAssertEqual(fontSize == 17, usingGhosttySettings)
+            let settings = GhosttyEngine.settings(of: config)
+            XCTAssertEqual(settings.backgroundOpacity, 1)
+            XCTAssertEqual(settings.theme, TerminalTheme(background: .init(hex: 0x10151c), foreground: .init(hex: 0xc2cedb)))
+            XCTAssertEqual(string("shell-integration", in: config), "none")
+        }
     }
 
     /// Ghostty 1.3.1 rebuilds a new terminal's configuration from the files when its light/dark theme
@@ -64,8 +87,13 @@ final class GhosttySettingsTests: XCTestCase {
         engine.applyColorScheme()
         engine.reload(using: GhosttyEngine.makeConfig(usingGhosttySettings: true))
         defer { NSApp.appearance = nil; engine.reload() }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(engine.theme.background, .init(hex: 0xffffff))
         NSApp.appearance = NSAppearance(named: .darkAqua)
         engine.applyColorScheme()
+        // The window's colors follow the theme for the new appearance.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(engine.theme.background, .init(hex: 0x000000))
 
         let marker = root.appendingPathComponent("ran")
         let session: Session = try decode(["handle": "theme-fixture", "worktreeId": "fixture", "worktreePath": root.path,
@@ -97,7 +125,15 @@ final class GhosttySettingsTests: XCTestCase {
         XCTAssertLessThan(window.backgroundColor.alphaComponent, 0.01)
         engine.applyWindowBackground(window, showingTerminal: false)
         XCTAssertTrue(window.isOpaque)
-        XCTAssertEqual(window.backgroundColor, .windowBackgroundColor)
+        XCTAssertEqual(window.backgroundColor, TerminalTheme.ghosttyDefault.background.nsColor)
+        XCTAssertEqual(window.appearance?.name, .darkAqua)
+
+        // A light theme gives the window a light appearance and the theme's background.
+        try writeGhosttyConfig("background = fafafa\nforeground = 333940\n")
+        engine.reload(using: GhosttyEngine.makeConfig(usingGhosttySettings: true))
+        engine.applyWindowBackground(window, showingTerminal: true)
+        XCTAssertEqual(window.appearance?.name, .aqua)
+        XCTAssertEqual(window.backgroundColor, TerminalTheme.RGB(hex: 0xfafafa).nsColor)
 
         try writeGhosttyConfig("background-opacity = 1\n")
         engine.reload(using: GhosttyEngine.makeConfig(usingGhosttySettings: true))

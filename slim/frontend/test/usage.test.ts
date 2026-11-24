@@ -231,3 +231,15 @@ test('usage is refetched once it is minutes old, backs off after failures, honor
   assert.deepEqual([(await first).windows[0].usedPercent, (await second).windows[0].usedPercent], [50, 50])
   assert.equal(calls, before + 2)
 })
+
+test('an agent at 0% in every window is left out until it is used', async () => {
+  let codex = [0.4, 0]
+  const usage = (provider: 'claude' | 'codex', percents: number[]): ProviderUsage => ({
+    provider, name: provider, plan: null, status: 'ok', error: null, updatedAt: 0,
+    windows: percents.map((usedPercent, index) => ({ kind: index ? 'weekly' : 'session', label: String(index), usedPercent, resetsAt: null, windowMinutes: null }))
+  })
+  const service = new UsageService({ claude: async () => usage('claude', [0, 3]), codex: async () => usage('codex', codex) })
+  assert.deepEqual((await service.read()).map((provider) => provider.provider), ['claude'])
+  codex = [0, 0.6]
+  assert.deepEqual((await service.read('force')).map((provider) => provider.provider), ['claude', 'codex'])
+})

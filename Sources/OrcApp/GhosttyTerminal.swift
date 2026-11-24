@@ -4,7 +4,8 @@ import CGhostty
 import OrcKit
 
 /// The embedded Ghostty app. Terminals use the user's Ghostty settings when Ghostty is installed, and
-/// Orc's own defaults otherwise; either way, the settings Orc's terminals depend on come last.
+/// Orc's own defaults otherwise, then Orc's terminal settings file; the settings Orc's terminals depend on
+/// come last.
 @MainActor final class GhosttyEngine: ObservableObject {
     static let shared = GhosttyEngine()
     private(set) var app: ghostty_app_t?
@@ -12,6 +13,8 @@ import OrcKit
     private var appearanceObservation: NSKeyValueObservation?
     /// The configured `background-opacity`; below 1, a window showing a terminal must be translucent.
     @Published private(set) var backgroundOpacity: Double = 1
+    /// The terminals' colors for the current appearance, which the window's colors follow.
+    @Published private(set) var theme = TerminalTheme.ghosttyDefault
 
     /// Settings Orc's terminals depend on, applied over any user configuration. Terminals are replaced
     /// as sessions are selected, so closing one must not ask for confirmation, and they run `orc attach`
@@ -37,8 +40,12 @@ import OrcKit
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil || !userConfigFiles().isEmpty
     }
 
+    /// Orc's own terminal settings, in Ghostty's format, which apply over Ghostty's so Orc's terminals can
+    /// differ from Ghostty's.
+    nonisolated static var orcConfigFile: URL { Pairing.directory.appendingPathComponent("terminal.conf") }
+
     /// A finalized configuration: Ghostty's defaults and the user's Ghostty files, or Orc's bundled
-    /// defaults, followed by `requiredSettings`.
+    /// defaults, then Orc's terminal settings file, followed by `requiredSettings`.
     static func makeConfig(usingGhosttySettings: Bool = usesGhosttySettings) -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
         if usingGhosttySettings {
@@ -47,6 +54,9 @@ import OrcKit
             url.path.withCString { ghostty_config_load_file(config, $0) }
         }
         ghostty_config_load_recursive_files(config)
+        if FileManager.default.fileExists(atPath: orcConfigFile.path) {
+            orcConfigFile.path.withCString { ghostty_config_load_file(config, $0) }
+        }
         let required = FileManager.default.temporaryDirectory.appendingPathComponent("orc-ghostty-required-\(getpid()).conf")
         if (try? requiredSettings.write(to: required, atomically: true, encoding: .utf8)) != nil {
             required.path.withCString { ghostty_config_load_file(config, $0) }
@@ -62,7 +72,7 @@ import OrcKit
         }
         guard ghostty_init(0, nil) == 0, let config = Self.makeConfig() else { return }
         self.config = config
-        readBackgroundOpacity()
+        read(config)
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = Unmanaged.passUnretained(self).toOpaque()
         runtime.wakeup_cb = { pointer in
@@ -87,6 +97,12 @@ import OrcKit
                let value = String(data: Data(bytes: bytes, count: Int(action.action.open_url.len)), encoding: .utf8) {
                 let view = Unmanaged<GhosttyView>.fromOpaque(pointer).takeUnretainedValue()
                 return view.openMarkdownLink(value)
+            }
+            // The configuration resolved for the app's light or dark appearance, valid only during this call.
+            if action.tag == GHOSTTY_ACTION_CONFIG_CHANGE, target.tag == GHOSTTY_TARGET_APP, let changed = action.action.config_change.config {
+                let settings = GhosttyEngine.settings(of: changed)
+                DispatchQueue.main.async { GhosttyEngine.shared.apply(settings) }
+                return true
             }
             if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
                 // A soft reload follows a color scheme change; a full one rereads the configuration files.
@@ -148,31 +164,47 @@ import OrcKit
         ghostty_app_update_config(app, config)
     }
 
-    private func readBackgroundOpacity() {
-        guard let config else { return }
+    /// The settings the window follows.
+    struct WindowSettings { var backgroundOpacity: Double; var theme: TerminalTheme }
+
+    nonisolated static func settings(of config: ghostty_config_t) -> WindowSettings {
         var opacity: Double = 1
-        let key = "background-opacity"
-        if ghostty_config_get(config, &opacity, key, UInt(key.utf8.count)) { backgroundOpacity = opacity }
+        if !ghostty_config_get(config, &opacity, "background-opacity", UInt("background-opacity".utf8.count)) { opacity = 1 }
+        var background = ghostty_config_color_s(), foreground = ghostty_config_color_s()
+        let theme = ghostty_config_get(config, &background, "background", UInt("background".utf8.count))
+            && ghostty_config_get(config, &foreground, "foreground", UInt("foreground".utf8.count))
+            ? TerminalTheme(background: .init(background), foreground: .init(foreground)) : .ghosttyDefault
+        return WindowSettings(backgroundOpacity: opacity, theme: theme)
     }
 
-    /// Makes `window` translucent, with the configured background blur, while it shows a terminal and
-    /// the background opacity is below 1; otherwise opaque. libghostty draws the terminal's translucent
-    /// background itself, so the rest of the window must draw its own.
+    private func read(_ config: ghostty_config_t) { apply(Self.settings(of: config)) }
+
+    private func apply(_ settings: WindowSettings) {
+        if backgroundOpacity != settings.backgroundOpacity { backgroundOpacity = settings.backgroundOpacity }
+        if theme != settings.theme { theme = settings.theme }
+    }
+
+    /// Gives `window` the terminal theme's appearance and background. The window is translucent, with the
+    /// configured background blur, while it shows a terminal and the background opacity is below 1; otherwise
+    /// opaque. libghostty draws the terminal's translucent background itself, so the rest of the window must
+    /// draw its own.
     func applyWindowBackground(_ window: NSWindow, showingTerminal: Bool) {
+        let appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        if window.appearance?.name != appearance?.name { window.appearance = appearance }
         let translucent = showingTerminal && backgroundOpacity < 1
-        guard window.isOpaque == translucent || (translucent && window.backgroundColor.alphaComponent > 0.01) else { return }
-        window.isOpaque = !translucent
         // A fully clear window stops receiving clicks in its clear areas.
-        window.backgroundColor = translucent ? NSColor.white.withAlphaComponent(0.001) : .windowBackgroundColor
+        let color = translucent ? NSColor.white.withAlphaComponent(0.001) : theme.background.nsColor
+        if window.isOpaque == translucent { window.isOpaque = !translucent }
+        if window.backgroundColor != color { window.backgroundColor = color }
         if translucent, let app { ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque()) }
     }
 
-    /// Reads the configuration again, from the user's Ghostty files or Orc's defaults.
+    /// Reads the configuration again, from the user's Ghostty files or Orc's defaults and Orc's terminal settings.
     func reload(using replacement: ghostty_config_t? = nil) {
         guard let next = replacement ?? Self.makeConfig() else { return }
         let previous = config
         config = next
-        readBackgroundOpacity()
+        read(next)
         applyConfig()
         applyColorScheme()
         if let previous { ghostty_config_free(previous) }

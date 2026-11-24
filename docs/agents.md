@@ -46,7 +46,7 @@ Orc shows the message as a notification titled with the session's name; clicking
 
 Orc keeps a short status of each agent session: its goal, its progress, what it is doing right now, its next three steps, and anything it is waiting on from you. A model you choose under Settings → **Agent Status** (one of Pi's scoped models; off until chosen) writes it from the agent's own transcript, starting from the agent's latest summary of its conversation, so the agent is never messaged and its context is untouched. A status is written about 20 seconds after an agent's turn ends or it stops for permission, and every 15 minutes while it works, when its transcript changed; automatic statuses for a session are at least 5 minutes apart, and one is written at a time.
 
-The sidebar shows each agent's status headline after its agent, and the [Status panel](app.md#status-panel) shows the full status.
+The sidebar shows each agent's status headline after its agent, and the [Session Overview](app.md#session-overview) shows the full status.
 
 ```sh
 orc brief cayenne-caching-cdc            # The latest status
@@ -69,7 +69,7 @@ Writing an agent's status also links the GitHub pull requests the agent opened o
 
 Once the agent has been idle for 30 seconds with nothing queued, Orc sends it a message, as `orc agent send` does, about what is new: checks of the latest commit that failed, unresolved Copilot review comments, merge conflicts, and the pull request's removal from the merge queue (other than by merging, or by hand), so the agent can fix it and queue it again. It waits for the commit's other checks to finish first, or until a failure is 15 minutes old. Each finding is reported once, and a check once per commit, so an agent that leaves a check red is not told again until it pushes. Checks named under Settings → **Pull Requests** → **Ignored checks** (Attestation unless you change it; `*` matches anything) are never reported. A check that fails again after the agent was told about it on two commits in a row goes to you instead: the agent's session moves to **Needs You** in the overview, where **Ignore Check** adds it to the ignored checks and **Keep Telling Agent** reports it to the agent every time it fails.
 
-The overview shows each agent's pull requests under it, with whether each is in the merge queue, and the status panel shows each in full, with when the agent was last told.
+The overview shows each agent's pull requests under it, with whether each is in the merge queue.
 
 ```sh
 orc pr                                                         # Every agent's pull requests
@@ -164,7 +164,7 @@ On your phone, Orc's screens in the Orca app open it in the same chat, with its 
 
 ## Agent integrations
 
-In a Pi session started by Orc, run **`/notes`** to edit the session's note in nvim. Orc installs the Pi extension at `~/.pi/agent/extensions/orc-notes.ts`; existing Pi processes can load it with `/reload`. Notes are private text files named after their session in `~/.config/orc/notes/` (or `ORC_CONFIG_DIR/notes/`). The app refreshes an open note when nvim saves it.
+In a Pi session started by Orc, run **`/notes`** to edit the session's note in nvim. Orc installs the Pi extension at `~/.pi/agent/extensions/orc-notes.ts`; existing Pi processes can load it with `/reload`. Notes are private text files named after their session in `~/.config/orc/notes/` (or `ORC_CONFIG_DIR/notes/`).
 
 The `orc-session-name.ts` Pi extension gives a Pi session its Orc session's name when it starts. Pi's `/name` does not rename the Orc session. Existing Pi processes can load it with `/reload`.
 

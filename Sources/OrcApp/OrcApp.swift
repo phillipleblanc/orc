@@ -13,6 +13,8 @@ import OrcKit
     init() { HostSelection.apply() }
     var body: some Scene {
         Window("Orc", id: "sessions") { SessionWindow(model: model, sidebarOrder: sidebarOrder, usage: usage, briefs: briefs) }
+            // The sidebar and the terminal run to the top of the window, beside the window's buttons.
+            .windowStyle(.hiddenTitleBar)
             .defaultSize(width: 1440, height: 936)
             .windowResizability(.contentMinSize)
             .commands {
@@ -321,12 +323,6 @@ struct SessionWindow: View {
     @ObservedObject private var ghostty = GhosttyEngine.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
-    /// Coming back to an agent session after a while shows its status in a floating panel.
-    @AppStorage("showStatusOnReturn") private var showStatusOnReturn = true
-    /// The session in view, whose last look is recorded while it stays in view.
-    @State private var viewing: String?
-    @State private var returnPending = false
-    private let viewLog = SessionViewLog()
     @StateObject private var durableChat = DurableChatModel()
     /// Projects whose sidebar sections are collapsed, by project id, one per line.
     @AppStorage(HostSelection.defaultsKey("collapsedSidebarProjects")) private var collapsedProjectsStorage = ""
@@ -339,6 +335,13 @@ struct SessionWindow: View {
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
+    @AppStorage("sidebarHidden") private var sidebarHidden = false
+    /// The height of the row at the top of the sidebar and of the terminal: the title bar's, so the row's buttons
+    /// are level with the window's buttons.
+    static let headerHeight: CGFloat = 28
+    /// The room the window's close, minimize and zoom buttons take at the start of the top row.
+    static let windowButtonsWidth: CGFloat = 72
+    private var theme: TerminalTheme { ghostty.theme }
     var selected: Session? { model.sessions.first { $0.id == model.selected } }
     /// Whether the selected session is a durable agent, which shows a chat view unless the terminal is chosen.
     var selectedIsDurable: Bool { selected?.agentIdentity == "durable" }
@@ -363,33 +366,27 @@ struct SessionWindow: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                sidebar.frame(width: 260)
-                Divider()
-                detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if !sidebarHidden {
+                    sidebar.frame(width: 260)
+                    theme.line.color.frame(width: 1)
+                }
+                VStack(spacing: 0) {
+                    detailHeader
+                    detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .background(theme.background.color)
             }
             if let error = sidebarOrder.error ?? model.reviewError ?? model.error ?? notifications.warning {
-                Divider()
+                theme.line.color.frame(height: 1)
                 HStack { Image(systemName: "exclamationmark.triangle"); Text(error).textSelection(.enabled); Spacer() }
                     .font(.callout).foregroundStyle(.orange).padding(12)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(theme.sidebar.color)
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 900, minHeight: 440)
         .navigationTitle(HostSelection.current.map { "Orc — \($0.name)" } ?? "Orc")
         .background(TerminalWindowBackground(engine: ghostty, showingTerminal: showsTerminal).allowsHitTesting(false).accessibilityHidden(true))
-        .toolbar {
-            ToolbarItem {
-                Button { openWindow(id: "overview") } label: { Label("Session Overview", systemImage: "square.grid.2x2") }
-                    .help("Session Overview (⇧⌘O)").accessibilityIdentifier("session-overview")
-            }
-            ToolbarItem { Button { model.showCreate = true } label: { Label("New Session", systemImage: "plus") }.help("New Session (⌘N)") }
-            ToolbarItem {
-                Button(action: toggleStatus) { Label("Status", systemImage: "checklist") }
-                    .keyboardShortcut("s", modifiers: [.command, .option])
-                    .help(StatusPanel.shared.isVisible ? "Hide Session Status (⌥⌘S)" : "Show Session Status (⌥⌘S)")
-                    .disabled(selected == nil)
-            }
-        }
         .sheet(isPresented: $model.showCreate) { CreateSessionView(model: model) }
         .sheet(isPresented: $model.showProject) { AddProjectView(model: model) }
         .sheet(isPresented: $model.showPairDevice) { PairDeviceView() }
@@ -430,54 +427,78 @@ struct SessionWindow: View {
             }
             if let selected, let parent = hierarchy.parent(of: selected) { collapsedParents.remove(parent.id) }
             markVisibleOutputRead()
-            // An open status panel follows the selection.
-            if StatusPanel.shared.isVisible {
-                if let selected { StatusPanel.shared.show(selected.name, model: model, briefs: briefs, over: NSApp.mainWindow) }
-                else { StatusPanel.shared.close() }
-            }
-            updateViewing()
         }
-        .onChange(of: briefs.loaded) { _, _ in if returnPending { updateViewing() } }
-        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in updateViewing() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in updateViewing() }
         .onAppear {
             model.revealWindow = { openWindow(id: "sessions") }
             openRequestedAttachment()
         }
         .onChange(of: model.attachmentRequest) { _, _ in openRequestedAttachment() }
-        .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead(); updateViewing() }
+        .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.sessions) { _, sessions in terminals.keep(sessions) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             markVisibleOutputRead()
-            updateViewing()
             Task { await notifications.refreshSettings(); model.refreshDockBadge() }
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in markVisibleOutputRead() }
     }
     private var sidebar: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Spacer().frame(width: Self.windowButtonsWidth)
+                sidebarToggle
+                Spacer(minLength: 0)
+                ChromeButton(title: "Session Overview", systemImage: "square.grid.2x2", shortcut: "⇧⌘O") { openWindow(id: "overview") }
+                    .accessibilityIdentifier("session-overview")
+                ChromeButton(title: "New Session", systemImage: "plus", shortcut: "⌘N") { model.showCreate = true }
+            }
+            .padding(.trailing, 10)
+            .frame(height: Self.headerHeight)
             SessionSidebarList(organization: sidebarOrder, sections: sections, collapsedProjects: collapsedProjects,
                                selection: $model.selected) { section, row in
                 sessionRow(row.session, name: section.hierarchy.displayName(for: row.session),
                            hasChildren: row.hasChildren, isChild: row.parentID != nil)
             }
+            // A list whose top meets the title bar's edge extends up under the title bar, over the row above, and
+            // takes its buttons' clicks.
+            .padding(.top, 1)
             if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
-            UsageSection(model: usage)
-            HStack {
+            HStack(spacing: 8) {
+                UsageRings(model: usage)
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")" + (HostSelection.current.map { " on \($0.name)" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if HostSelection.current == nil {
-                    Button { model.showPairDevice = true } label: { Image(systemName: "laptopcomputer.and.iphone") }
-                        .buttonStyle(.borderless).help("Pair a Phone or Computer").accessibilityLabel("Pair Device")
+                    ChromeButton(title: "Pair a Phone or Computer", systemImage: "laptopcomputer.and.iphone") { model.showPairDevice = true }
                 }
-            }.padding(12)
+            }.padding(.horizontal, 12).padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // A translucent terminal makes the window clear; the sidebar keeps its own background.
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(theme.sidebar.color)
+    }
+    /// Hides or shows the sidebar (⌃⌘S); while it is hidden, the button is at the start of the terminal's top row.
+    private var sidebarToggle: some View {
+        ChromeButton(title: sidebarHidden ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left", shortcut: "⌃⌘S") { sidebarHidden.toggle() }
+            .keyboardShortcut("s", modifiers: [.control, .command])
+    }
+    /// The selected session's name above its terminal.
+    private var detailHeader: some View {
+        HStack(spacing: 8) {
+            if sidebarHidden {
+                Spacer().frame(width: Self.windowButtonsWidth - 8)
+                sidebarToggle
+            }
+            if let selected {
+                SessionStatusIcon(session: selected, activity: model.activity(for: selected), muted: model.isMuted(selected))
+                Text(selected.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, sidebarHidden ? 0 : 14).padding(.trailing, 10)
+        .frame(height: Self.headerHeight)
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
@@ -523,7 +544,8 @@ struct SessionWindow: View {
                     TerminalHost(cache: terminals, session: selected)
                 }
             } else {
-                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
+                // Kept out of the title bar, where it would cover the row above.
+                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(theme.background.color, ignoresSafeAreaEdges: [])
             }
         }
     }
@@ -566,93 +588,12 @@ struct SessionWindow: View {
         guard let session = model.takeAttachmentRequest() else { return }
         model.selected = session.id
     }
-    /// Records how long the session in view was looked at, and on coming back to an agent session after a while
-    /// to a newer brief, shows the brief in the status panel.
-    private func updateViewing() {
-        let inView = NSApplication.shared.isActive && controlActiveState == .key ? selected : nil
-        if let viewing { viewLog.viewed(viewing) }
-        guard let session = inView else { viewing = nil; return }
-        if session.name != viewing || returnPending {
-            guard briefs.loaded else { returnPending = true; return }
-            returnPending = false
-            if showStatusOnReturn, session.agentIdentity != nil, let brief = briefs.briefs[session.name],
-               viewLog.isReturning(to: session.name, brief: brief) {
-                StatusPanel.shared.show(session.name, model: model, briefs: briefs, over: NSApp.mainWindow)
-            }
-        }
-        viewing = session.name
-    }
-    private func toggleStatus() {
-        if StatusPanel.shared.isVisible { StatusPanel.shared.close() }
-        else if let selected { StatusPanel.shared.show(selected.name, model: model, briefs: briefs, over: NSApp.mainWindow) }
-    }
     private func markVisibleOutputRead() {
         guard NSApplication.shared.isActive,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
               controlActiveState == .key, let session = selected, showsTerminal,
               model.unreadKeys.contains(session.handle) else { return }
         model.markRead(session)
-    }
-}
-
-struct SessionNotesEditor: View {
-    let session: Session
-    @State private var notes = ""
-    @State private var loaded = false
-    @State private var error: String?
-    /// Edits made here, so a read that started before one does not undo it, and saves not yet done.
-    @State private var edits = 0
-    @State private var saving = 0
-    @State private var saveFailed = false
-    @State private var lastSave: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Notes").font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: Binding(get: { notes }, set: { value in
-                notes = value
-                save(value)
-            }))
-                .font(.callout)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(height: 140)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
-                .disabled(!loaded)
-                .accessibilityLabel("Session notes")
-                .accessibilityIdentifier("session-notes")
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
-        }
-        // Notes change elsewhere too, for example in Pi's /notes.
-        .task(id: session.name) {
-            loaded = false
-            while !Task.isCancelled {
-                if !saveFailed {
-                    let before = edits
-                    do {
-                        let saved = try await HostData.notes(session.name)
-                        if edits == before, saving == 0, saved != notes { notes = saved }
-                        loaded = true
-                        error = nil
-                    } catch { self.error = error.localizedDescription }
-                }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-    }
-
-    /// Saves each edit in order.
-    private func save(_ value: String) {
-        edits += 1
-        saving += 1
-        let name = session.name, previous = lastSave
-        lastSave = Task {
-            await previous?.value
-            do { try await HostData.saveNotes(value, for: name); error = nil; saveFailed = false }
-            catch { self.error = error.localizedDescription; saveFailed = true }
-            saving -= 1
-        }
     }
 }
 

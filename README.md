@@ -77,12 +77,12 @@ orc agent spawn codex write-tests < task.md    # Start an agent on a task
 orc agent wait write-tests                     # Wait until it finishes
 ```
 
-In the app, ⌘N starts a session, ⇧⌘O opens the Session Overview, and ⌥⌘S shows the selected agent's status.
+In the app, ⌘N starts a session and ⇧⌘O opens the Session Overview.
 
 ## Documentation
 
 - [Sessions](docs/sessions.md): names, child sessions, reopening closed agents, restarting your Mac
-- [The Orc app](docs/app.md): the main window, Session Overview, status panel, notifications and terminals
+- [The Orc app](docs/app.md): the main window, Session Overview, notifications and terminals
 - [The `orc` command](docs/cli.md): creating and attaching to sessions, projects and defaults
 - [Agents](docs/agents.md): messaging, wakes, agent status, pull requests, MCP servers and durable agents
 - [Pair a phone](docs/phone.md) or [a computer](docs/computers.md)

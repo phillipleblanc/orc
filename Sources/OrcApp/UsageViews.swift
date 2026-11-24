@@ -38,46 +38,97 @@ import OrcKit
     }
 }
 
-struct UsageSection: View {
+/// A ring for each agent, filled to its window closest to the limit, with that window's share. Clicking shows
+/// every window.
+struct UsageRings: View {
     @ObservedObject var model: UsageModel
-    @AppStorage("usageExpanded") private var expanded = true
+    @State private var showingDetails = false
 
     var body: some View {
         if !model.visible.isEmpty {
-            DisclosureGroup(isExpanded: $expanded) {
-                // Reset countdowns tick by the minute.
-                TimelineView(.everyMinute) { context in
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(model.visible) { ProviderUsageView(usage: $0, now: context.date) }
-                    }
-                    .padding(.top, 6)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Usage").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-                    if !expanded {
-                        Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    if model.fetching {
-                        ProgressView().controlSize(.mini).frame(width: 16, height: 16)
-                    } else {
-                        Button { Task { await model.refresh("force") } } label: {
-                            Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold))
+            Button { showingDetails.toggle() } label: {
+                HStack(spacing: 8) {
+                    ForEach(model.visible) { usage in
+                        HStack(spacing: 4) {
+                            UsageRing(window: usage.tightest, failed: usage.status == .error)
+                            Text(usage.tightest.map { "\(Int($0.usedPercent.rounded()))%" } ?? "–")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.borderless).foregroundStyle(.secondary)
-                        .help(refreshHelp).accessibilityLabel("Refresh Usage")
                     }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showingDetails, arrowEdge: .top) { UsageDetails(model: model) }
+            .help(summary)
+            .accessibilityLabel("Usage")
+            .accessibilityValue(summary)
             .accessibilityIdentifier("usage")
-            .padding(.horizontal, 16).padding(.top, 8)
         }
     }
 
-    /// Each agent's window closest to its limit, for the collapsed section.
-    private var summary: String {
-        model.visible.compactMap { usage in usage.tightest.map { "\(usage.name) \(Int($0.usedPercent.rounded()))%" } }.joined(separator: " · ")
+    /// Each agent's window closest to its limit, or why its usage is missing.
+    var summary: String {
+        model.visible.compactMap { usage in
+            usage.tightest.map { "\(usage.name) \($0.label) \(Int($0.usedPercent.rounded()))%" } ?? usage.error.map { "\(usage.name): \($0)" }
+        }.joined(separator: " · ")
+    }
+}
+
+/// A ring filled to a window's share used: orange from 60%, red from 80%, and orange while usage can't be fetched.
+struct UsageRing: View {
+    let window: AgentUsage.Window?
+    var failed = false
+
+    private var color: Color {
+        switch UsageLevel(usedPercent: window?.usedPercent ?? 0) {
+        case .normal: return failed ? .orange : Color.primary.opacity(0.75)
+        case .high: return .orange
+        case .critical: return .red
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(failed && window == nil ? Color.orange : Color.primary.opacity(0.15), lineWidth: 2.5)
+            Circle().trim(from: 0, to: min(1, (window?.usedPercent ?? 0) / 100))
+                .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 13, height: 13)
+        .padding(1)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Each agent's windows, their shares used and the time until they reset, with a button to fetch usage now.
+struct UsageDetails: View {
+    @ObservedObject var model: UsageModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("Usage").font(.headline)
+                Spacer(minLength: 0)
+                if model.fetching {
+                    ProgressView().controlSize(.mini).frame(width: 16, height: 16)
+                } else {
+                    Button { Task { await model.refresh("force") } } label: {
+                        Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .help(refreshHelp).accessibilityLabel("Refresh Usage")
+                }
+            }
+            // Reset countdowns tick by the minute.
+            TimelineView(.everyMinute) { context in
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(model.visible) { ProviderUsageView(usage: $0, now: context.date) }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 300)
     }
 
     private var refreshHelp: String {

@@ -4,12 +4,12 @@ import XCTest
 import OrcKit
 @testable import OrcApp
 
-final class UsageSectionTests: XCTestCase {
+final class UsageViewsTests: XCTestCase {
     private func window(_ kind: String, _ label: String, _ percent: Double, hours: Double?) -> AgentUsage.Window {
         AgentUsage.Window(kind: kind, label: label, usedPercent: percent, resetsAt: hours.map { Date().addingTimeInterval($0 * 3600 + 30) })
     }
 
-    @MainActor func testShowsTheAgentsThatAreSetUpAndHidesTheSectionWithoutAny() async throws {
+    @MainActor func testShowsTheAgentsThatAreSetUpAndHidesTheRingsWithoutAny() async throws {
         _ = NSApplication.shared
         let model = UsageModel(monitor: false)
         model.providers = [
@@ -21,17 +21,21 @@ final class UsageSectionTests: XCTestCase {
         ]
         XCTAssertEqual(model.visible.map(\.name), ["Claude", "Codex"])
 
-        let host = NSHostingView(rootView: VStack(spacing: 0) { Spacer(); UsageSection(model: model).padding(.bottom, 12) }
-            .frame(width: 260, height: 300).background(Color(nsColor: .windowBackgroundColor)))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        XCTAssertEqual(UsageRings(model: model).summary, "Claude Fable 86% · Codex Weekly 4%")
+
+        let host = NSHostingView(rootView: VStack(alignment: .leading, spacing: 12) {
+            UsageRings(model: model)
+            UsageDetails(model: model)
+        }
+        .padding(12).frame(width: 330, height: 360, alignment: .topLeading))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 330, height: 360), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFront(nil)
         defer { window.close() }
-        func settle(_ name: String) async throws {
-            try await Task.sleep(for: .milliseconds(200))
-            host.layoutSubtreeIfNeeded()
-            guard let directory = ProcessInfo.processInfo.environment["ORC_WINDOW_SNAPSHOT_DIR"] else { return }
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        if let directory = ProcessInfo.processInfo.environment["ORC_WINDOW_SNAPSHOT_DIR"] {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 window.appearance = NSAppearance(named: appearance)
                 try await Task.sleep(for: .milliseconds(100))
@@ -40,18 +44,11 @@ final class UsageSectionTests: XCTestCase {
                 let url = URL(fileURLWithPath: directory)
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
                 try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    .write(to: url.appendingPathComponent("usage-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+                    .write(to: url.appendingPathComponent("usage-\(appearance == .aqua ? "light" : "dark").png"))
             }
         }
-        let defaults = UserDefaults.standard
-        let expanded = defaults.object(forKey: "usageExpanded")
-        defer { defaults.set(expanded, forKey: "usageExpanded") }
-        defaults.set(true, forKey: "usageExpanded")
-        try await settle("expanded")
-        defaults.set(false, forKey: "usageExpanded")
-        try await settle("collapsed")
 
-        // Agents that are not set up are left out, and with none the section is gone.
+        // Agents that are not set up are left out, and with none there are no rings.
         model.providers = model.providers.map { AgentUsage(provider: $0.provider, name: $0.name, plan: nil, windows: [], status: .unavailable, error: "not signed in", updatedAt: nil) }
         XCTAssertEqual(model.visible, [])
     }

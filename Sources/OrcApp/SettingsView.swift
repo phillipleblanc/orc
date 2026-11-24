@@ -11,7 +11,6 @@ struct SettingsView: View {
     /// A configured project selector that names no registered project, offered until another is chosen.
     @State private var unregistered: String?
     @State private var error: String?
-    @AppStorage("showStatusOnReturn") private var showStatusOnReturn = true
     /// The model the runtime writes agent status briefs with, as `provider/id`, or "" for none.
     @State private var statusModel = ""
     @State private var statusModels: [(model: String, name: String)] = []
@@ -54,8 +53,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Toggle("Show status when returning to an agent", isOn: $showStatusOnReturn)
-                Text("Orc writes where each agent's work stands from its transcript with this model, one of Pi's: after the agent's turns and every 15 minutes while it works, without messaging the agent. Coming back to an agent after 15 minutes away shows its status in a floating panel; ⌥⌘S shows it any time. Choosing a model checks it on a few sample statuses and warns when it gets them wrong.")
+                Text("Orc writes where each agent's work stands from its transcript with this model, one of Pi's: after the agent's turns and every 15 minutes while it works, without messaging the agent. The Session Overview and the session list show it. Choosing a model checks it on a few sample statuses and warns when it gets them wrong.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let statusError { Text(statusError).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }

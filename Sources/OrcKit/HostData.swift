@@ -32,17 +32,6 @@ public enum HostData {
         host.map { "Orc's config.json on \($0.name)" } ?? OrcConfiguration.file.path
     }
 
-    /// A session's notes.
-    public static func notes(_ name: String) async throws -> String {
-        guard host != nil else { return try SessionNotesStore.load(name) }
-        return try await RuntimeRPC.call("notes.get", ["name": name])["text"] as? String ?? ""
-    }
-
-    public static func saveNotes(_ text: String, for name: String) async throws {
-        guard host != nil else { return try SessionNotesStore.save(text, for: name) }
-        _ = try await RuntimeRPC.call("notes.set", ["name": name, "text": text])
-    }
-
     /// A file on that Mac, as Markdown windows read it: at most `maximumBytes`, and UTF-8 text unless `binary`.
     public static func read(_ url: URL, maximumBytes: Int, binary: Bool = false) async throws -> Data {
         guard let host else { return try MarkdownDocument.readFile(url, maximumBytes: maximumBytes) }
