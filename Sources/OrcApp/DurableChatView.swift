@@ -55,7 +55,8 @@ struct DurableChatHost: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        // Kept out of the title bar, where it would cover the session's name above the chat.
+        .background(Color(nsColor: .textBackgroundColor), ignoresSafeAreaEdges: [])
         .task(id: session.name) { await model.load(session.name) }
     }
 
