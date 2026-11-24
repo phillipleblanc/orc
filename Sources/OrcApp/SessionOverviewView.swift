@@ -44,6 +44,7 @@ struct SessionOverviewView: View {
         _selected = State(initialValue: selected)
     }
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var ghostty = GhosttyEngine.shared
     @State private var search = ""
     /// The selected session's name.
     @State private var selected: String?
@@ -88,7 +89,7 @@ struct SessionOverviewView: View {
                         }
                         .padding(20)
                     }
-                    .background(Color(nsColor: .underPageBackgroundColor))
+                    .background(ghostty.theme.sidebar.color)
                     .focusable()
                     .focused($boardFocused)
                     .focusEffectDisabled()
@@ -106,6 +107,10 @@ struct SessionOverviewView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 440)
+        // The terminal theme's colors, as in the main window.
+        .background(TerminalWindowBackground(engine: ghostty, showingTerminal: false).allowsHitTesting(false).accessibilityHidden(true))
+        .toolbarBackground(ghostty.theme.sidebar.color, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .navigationTitle("Session Overview")
         .navigationSubtitle(counts(lanes))
         .searchable(text: $search, placement: .toolbar, prompt: "Find sessions")
@@ -139,7 +144,7 @@ struct SessionOverviewView: View {
             Text(lane.title).font(.headline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 14, alignment: .top)], alignment: .leading, spacing: 14) {
                 ForEach(families) { family in
-                    FamilyCard(family: family, model: model, selected: $selected, replying: $replying, refreshErrors: refreshErrors, open: open)
+                    FamilyCard(family: family, model: model, theme: ghostty.theme, selected: $selected, replying: $replying, refreshErrors: refreshErrors, open: open)
                         .id(family.id)
                 }
             }
@@ -240,6 +245,7 @@ private struct UsageSummary: View {
 private struct FamilyCard: View {
     let family: OverviewFamily
     @ObservedObject var model: SessionModel
+    let theme: TerminalTheme
     @Binding var selected: String?
     @Binding var replying: String?
     let refreshErrors: [String: String]
@@ -261,8 +267,8 @@ private struct FamilyCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.08)))
+        .background(theme.raised.color, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(isSelected ? 0.35 : 0.08)))
     }
 
     private func row(_ item: OverviewItem, now: Date, head: Bool) -> some View {
@@ -353,7 +359,7 @@ private struct OverviewRow: View {
             }
         }
         .padding(.vertical, 3).padding(.horizontal, 4)
-        .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        .background(selected ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
     }

@@ -463,12 +463,12 @@ struct SessionWindow: View {
             // A list whose top meets the title bar's edge extends up under the title bar, over the row above, and
             // takes its buttons' clicks.
             .padding(.top, 1)
-            if !model.closed.isEmpty { RecentlyClosedSection(model: model) }
             HStack(spacing: 8) {
                 UsageRings(model: usage)
                 Text("\(model.sessions.count) session\(model.sessions.count == 1 ? "" : "s")" + (HostSelection.current.map { " on \($0.name)" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                if !model.closed.isEmpty { RecentlyClosedButton(model: model) }
                 if HostSelection.current == nil {
                     ChromeButton(title: "Pair a Phone or Computer", systemImage: "laptopcomputer.and.iphone") { model.showPairDevice = true }
                 }
@@ -483,7 +483,7 @@ struct SessionWindow: View {
         ChromeButton(title: sidebarHidden ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left", shortcut: "⌃⌘S") { sidebarHidden.toggle() }
             .keyboardShortcut("s", modifiers: [.control, .command])
     }
-    /// The selected session's name above its terminal.
+    /// The selected session's program, name and status headline above its terminal.
     private var detailHeader: some View {
         HStack(spacing: 8) {
             if sidebarHidden {
@@ -491,9 +491,13 @@ struct SessionWindow: View {
                 sidebarToggle
             }
             if let selected {
-                SessionStatusIcon(session: selected, activity: model.activity(for: selected), muted: model.isMuted(selected))
+                ProgramTile(session: selected, size: 16)
                 Text(selected.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    .layoutPriority(1)
                     .accessibilityAddTraits(.isHeader)
+                if let headline = briefs.briefs[selected.name]?.brief?.headline ?? selected.programStatus?.text {
+                    Text(headline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).help(headline)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -501,14 +505,15 @@ struct SessionWindow: View {
         .frame(height: Self.headerHeight)
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
-        SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
-                          headline: briefs.briefs[session.name]?.brief?.headline,
-                          isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
+        let row = SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
+                                    headline: briefs.briefs[session.name]?.brief?.headline,
+                                    isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }
+        return row
         .accessibilityElement(children: hasChildren ? .contain : .combine)
         .accessibilityValue(model.statusLabel(for: session))
-        .help(model.statusLabel(for: session) + " · Drag to reorder")
+        .help("\(row.detail)\n\(model.statusLabel(for: session)) · Drag to reorder")
         .contextMenu {
             if !isChild, hierarchy.canCreateChild(of: session) {
                 Button("Create Child…", systemImage: "plus") { creatingChildOf = session }

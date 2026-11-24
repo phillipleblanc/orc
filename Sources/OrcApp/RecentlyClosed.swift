@@ -1,30 +1,43 @@
 import SwiftUI
 import OrcKit
 
-/// Agent sessions closed in the last week. Clicking one reopens it, resuming its conversation.
-struct RecentlyClosedSection: View {
+/// A button at the bottom of the sidebar that lists the agent sessions closed in the last week.
+struct RecentlyClosedButton: View {
     @ObservedObject var model: SessionModel
-    @AppStorage("recentlyClosedExpanded") private var expanded = false
+    @State private var showing = false
+
+    var body: some View {
+        ChromeButton(title: "Recently Closed (\(model.closed.count))", systemImage: "clock.arrow.circlepath") { showing.toggle() }
+            .accessibilityIdentifier("recently-closed")
+            .popover(isPresented: $showing, arrowEdge: .top) { RecentlyClosedList(model: model) { showing = false } }
+    }
+}
+
+/// Agent sessions closed in the last week. Clicking one reopens it, resuming its conversation.
+struct RecentlyClosedList: View {
+    @ObservedObject var model: SessionModel
+    /// Closes the list once a session is reopened.
+    var done: () -> Void = {}
     @State private var previewing: String?
     @State private var hoverTask: Task<Void, Never>?
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recently Closed").font(.headline).padding(.horizontal, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(model.closed) { row($0) }
                 }
-            }.frame(maxHeight: 220)
-        } label: {
-            Text("Recently Closed (\(model.closed.count))").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .frame(maxHeight: 420)
         }
-        .accessibilityIdentifier("recently-closed")
-        .padding(.horizontal, 16).padding(.top, 8)
+        .padding(10)
+        .frame(width: 320)
     }
 
     private func row(_ closed: ClosedSession) -> some View {
         HStack(spacing: 7) {
-            Image(systemName: "arrow.uturn.backward.circle").foregroundStyle(.secondary).accessibilityHidden(true)
+            ProgramTile(program: closed.agent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(closed.name).lineLimit(1)
                 Text([closed.agent, URL(fileURLWithPath: closed.cwd).lastPathComponent, closed.age()].joined(separator: " · "))
@@ -49,7 +62,7 @@ struct RecentlyClosedSection: View {
         }
         .contextMenu {
             Button("Reopen", systemImage: "arrow.uturn.backward") { reopen(closed) }
-            Button("Reopen with New Name…", systemImage: "pencil") { model.reopeningAs = closed }
+            Button("Reopen with New Name…", systemImage: "pencil") { done(); model.reopeningAs = closed }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -58,6 +71,7 @@ struct RecentlyClosedSection: View {
 
     private func reopen(_ closed: ClosedSession) {
         previewing = nil
+        done()
         Task {
             // A name in use again is the common failure; the sheet asks for another and shows the error.
             do { try await model.reopen(closed) } catch { model.reopeningAs = closed }

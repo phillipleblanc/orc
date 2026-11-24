@@ -16,7 +16,7 @@ Right-click a top-level session and choose **Create Child…** to create a sessi
 
 ## Recently closed agents
 
-Agent sessions closed in the last week can be reopened, resuming their conversations with their undelivered messages and wakes. In Orc, they are listed under **Recently Closed** below the sessions: click one to reopen it and attach, hover to see its last reply and screen, or choose **Reopen with New Name…** from its menu. **Reopen Closed Session** (⇧⌘T) reopens the most recent one. `orc attach`'s picker lists them after the running sessions.
+Agent sessions closed in the last week can be reopened, resuming their conversations with their undelivered messages and wakes. In Orc, the clock button at the bottom of the sidebar lists them: click one to reopen it and attach, hover to see its last reply and screen, or choose **Reopen with New Name…** from its menu. **Reopen Closed Session** (⇧⌘T) reopens the most recent one. `orc attach`'s picker lists them after the running sessions.
 
 ```sh
 orc history                    # Agent sessions closed in the last week, and recent conversations

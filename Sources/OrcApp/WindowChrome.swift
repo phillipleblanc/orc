@@ -41,6 +41,8 @@ struct TerminalTheme: Equatable, Sendable {
     var sidebar: RGB { background.mixed(with: RGB(red: 0, green: 0, blue: 0), isDark ? 0.3 : 0.04) }
     /// Dividers between the window's parts.
     var line: RGB { background.mixed(with: foreground, 0.14) }
+    /// Cards raised off the sidebar's shade: lighter than the terminal for a dark theme, the terminal's own for a light one.
+    var raised: RGB { isDark ? background.mixed(with: foreground, 0.04) : background }
 }
 
 /// An icon button for the window's top rows and the sidebar's footer, highlighted under the pointer.

@@ -46,7 +46,7 @@ Orc shows the message as a notification titled with the session's name; clicking
 
 Orc keeps a short status of each agent session: its goal, its progress, what it is doing right now, its next three steps, and anything it is waiting on from you. A model you choose under Settings → **Agent Status** (one of Pi's scoped models; off until chosen) writes it from the agent's own transcript, starting from the agent's latest summary of its conversation, so the agent is never messaged and its context is untouched. A status is written about 20 seconds after an agent's turn ends or it stops for permission, and every 15 minutes while it works, when its transcript changed; automatic statuses for a session are at least 5 minutes apart, and one is written at a time.
 
-The sidebar shows each agent's status headline after its agent, and the [Session Overview](app.md#session-overview) shows the full status.
+The selected agent's status headline heads its terminal and shows when you hover over its row in the sidebar; the [Session Overview](app.md#session-overview) shows the full status.
 
 ```sh
 orc brief cayenne-caching-cdc            # The latest status

@@ -19,6 +19,9 @@ struct SessionSidebarList<RowContent: View>: View {
                                             set: { if $0 { collapsedProjects.remove(section.id) } else { collapsedProjects.insert(section.id) } })) {
                     ForEach(section.rows) { row in
                         rowContent(section, row).tag(row.id).moveDisabled(!organization.loaded)
+                            // The row draws its own selection, so its text keeps its colors when selected.
+                            .environment(\.backgroundProminence, .standard)
+                            .listRowBackground(selection == row.id ? SelectionPill() : nil)
                     }
                     .onMove { source, destination in
                         organization.move(fromOffsets: source, toOffset: destination, rows: section.rows, search: "")
@@ -33,10 +36,41 @@ struct SessionSidebarList<RowContent: View>: View {
         .listStyle(.sidebar)
         // The sidebar's color shows through, in place of the system's sidebar material.
         .scrollContentBackground(.hidden)
+        .background(SystemSelectionHidden())
     }
 }
 
-/// A project's header: the project and its number of sessions.
+/// The selected row's background: a faint rounded fill with a fine edge.
+struct SelectionPill: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(Color.primary.opacity(0.08))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+            .padding(.horizontal, 8).padding(.vertical, 1)
+    }
+}
+
+/// Stops the window's lists from drawing the system's selection, so their rows draw `SelectionPill` instead.
+/// SwiftUI has no setting for it; the table's highlight style is set again whenever the list updates.
+private struct SystemSelectionHidden: NSViewRepresentable {
+    func makeNSView(context: Context) -> Applier { Applier() }
+    func updateNSView(_ view: Applier, context: Context) { view.apply() }
+
+    final class Applier: NSView {
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); apply() }
+        func apply() {
+            DispatchQueue.main.async { [weak self] in
+                guard let root = self?.window?.contentView else { return }
+                for table in Self.tables(in: root) where table.selectionHighlightStyle != .none { table.selectionHighlightStyle = .none }
+            }
+        }
+        private static func tables(in view: NSView) -> [NSTableView] {
+            (view as? NSTableView).map { [$0] } ?? view.subviews.flatMap(tables)
+        }
+    }
+}
+
+/// A project's header: its name, with its folder and number of sessions in the tooltip.
 struct SessionSidebarHeader: View {
     let title: String
     let path: String
@@ -45,11 +79,10 @@ struct SessionSidebarHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title).lineLimit(1).truncationMode(.middle)
-            Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
             Spacer(minLength: 0)
         }
-        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-        .help(path)
+        .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.tertiary)
+        .help("\(path) · \(count) session\(count == 1 ? "" : "s")")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(count) session\(count == 1 ? "" : "s")")
     }
@@ -120,8 +153,8 @@ struct SessionOrderStore {
     }
 }
 
-/// A session in the sidebar: its status icon and name, with its agent and an agent's status headline beneath
-/// the name. A child is indented under its parent; a parent with children can collapse them.
+/// A session in the sidebar on one line: its program's tile and its name, with its activity at the end when there is
+/// something to notice. A child is indented under its parent; a parent with children can collapse them.
 struct SessionSidebarRow: View {
     let session: Session
     let name: String
@@ -135,19 +168,13 @@ struct SessionSidebarRow: View {
     var toggleChildren: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    SessionStatusIcon(session: session, activity: activity, muted: muted).accessibilityHidden(true)
-                    Text(name).font(.headline).lineLimit(1)
-                }
-                // Aligned with the name: the icon is 12 points wide, followed by 8 points of spacing.
-                Text(detail)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .padding(.leading, 20)
-                    .help(detail)
-            }
+        HStack(spacing: 8) {
+            ProgramTile(session: session)
+            Text(name).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 0)
+            if AgentActivityIndicator.shows(activity, for: session, muted: muted) {
+                AgentActivityIndicator(activity: activity, muted: muted).accessibilityHidden(true)
+            }
             if let collapsed = childrenCollapsed {
                 Button(action: toggleChildren) {
                     Image(systemName: "chevron.right").rotationEffect(.degrees(collapsed ? 0 : 90))
@@ -157,10 +184,11 @@ struct SessionSidebarRow: View {
                 .accessibilityLabel("\(collapsed ? "Expand" : "Collapse") children of \(session.name)")
             }
         }
-        .padding(.leading, isChild ? 20 : 0)
+        .padding(.leading, isChild ? 18 : 0)
         .padding(.vertical, 3)
     }
 
+    /// The session's program and what its status says, for its tooltip.
     var detail: String {
         ([session.agentIdentity ?? session.programStatus?.app ?? "terminal"] + [headline ?? session.programStatus?.text].compactMap { $0 }).joined(separator: " · ")
     }
