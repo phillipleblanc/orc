@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/main-window.png" alt="Orc's main window: a sidebar of agent sessions, each with its agent and a one-line status, beside a Codex agent editing tests in its terminal" width="900">
+  <img src="docs/images/main-window.png" alt="Orc's main window: a sidebar of Claude, Pi and durable agent sessions, each with its program's icon and, when it is working or has news, a status light, beside a Claude agent's report on where the docs and the code differ" width="900">
 </p>
 
 Orc keeps every agent and shell you run in one window. Sessions run in a background runtime, so they keep going when you close the app, and Orc tells you which ones have finished, which are waiting on an answer, and which are still at work.
@@ -26,7 +26,7 @@ Orc keeps every agent and shell you run in one window. Sessions run in a backgro
 ## Features
 
 - **Sessions that keep running.** Agents and shells run in Orc's background runtime. Close the app or update it and they carry on; restart your Mac and they come back under the same names, agents continuing their conversations.
-- **Native terminals.** Each session opens in an embedded [Ghostty](https://ghostty.org) terminal that uses your Ghostty theme, font and keybinds.
+- **Native terminals.** Each session opens in an embedded [Ghostty](https://ghostty.org) terminal that uses your Ghostty theme, font and keybinds, or settings of Orc's own over them. The whole window takes its colors from the terminal's theme.
 - **Session Overview.** Every session sorted into Needs You, Working and Idle, with what each agent is doing and any question it is waiting on you to answer.
 - **Agent status.** A model you choose reads each agent's transcript and writes its goal, progress and next steps, without interrupting the agent.
 - **Agents that work together.** Agents spawn, message and wait for each other by name, schedule wake-ups for themselves, and notify you when they have something to report.
@@ -38,7 +38,7 @@ Orc keeps every agent and shell you run in one window. Sessions run in a backgro
 ### Session Overview
 
 <p align="center">
-  <img src="docs/images/session-overview.png" alt="The Session Overview: an agent's question and full status under Needs You, a Pi agent under Working, and three finished agents under Idle" width="900">
+  <img src="docs/images/session-overview.png" alt="The Session Overview: two finished agents under Needs You, one opened to its full status with its goal, progress and next steps, and three sessions under Idle" width="900">
 </p>
 
 Press ⇧⌘O to see every session at once. Select one to read its full status, reply to it, or open it.
