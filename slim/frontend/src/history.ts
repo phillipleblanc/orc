@@ -63,7 +63,7 @@ export async function startAgain(runtime: Runtime, ended: EndedSession, name = e
     session = await agents.launch({
       agent: meta.agent, name, cwd: meta.cwd, project: project && `id:${project.id}`, parent: meta.parent,
       args: callerArguments(meta.agent, programArgv(meta)), resume: (await agentRecord(meta)).conversation,
-      files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json')],
+      files: [join(dir, 'queue.json'), join(dir, 'wakes.json'), join(dir, 'pull-requests.json'), join(dir, 'waiting.json')],
       // A sandboxed agent starts again in its machine; one that ran on the Mac, on the Mac.
       sandbox: Boolean(meta.sandbox)
     })

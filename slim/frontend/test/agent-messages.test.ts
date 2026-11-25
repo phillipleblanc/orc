@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { existsSync } from 'node:fs'
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -109,6 +110,45 @@ test('a queued message saved without whenIdle waits for idle', async (t) => {
   await event('Stop')
   await until(async () => session.messages().length === 2, 2000, 'the saved message once idle')
   assert.equal(session.messages()[1], 'from before')
+})
+
+test('a waiting mark lasts until the agent next starts working, through a frontend restart', async (t) => {
+  const { agents, session, event } = await agentRuntime(t, ['SessionStart'])
+  const marked = () => agents.isMarkedWaiting(session as any)
+  const file = join(session.dir, 'waiting.json')
+  // Turns start and marks are made at millisecond times.
+  const mark = async () => { await sleep(2); await agents.markWaiting(session as any, true); await sleep(2) }
+
+  // Marked while idle, it ends when a turn starts.
+  await mark()
+  assert.equal(marked(), true)
+  assert.equal(existsSync(file), true)
+  await event('UserPromptSubmit')
+  assert.equal(marked(), false)
+  await until(async () => !existsSync(file), 2000, 'the mark to be removed')
+
+  // Marked while working, it outlasts that turn, until the next one starts.
+  await mark()
+  await event('PreToolUse')
+  await event('Stop')
+  assert.equal(marked(), true)
+
+  // A restarted frontend replays the events, which all came before the mark, and keeps it.
+  const store = Object.assign(new EventEmitter(), { get: () => session })
+  const restarted = new AgentDirectory(store as any, {} as any, session.dir)
+  t.after(() => store.emit('ended', session))
+  store.emit('added', session)
+  await until(async () => restarted.list().length === 1, 2000, 'the agent to be attached again')
+  assert.equal(restarted.isMarkedWaiting(session as any), true)
+  await event('UserPromptSubmit')
+  await restarted.monitor(session as any)!.refresh()
+  assert.equal(restarted.isMarkedWaiting(session as any), false)
+  await until(async () => !existsSync(file), 2000, 'the mark to be removed')
+
+  // A mark can be cleared by hand.
+  await mark()
+  await agents.markWaiting(session as any, false)
+  assert.equal(marked(), false)
 })
 
 test('Claude is typed to only once its prompt is up, not while it probes the terminal at startup', async (t) => {

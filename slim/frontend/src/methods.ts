@@ -104,6 +104,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       writable: target.connected,
       agentIdentity: target.meta.agent ?? null,
       incarnationId: target.meta.incarnationId,
+      ...(agents.isMarkedWaiting(target) ? { markedWaiting: true } : {}),
       ...(target.programStatus.size ? { programStatus: { state: overallState(target.programStatus.list()), records: target.programStatus.list() } } : {}),
       tabId: target.meta.id,
       leafId: target.meta.id,
@@ -244,6 +245,13 @@ export function createHandlers(runtime: Runtime): Handlers {
       await moveNotes(previous, target.meta.name)
       await runtime.order?.rename(previous, target.meta.name)
       return { rename: { handle: target.handle, title: target.meta.name } }
+    },
+
+    'terminal.markWaiting': async (params) => {
+      const target = session(params.terminal)
+      if (typeof params.waiting !== 'boolean') throw new RpcError('invalid_argument', 'waiting must be true or false')
+      await agents.markWaiting(target, params.waiting)
+      return { markWaiting: { handle: target.handle, waiting: params.waiting } }
     },
 
     'terminal.send': async (params, context) => {

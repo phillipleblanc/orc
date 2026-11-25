@@ -188,7 +188,17 @@ import OrcKit
     }
     func isMuted(_ session: Session) -> Bool { mutes.isMuted(session.name) }
     func statusLabel(for session: Session) -> String {
-        isMuted(session) ? "Notifications muted · \(activity(for: session).label)" : activity(for: session).label
+        ([session.isMarkedWaiting ? "Waiting" : nil, isMuted(session) ? "Notifications muted" : nil].compactMap { $0 }
+            + [activity(for: session).label]).joined(separator: " · ")
+    }
+    /// Marks an agent as waiting on something, or clears the mark. Marking it also marks its new output read: its
+    /// person knows where it stands.
+    func setWaiting(_ waiting: Bool, for session: Session) async throws {
+        try await service.markWaiting(handle: session.handle, waiting)
+        if waiting { markRead(session) }
+        // A listing already under way may have been made before the mark.
+        while loading { try? await Task.sleep(for: .milliseconds(50)) }
+        await refresh()
     }
     func setMuted(_ muted: Bool, for session: Session) {
         var updated = mutes
@@ -343,6 +353,7 @@ struct SessionWindow: View {
     /// A working agent's session waiting on confirmation to restart.
     @State private var restartingSession: Session?
     @State private var restartError: String?
+    @State private var waitingError: String?
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
@@ -443,6 +454,9 @@ struct SessionWindow: View {
         .alert("Could Not Close Session", isPresented: Binding(get: { closeError != nil }, set: { if !$0 { closeError = nil } })) {
             Button("OK") {}
         } message: { Text(closeError ?? "") }
+        .alert("Could Not Change the Waiting Label", isPresented: Binding(get: { waitingError != nil }, set: { if !$0 { waitingError = nil } })) {
+            Button("OK") {}
+        } message: { Text(waitingError ?? "") }
         .sheet(item: $model.reopeningAs) { ReopenSessionView(model: model, closed: $0) }
         .sheet(isPresented: $model.showOpen) { OpenConversationView(model: model) }
         .onChange(of: model.selected) { _, _ in
@@ -546,7 +560,7 @@ struct SessionWindow: View {
     }
     private func sessionRow(_ session: Session, name: String, hasChildren: Bool, isChild: Bool) -> some View {
         let row = SessionSidebarRow(session: session, name: name, activity: model.activity(for: session), muted: model.isMuted(session),
-                                    headline: briefs.briefs[session.name]?.brief?.headline,
+                                    waiting: session.isMarkedWaiting, headline: briefs.briefs[session.name]?.brief?.headline,
                                     isChild: isChild, childrenCollapsed: hasChildren ? collapsedParents.contains(session.id) : nil) {
             if !collapsedParents.insert(session.id).inserted { collapsedParents.remove(session.id) }
         }
@@ -555,6 +569,11 @@ struct SessionWindow: View {
         .accessibilityValue(model.statusLabel(for: session))
         .help("\(row.detail)\n\(model.statusLabel(for: session)) · Drag to reorder")
         .contextMenu {
+            if session.agentIdentity != nil {
+                let waiting = session.isMarkedWaiting
+                Button(waiting ? "Clear Waiting" : "Mark as Waiting", systemImage: "hourglass") { setWaiting(!waiting, for: session) }
+                    .help("Show that the agent waits on something to happen, until it next starts working")
+            }
             if !isChild, hierarchy.canCreateChild(of: session) {
                 Button("Create Child…", systemImage: "plus") { creatingChildOf = session }
             }
@@ -571,6 +590,12 @@ struct SessionWindow: View {
             .help("End the session and start it again, so its agent starts on its current version and continues its conversation")
             Divider()
             Button("Close Session…", systemImage: "xmark.circle", role: .destructive) { closingSession = session }
+        }
+    }
+    private func setWaiting(_ waiting: Bool, for session: Session) {
+        Task {
+            do { try await model.setWaiting(waiting, for: session) }
+            catch { waitingError = "Could not \(waiting ? "mark" : "clear") \(session.name): \(error.localizedDescription)" }
         }
     }
     private func restart(_ session: Session) {

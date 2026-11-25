@@ -164,6 +164,8 @@ struct SessionSidebarRow: View {
     let name: String
     let activity: AgentActivity
     let muted: Bool
+    /// Whether its person marked the agent as waiting on something.
+    var waiting = false
     /// The headline of the agent's status brief.
     var headline: String? = nil
     let isChild: Bool
@@ -176,6 +178,7 @@ struct SessionSidebarRow: View {
             ProgramTile(session: session)
             Text(name).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 0)
+            if waiting { WaitingLabel() }
             if AgentActivityIndicator.shows(activity, for: session, muted: muted) {
                 AgentActivityIndicator(activity: activity, muted: muted).accessibilityHidden(true)
             }
@@ -196,4 +199,19 @@ struct SessionSidebarRow: View {
     var detail: String {
         ([session.agentIdentity ?? session.programStatus?.app ?? "terminal"] + [headline ?? session.programStatus?.text].compactMap { $0 }).joined(separator: " · ")
     }
+}
+
+/// The green label on a session whose agent its person marked as waiting on something.
+struct WaitingLabel: View {
+    var body: some View {
+        Text("Waiting").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Self.green)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Capsule().fill(Self.green.opacity(0.16)))
+            .accessibilityHidden(true)
+    }
+
+    /// The system's green, darker on a light theme so the text stays legible.
+    private static let green = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .systemGreen : NSColor(srgbRed: 0.1, green: 0.5, blue: 0.22, alpha: 1)
+    })
 }

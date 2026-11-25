@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentArgv, installAgentHooks, isAgentKind, resumedConversation, type AgentHooks, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import { AgentMonitor } from './agent-monitor.ts'
@@ -28,6 +28,8 @@ type AgentRecord = {
   unconfirmed: number
   pumping: Promise<void> | null
   confirmTimer: NodeJS.Timeout | null
+  /** When its person marked it as waiting on something, in milliseconds; the mark lasts until it next starts working. */
+  waitingSince: number | null
 }
 
 export type SpawnOptions = {
@@ -177,6 +179,19 @@ export class AgentDirectory extends EventEmitter {
     return this.records.get(session)?.monitor
   }
 
+  /** Marks an agent as waiting on something, or clears the mark. The mark also ends when the agent next starts working. */
+  async markWaiting(session: TerminalSession, waiting: boolean): Promise<void> {
+    const record = this.records.get(session) ?? (await this.attach(session))
+    if (!record) throw new RpcError('invalid_argument', `${session.meta.name} is not an agent session`)
+    record.waitingSince = waiting ? Date.now() : null
+    await this.saveWaiting(record)
+  }
+
+  /** Whether an agent is marked as waiting on something. */
+  isMarkedWaiting(session: TerminalSession): boolean {
+    return this.records.get(session)?.waitingSince != null
+  }
+
   /** The conversation each running agent is on: the one its hooks reported, or the one it was started to resume. */
   conversations(): { name: string; agent: AgentKind; conversation: ProviderSession }[] {
     return [...this.records.values()].map(({ session, monitor }) => ({
@@ -236,16 +251,23 @@ export class AgentDirectory extends EventEmitter {
     if (!this.isAgent(session)) return undefined
     const monitor = new AgentMonitor(session.meta.agent as AgentKind, session.meta.events!, session)
     const saved = await readFile(join(session.dir, 'queue.json'), 'utf8').then(JSON.parse, () => ({}))
+    const waiting = await readFile(join(session.dir, 'waiting.json'), 'utf8').then(JSON.parse, () => ({}))
     // A saved message without `whenIdle` waits for idle.
     const queue = Array.isArray(saved.queue) ? saved.queue.map((message: QueuedMessage) => ({ ...message, whenIdle: message.whenIdle !== false })) : []
     const record: AgentRecord = {
       session, monitor, queue, delivering: null,
-      lastDeliveredAt: saved.lastDeliveredAt ?? 0, unconfirmed: saved.unconfirmed ?? 0, pumping: null, confirmTimer: null
+      lastDeliveredAt: saved.lastDeliveredAt ?? 0, unconfirmed: saved.unconfirmed ?? 0, pumping: null, confirmTimer: null,
+      waitingSince: typeof waiting.since === 'number' ? waiting.since : null
     }
     if (this.records.has(session)) return this.records.get(session)
     this.records.set(session, record)
     monitor.on('change', () => {
       if (record.delivering && monitor.state !== 'idle' && monitor.state !== 'starting') this.confirm(record)
+      // Replayed events keep the times they happened at, so a turn that started before the mark does not end it.
+      if (record.waitingSince !== null && monitor.startedAt > record.waitingSince) {
+        record.waitingSince = null
+        void this.saveWaiting(record)
+      }
       void this.pump(record)
       this.emit('change', session)
     })
@@ -379,5 +401,11 @@ export class AgentDirectory extends EventEmitter {
     const path = join(record.session.dir, 'queue.json')
     const body = JSON.stringify({ queue: record.queue, lastDeliveredAt: record.lastDeliveredAt, unconfirmed: record.unconfirmed })
     await writeFile(`${path}.tmp`, body, { mode: 0o600 }).then(() => rename(`${path}.tmp`, path)).catch(() => {})
+  }
+
+  private async saveWaiting(record: AgentRecord): Promise<void> {
+    const path = join(record.session.dir, 'waiting.json')
+    if (record.waitingSince === null) return rm(path, { force: true }).catch(() => {})
+    await writeFile(`${path}.tmp`, JSON.stringify({ since: record.waitingSince }), { mode: 0o600 }).then(() => rename(`${path}.tmp`, path)).catch(() => {})
   }
 }

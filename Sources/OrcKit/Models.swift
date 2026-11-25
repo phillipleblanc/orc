@@ -21,6 +21,9 @@ public struct Session: Codable, Identifiable, Hashable {
     public var programStatus: ProgramStatus? = nil
     /// The folder the session started in.
     public var cwd: String? = nil
+    /// Whether its person marked the agent as waiting on something; the mark lasts until the agent next starts working.
+    public var markedWaiting: Bool? = nil
+    public var isMarkedWaiting: Bool { markedWaiting == true }
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
 
     /// The runtime's rule for session names, which are also directory and file names.
@@ -147,6 +150,10 @@ public struct SessionService {
     /// Renaming changes the session's identity; the runtime moves its notes with it.
     public func rename(handle: String, name: String) async throws {
         _ = try await RuntimeRPC.call("terminal.rename", ["terminal": handle, "title": try validatedName(name)])
+    }
+    /// Marks an agent as waiting on something, or clears the mark.
+    public func markWaiting(handle: String, _ waiting: Bool) async throws {
+        _ = try await RuntimeRPC.call("terminal.markWaiting", ["terminal": handle, "waiting": waiting])
     }
     /// The optional MCP configs of a project (`.mcp/NAME.json`) that an agent can add to its own servers.
     public func mcpConfigs(worktree: String) async throws -> [McpConfig] {

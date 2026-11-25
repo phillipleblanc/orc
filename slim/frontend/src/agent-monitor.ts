@@ -52,6 +52,8 @@ export class AgentMonitor extends EventEmitter {
   lastIdleAt = 0
   /** When `state` last changed, in milliseconds; 0 before the first event. */
   stateSince = 0
+  /** When the agent last started working, in milliseconds; 0 before it first does. */
+  startedAt = 0
   lastEventAt = 0
   dialog: string | null = null
   // What a prompt interrupted, which answering it returns to. Pi reports every dialog as a prompt, including one an
@@ -207,6 +209,7 @@ export class AgentMonitor extends EventEmitter {
     if (this.exited) return
     if (state === 'idle') this.queuedAt = 0
     if (state === 'idle' && this.state !== 'idle' && turnEnded) this.lastIdleAt = at
+    if (state === 'working' && this.state !== 'working') this.startedAt = at
     const changed = state !== this.state
     this.state = state
     if (changed) {
