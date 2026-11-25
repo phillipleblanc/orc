@@ -23,6 +23,10 @@ import OrcKit
                     Button("New Session…") { model.revealWindow?(); model.showCreate = true }.keyboardShortcut("n")
                 }
                 CommandGroup(after: .newItem) {
+                    Button("Quick Terminal") { model.revealWindow?(); model.quickTerminalRequest = UUID() }
+                        .keyboardShortcut("j")
+                        // A quick terminal runs on this Mac, in the folder of a session of this Mac.
+                        .disabled(HostSelection.current != nil)
                     Button("Open…") { model.revealWindow?(); model.showOpen = true }.keyboardShortcut("k")
                     Button("Session Overview") { openWindow(id: "overview") }
                         .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -96,6 +100,8 @@ import OrcKit
         let incarnation: String?
     }
     @Published var attachmentRequest: AttachmentRequest?
+    /// Asks the session window to open the selected session's quick terminal, or to move the keyboard to or from it.
+    @Published var quickTerminalRequest = UUID()
     /// Agent sessions closed in the last week, newest first.
     @Published private(set) var closed: [ClosedSession] = []
     @Published var reopeningAs: ClosedSession?
@@ -340,6 +346,7 @@ struct SessionWindow: View {
     @State private var creatingChildOf: Session?
     @State private var collapsedParents: Set<String> = []
     @State private var terminals = TerminalCache()
+    @StateObject private var quickTerminals = QuickTerminals()
     @AppStorage("sidebarHidden") private var sidebarHidden = false
     /// Whether the sidebar is in place rather than slid out to the left; it slides when `sidebarHidden` changes.
     @State private var sidebarShown = !UserDefaults.standard.bool(forKey: "sidebarHidden")
@@ -381,6 +388,7 @@ struct SessionWindow: View {
                 VStack(spacing: 0) {
                     detailHeader
                     detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay { if showsTerminal { quickTerminal } }
                 }
                 .background(theme.background.color)
                 .padding(.leading, terminalBesideSidebar ? Self.sidebarWidth + 1 : 0)
@@ -453,7 +461,8 @@ struct SessionWindow: View {
         .onChange(of: controlActiveState) { _, _ in markVisibleOutputRead() }
         .onChange(of: model.unreadKeys) { _, _ in markVisibleOutputRead() }
         .onChange(of: showsTerminal) { _, _ in markVisibleOutputRead() }
-        .onChange(of: model.sessions) { _, sessions in terminals.keep(sessions) }
+        .onChange(of: model.sessions) { _, sessions in terminals.keep(sessions); quickTerminals.keep(sessions) }
+        .onChange(of: model.quickTerminalRequest) { _, _ in openQuickTerminal(toggle: true) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             markVisibleOutputRead()
             Task { await notifications.refreshSettings(); model.refreshDockBadge() }
@@ -525,6 +534,11 @@ struct SessionWindow: View {
                 }
             }
             Spacer(minLength: 0)
+            if selected != nil, HostSelection.current == nil {
+                ChromeButton(title: "Quick Terminal", systemImage: "terminal", shortcut: "⌘J") { openQuickTerminal(toggle: false) }
+                    .disabled(!showsTerminal)
+                    .accessibilityIdentifier("quick-terminal")
+            }
         }
         // While the sidebar is hidden, its toggle sits where the sidebar's own row has it.
         .padding(.leading, terminalBesideSidebar ? 14 : Self.windowButtonsWidth).padding(.trailing, 10)
@@ -579,6 +593,33 @@ struct SessionWindow: View {
                 emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(theme.background.color, ignoresSafeAreaEdges: [])
             }
         }
+    }
+    /// The selected session's quick terminal, over its terminal.
+    @ViewBuilder private var quickTerminal: some View {
+        if let selected, let panel = quickTerminals.panels[selected.handle] {
+            GeometryReader { pane in
+                QuickTerminalPanel(terminal: panel.terminal, frame: panel.frame, pane: pane.size, theme: theme,
+                                   place: { quickTerminals.place(selected.handle, at: $0) },
+                                   close: { quickTerminals.close(selected.handle) })
+            }
+            .id(selected.handle)
+            // Closing it, or showing another session, gives the keyboard to the shown session's own terminal.
+            .onDisappear { focusAgent() }
+        }
+    }
+    /// Opens the selected session's quick terminal, or gives it the keyboard; with `toggle`, a quick terminal that has
+    /// the keyboard gives it back to the session's own terminal.
+    private func openQuickTerminal(toggle: Bool) {
+        guard let selected, showsTerminal, HostSelection.current == nil else { return }
+        guard let terminal = quickTerminals.terminal(for: selected.handle) else { quickTerminals.open(selected); return }
+        if toggle, terminal.window?.firstResponder === terminal { focusAgent() } else { terminal.window?.makeFirstResponder(terminal) }
+    }
+    /// Gives the keyboard to the selected session's own terminal, or its Workbench.
+    private func focusAgent() {
+        guard let selected else { return }
+        let view: NSView? = selectedIsDurable ? durableChat.webView : terminals.terminal(for: selected.handle)
+        guard let view, !view.isHidden, let window = view.window else { return }
+        window.makeFirstResponder(view)
     }
     @ViewBuilder private var emptyState: some View {
         switch placeholder {

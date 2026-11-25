@@ -26,7 +26,7 @@ Orc keeps every agent and shell you run in one window. Sessions run in a backgro
 ## Features
 
 - **Sessions that keep running.** Agents and shells run in Orc's background runtime. Close the app or update it and they carry on; restart your Mac and they come back under the same names, agents continuing their conversations.
-- **Native terminals.** Each session opens in an embedded [Ghostty](https://ghostty.org) terminal that uses your Ghostty theme, font and keybinds, or settings of Orc's own over them. The whole window takes its colors from the terminal's theme.
+- **Native terminals.** Each session opens in an embedded [Ghostty](https://ghostty.org) terminal that uses your Ghostty theme, font and keybinds, or settings of Orc's own over them. The whole window takes its colors from the terminal's theme. ⌘J opens a quick terminal in the session's folder, floating over the session.
 - **Session Overview.** Every session sorted into Needs You, Working and Idle, with what each agent is doing and any question it is waiting on you to answer.
 - **Agent status.** A model you choose reads each agent's transcript and writes its goal, progress and next steps, without interrupting the agent.
 - **Agents that work together.** Agents spawn, message and wait for each other by name, schedule wake-ups for themselves, and notify you when they have something to report.

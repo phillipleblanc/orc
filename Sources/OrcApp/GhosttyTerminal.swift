@@ -17,8 +17,8 @@ import OrcKit
     @Published private(set) var theme = TerminalTheme.ghosttyDefault
 
     /// Settings Orc's terminals depend on, applied over any user configuration. Terminals are replaced
-    /// as sessions are selected, so closing one must not ask for confirmation, and they run `orc attach`
-    /// rather than a shell.
+    /// as sessions are selected, so closing one must not ask for confirmation, and a session's terminal
+    /// runs `orc attach` rather than a shell.
     static let requiredSettings = "confirm-close-surface = false\nshell-integration = none\n"
 
     /// The user's Ghostty configuration files that exist, in the order Ghostty loads them; later
@@ -139,7 +139,7 @@ import OrcKit
         runtime.close_surface_cb = { pointer, _ in
             guard let pointer else { return }
             let view = Unmanaged<GhosttyView>.fromOpaque(pointer).takeUnretainedValue()
-            DispatchQueue.main.async { [weak view] in view?.detach() }
+            DispatchQueue.main.async { [weak view] in view?.detach(); view?.onClose?() }
         }
         app = ghostty_app_new(&runtime, config)
         applyColorScheme()
@@ -294,6 +294,10 @@ struct TerminalHost: NSViewRepresentable {
     fileprivate var surface: ghostty_surface_t?
     private let session: Session
     private let commandOverride: String?
+    /// The folder of a terminal that runs the user's shell rather than its session.
+    private let shellDirectory: String?
+    /// Called when the terminal's program has exited.
+    var onClose: (() -> Void)?
     fileprivate var hoveredLink: String?
     private var markdownPress: (event: NSEvent, link: MarkdownFileLink)?
     private var marked = NSAttributedString(string: "")
@@ -341,7 +345,7 @@ struct TerminalHost: NSViewRepresentable {
     /// takes this terminal's size while the person is using it here.
     private func reportView(_ attention: TerminalViewReport.Attention? = nil) {
         // A terminal running another command than `orc attach` has no viewer.
-        guard surface != nil, !detached, commandOverride == nil else { return }
+        guard surface != nil, !detached, commandOverride == nil, shellDirectory == nil else { return }
         let onScreen = self.onScreen
         viewReport.report(shown: onScreen, attention: onScreen ? attention : nil)
         if !onScreen { showOwner(nil) }
@@ -367,8 +371,11 @@ struct TerminalHost: NSViewRepresentable {
     @objc private func fitHere() { reportView(.strong) }
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
-    init(session: Session, command: String? = nil) {
-        self.session = session; commandOverride = command
+    convenience init(session: Session, command: String? = nil) { self.init(session: session, command: command, shellDirectory: nil) }
+    /// A terminal running the user's shell in `directory`, as Ghostty starts it, rather than attached to `session`.
+    convenience init(session: Session, shellIn directory: String) { self.init(session: session, command: nil, shellDirectory: directory) }
+    private init(session: Session, command: String?, shellDirectory: String?) {
+        self.session = session; commandOverride = command; self.shellDirectory = shellDirectory
         super.init(frame: .zero)
         wantsLayer = true
         setAccessibilityElement(true)
@@ -391,17 +398,19 @@ struct TerminalHost: NSViewRepresentable {
         config.platform.macos.nsview = Unmanaged.passUnretained(self).toOpaque()
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
         config.scale_factor = window.backingScaleFactor
-        config.wait_after_command = true
+        // A shell closes as soon as it exits.
+        config.wait_after_command = shellDirectory == nil
         let cli = Bundle.main.resourceURL?.appendingPathComponent("orc").path ?? "orc"
         // The native app owns navigation; its terminal stays bound to this session.
         // An embedded Ghostty PTY is not its parent process's Herdr pane.
-        let command = commandOverride ?? ("/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
+        let command = shellDirectory != nil ? nil : commandOverride ?? ("/usr/bin/env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_AGENT "
             + shellQuote(cli) + " attach " + shellQuote(session.handle) + " --no-session-switch --client-id " + shellQuote(viewerID) + " --viewport-ownership"
             + (RuntimeHost.current.remote.map { " --host " + shellQuote($0.id) } ?? ""))
-        command.withCString { commandPointer in
-            config.command = commandPointer
-            FileManager.default.homeDirectoryForCurrentUser.path.withCString { directory in
-                config.working_directory = directory
+        (shellDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path).withCString { directory in
+            config.working_directory = directory
+            if let command {
+                command.withCString { config.command = $0; surface = ghostty_surface_new(app, &config) }
+            } else {
                 surface = ghostty_surface_new(app, &config)
             }
         }

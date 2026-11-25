@@ -9,6 +9,8 @@ import OrcKit
     @Published private(set) var session: String?
     @Published private(set) var url: URL?
     @Published private(set) var error: String?
+    /// The Workbench showing, which takes the keyboard back from the session's quick terminal.
+    weak var webView: WKWebView?
 
     func load(_ session: String) async {
         if self.session != session { url = nil }
@@ -45,7 +47,7 @@ struct DurableChatHost: View {
     var body: some View {
         Group {
             if model.session == session.name, let url = model.url {
-                DurableChatWebView(url: url) { Task { await reload() } }
+                DurableChatWebView(url: url, disconnected: { Task { await reload() } }, created: { model.webView = $0 })
                     .id(url)
             } else if let error = model.error, model.session == session.name {
                 ContentUnavailableView("Workbench Unavailable", systemImage: "bubble.left.and.exclamationmark.bubble.right",
@@ -70,6 +72,7 @@ struct DurableChatHost: View {
 struct DurableChatWebView: NSViewRepresentable {
     let url: URL
     let disconnected: () -> Void
+    var created: (WKWebView) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -89,6 +92,7 @@ struct DurableChatWebView: NSViewRepresentable {
         view.setValue(false, forKey: "drawsBackground")
         view.setAccessibilityLabel("Durable agent chat")
         view.load(URLRequest(url: url))
+        created(view)
         return view
     }
 

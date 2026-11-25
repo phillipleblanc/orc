@@ -27,6 +27,7 @@ test('a session survives frontend SIGKILL and SIGTERM with an identical screen',
     assert.equal(terminals.length, 1)
     assert.equal(terminals[0].title, name, `${signal}: name survives`)
     assert.equal(terminals[0].handle, created.terminal.handle, `${signal}: handle survives`)
+    assert.equal(terminals[0].cwd, profile, `${signal}: start folder survives`)
     assert.equal(terminals[0].connected, true)
   }
 

@@ -19,6 +19,8 @@ public struct Session: Codable, Identifiable, Hashable {
     public let incarnationId: String?
     /// What its programs report about themselves (OSC 7501), when they do.
     public var programStatus: ProgramStatus? = nil
+    /// The folder the session started in.
+    public var cwd: String? = nil
     public var name: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? handle }
 
     /// The runtime's rule for session names, which are also directory and file names.

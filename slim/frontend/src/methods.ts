@@ -99,6 +99,7 @@ export function createHandlers(runtime: Runtime): Handlers {
       title: target.meta.name,
       worktreeId: worktree.id,
       worktreePath: worktree.path,
+      cwd: target.meta.cwd,
       connected: target.connected,
       writable: target.connected,
       agentIdentity: target.meta.agent ?? null,
