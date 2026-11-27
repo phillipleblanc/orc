@@ -12,7 +12,7 @@ const MAX_NOTES_BYTES = 256 * 1024
 const MAX_TEXT_BYTES = 4 << 20
 const MAX_BINARY_BYTES = 12 << 20
 const MAX_ENTRIES = 5000
-const SESSION_TYPES = ['codex', 'claude', 'pi', 'durable', 'terminal']
+const SESSION_TYPES = ['codex', 'claude', 'pi', 'durable', 'agy', 'terminal']
 
 /** Orc's configuration directory, as Orc.app finds it: `ORC_CONFIG_DIR`, or `~/.config/orc`. */
 export function configDirectory(): string {

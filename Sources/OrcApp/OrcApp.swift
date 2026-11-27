@@ -727,7 +727,7 @@ struct CreateSessionView: View {
     @State private var creating = false
     @State private var showProject = false
     @State private var error: String?
-    /// Codex, Claude and Pi can add a project's MCP servers; durable agents, terminals and custom commands cannot.
+    /// Codex, Claude and Pi can add a project's MCP servers; durable agents, Antigravity, terminals and custom commands cannot.
     private var takesMcp: Bool { ["codex", "claude", "pi"].contains(agent) }
     private var fullName: String {
         guard let parent else { return name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -752,7 +752,7 @@ struct CreateSessionView: View {
                 }
                 Button("Add Project…") { showProject = true }.disabled(creating)
                 Picker("Run", selection: $agent) {
-                    Text("Pi").tag("pi"); Text("Codex").tag("codex"); Text("Claude Code").tag("claude")
+                    Text("Pi").tag("pi"); Text("Codex").tag("codex"); Text("Claude Code").tag("claude"); Text("Antigravity").tag("agy")
                     Text("Durable (experimental)").tag("durable")
                     Text("Terminal").tag("terminal"); Text("Custom command").tag("custom")
                 }

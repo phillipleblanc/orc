@@ -25,7 +25,7 @@ async function cli(profile: string) {
 
 type Ended = {
   name: string
-  agent?: 'codex' | 'claude' | 'pi'
+  agent?: 'codex' | 'claude' | 'pi' | 'agy'
   argv?: string[]
   endedAgo: number
   events?: Record<string, unknown>[]
@@ -60,6 +60,8 @@ test('recently closed lists resumable agent sessions from the last week, newest 
   await ended(profile, { name: 'helper', agent: 'pi', endedAgo: 7200_000, events: [reply('p-1', 'first answer')] })
   await ended(profile, { name: 'helper', agent: 'pi', endedAgo: 3600_000, events: [reply('p-2', 'latest answer')], screen: 'done\r\n\r\n  ready' })
   await ended(profile, { name: 'coder', agent: 'codex', endedAgo: 600_000, argv: ['/bin/codex', 'resume', 'c-9', '--no-daemon'] })
+  // Antigravity names the conversation in camelCase.
+  await ended(profile, { name: 'gravity', agent: 'agy', endedAgo: 300_000, events: [{ event: 'SessionStart', payload: { conversationId: 'g-1', transcriptPath: '/t/g-1.jsonl' } }] })
   await ended(profile, { name: 'shell', endedAgo: 60_000 })
   await ended(profile, { name: 'fresh', agent: 'claude', endedAgo: 60_000, events: [{ event: 'SessionStart', payload: null }] })
   await ended(profile, { name: 'stale', agent: 'pi', endedAgo: 8 * DAY, events: [reply('s-1', 'old')] })
@@ -77,8 +79,9 @@ test('recently closed lists resumable agent sessions from the last week, newest 
   await frontend.rpc('terminal.create', { name: 'busy', cwd: profile, argv: ['/bin/sleep', '600'] })
 
   const { sessions } = await frontend.rpc('history.list')
-  assert.deepEqual(sessions.map((session: { name: string }) => session.name), ['coder', 'cleared', 'helper'])
-  const [coder, cleared, helper] = sessions
+  assert.deepEqual(sessions.map((session: { name: string }) => session.name), ['gravity', 'coder', 'cleared', 'helper'])
+  const [gravity, coder, cleared, helper] = sessions
+  assert.deepEqual(gravity.conversation, { id: 'g-1', transcriptPath: '/t/g-1.jsonl' })
   assert.deepEqual(cleared.conversation, { id: 'c-2', transcriptPath: '/t/c-2.jsonl' })
   assert.equal(cleared.lastMessage, undefined)
   // A resume that failed before the agent reported anything still names its conversation.
@@ -99,7 +102,7 @@ test('recently closed lists resumable agent sessions from the last week, newest 
     const orc = await cli(profile)
     const listed = await orc(['history'])
     assert.equal(listed.code, 0, listed.stderr)
-    assert.match(listed.stdout, /^Recently closed\nSESSION\tAGENT\tCLOSED\tPROJECT\ncoder\tcodex\t10m ago\t.+\ncleared\tclaude\t20m ago\t.+\nhelper\tpi\t1h ago\t.+\n\nConversations in registered projects\n  No conversations\.\n$/)
+    assert.match(listed.stdout, /^Recently closed\nSESSION\tAGENT\tCLOSED\tPROJECT\ngravity\tagy\t5m ago\t.+\ncoder\tcodex\t10m ago\t.+\ncleared\tclaude\t20m ago\t.+\nhelper\tpi\t1h ago\t.+\n\nConversations in registered projects\n  No conversations\.\n$/)
     const json = JSON.parse((await orc(['history', 'help', '--json'])).stdout)
     assert.deepEqual(json.sessions.map((session: { name: string }) => session.name), ['helper'])
     assert.deepEqual(json.conversations, [])

@@ -1,24 +1,25 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DURABLE_LOOP, DURABLE_LOOP_NAME, DURABLE_WORKER, durableConversationId } from './durable/paths.ts'
 
-export type AgentKind = 'codex' | 'claude' | 'pi' | 'durable'
-export const AGENT_KINDS: readonly AgentKind[] = ['codex', 'claude', 'pi', 'durable']
+export type AgentKind = 'codex' | 'claude' | 'pi' | 'durable' | 'agy'
+export const AGENT_KINDS: readonly AgentKind[] = ['codex', 'claude', 'pi', 'durable', 'agy']
 
 export function isAgentKind(value: unknown): value is AgentKind {
   return typeof value === 'string' && (AGENT_KINDS as readonly string[]).includes(value)
 }
 
 /**
- * Appends one lifecycle event to `$ORC_AGENT_EVENTS`. It prints nothing and always exits 0: agents
- * treat hook output and exit status as instructions. Tool events carry no payload because tool
- * results can be arbitrarily large.
+ * Appends one lifecycle event to `$ORC_AGENT_EVENTS`. It always exits 0 and prints nothing but the empty
+ * answer Antigravity requires: agents treat hook output and exit status as instructions. Tool events carry
+ * no payload because tool results can be arbitrarily large.
  */
 const HOOK_SCRIPT = `#!/bin/sh
 agent=$1
 event=$2
+[ "$agent" = agy ] && echo '{}'
 if [ -z "$ORC_AGENT_EVENTS" ]; then cat >/dev/null 2>&1; exit 0; fi
 case "$event" in
   PreToolUse|PostToolUse|SubagentStart|SubagentStop) cat >/dev/null 2>&1; payload=null ;;
@@ -76,25 +77,43 @@ const CODEX_EVENTS: [event: string, label: string][] = [
   ['SessionStart', 'session_start'], ['UserPromptSubmit', 'user_prompt_submit'], ['PreToolUse', 'pre_tool_use'],
   ['PermissionRequest', 'permission_request'], ['PostToolUse', 'post_tool_use'], ['Stop', 'stop'], ['Interrupt', 'interrupt']
 ]
+// Antigravity's hooks and the events they report as. A model call stands for a turn's start: Antigravity fires
+// no hook when a prompt is submitted, and its first call follows at once. Every step of a turn is a model call, so
+// no tool hooks are needed; Antigravity reads a PreToolUse hook's empty answer as a denial.
+const AGY_EVENTS: [event: string, as: string][] = [['SessionStart', 'SessionStart'], ['PreInvocation', 'UserPromptSubmit'], ['Stop', 'Stop']]
 const HOOK_TIMEOUT_SECONDS = 10
 // Codex caps Interrupt hook timeouts at 3 seconds and hashes the capped value for trust.
 const CODEX_TIMEOUTS: Record<string, number> = { Interrupt: 3 }
 
-export type AgentHooks = { script: string; claudeSettings: string; piExtension: string }
+/**
+ * `agyWorkspace` holds Antigravity's hooks as `.agents/hooks.json`, which it reads from every folder of its workspace.
+ * Antigravity keeps a conversation's folders and adds them again when it resumes, so this folder's path never changes;
+ * its hooks name the current script.
+ */
+export type AgentHooks = { script: string; claudeSettings: string; piExtension: string; agyWorkspace: string }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**
- * Writes the hook script, Claude settings and Pi extension under `<profile>/agent-hooks/<hash>/`.
- * Running agents reference these paths, so a changed version goes to a new directory.
+ * Writes the hook script, Claude settings and Pi extension under `<profile>/agent-hooks/<hash>/`, and Antigravity's
+ * hooks under `<profile>/agent-hooks/agy/`. Running agents reference these paths, so a changed version goes to a new
+ * directory, except for Antigravity's hooks, which are replaced.
  */
 export async function installAgentHooks(profile: string): Promise<AgentHooks> {
   const digest = createHash('sha256').update(HOOK_SCRIPT).update(PI_EXTENSION).update(JSON.stringify(CLAUDE_EVENTS)).digest('hex').slice(0, 16)
   const dir = join(profile, 'agent-hooks', digest)
-  const hooks: AgentHooks = { script: join(dir, 'orc-agent-hook'), claudeSettings: join(dir, 'claude-settings.json'), piExtension: join(dir, 'orc-agent-status.ts') }
-  if (existsSync(hooks.piExtension)) return hooks
+  const hooks: AgentHooks = {
+    script: join(dir, 'orc-agent-hook'), claudeSettings: join(dir, 'claude-settings.json'), piExtension: join(dir, 'orc-agent-status.ts'),
+    agyWorkspace: join(profile, 'agent-hooks', 'agy')
+  }
+  if (!existsSync(hooks.piExtension)) await writeVersion(dir, hooks)
+  await writeAgyHooks(hooks)
+  return hooks
+}
+
+async function writeVersion(dir: string, hooks: AgentHooks): Promise<void> {
   const staging = `${dir}.${process.pid}.tmp`
   await mkdir(staging, { recursive: true, mode: 0o700 })
   const script = join(staging, 'orc-agent-hook')
@@ -113,7 +132,18 @@ export async function installAgentHooks(profile: string): Promise<AgentHooks> {
   } catch (error) {
     if (!existsSync(hooks.piExtension)) throw error
   }
-  return hooks
+}
+
+async function writeAgyHooks(hooks: AgentHooks): Promise<void> {
+  const file = join(hooks.agyWorkspace, '.agents', 'hooks.json')
+  const body = JSON.stringify({
+    'orc-status': Object.fromEntries(AGY_EVENTS.map(([event, as]) =>
+      [event, [{ type: 'command', command: `${shellQuote(hooks.script)} agy ${as}`, timeout: HOOK_TIMEOUT_SECONDS }]]))
+  }, null, 2)
+  if (await readFile(file, 'utf8').catch(() => null) === body) return
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+  await writeFile(`${file}.${process.pid}.tmp`, body, { mode: 0o600 })
+  await rename(`${file}.${process.pid}.tmp`, file)
 }
 
 function canonical(value: unknown): unknown {
@@ -144,15 +174,23 @@ function codexHookArguments(script: string): string[] {
 /** The agent's own record of a conversation, as its hooks report it. */
 export type ProviderSession = { id?: string; transcriptPath?: string }
 
+/** The conversation a hook event's payload names, if any; Antigravity names the fields in camelCase. */
+export function payloadConversation(payload: Record<string, unknown> | null | undefined): ProviderSession {
+  const id = payload?.session_id ?? payload?.conversationId
+  const transcriptPath = payload?.transcript_path ?? payload?.transcriptPath
+  return { ...(typeof id === 'string' && id ? { id } : {}), ...(typeof transcriptPath === 'string' && transcriptPath ? { transcriptPath } : {}) }
+}
+
 export type LaunchOptions = { model?: string; effort?: string; args?: string[]; resume?: ProviderSession }
 
 // Flags that Orc passes itself, so a caller's copy is dropped: Codex rejects a repeated flag.
 const CODEX_FLAGS = new Set(['--no-daemon', '--yolo', '--dangerously-bypass-approvals-and-sandbox'])
 const CLAUDE_FLAGS = new Set(['--dangerously-skip-permissions'])
+const AGY_FLAGS = CLAUDE_FLAGS
 
 /**
  * The argv that starts `kind` with Orc's status reporting. Agents act without asking for approval:
- * Codex with `--yolo` (also outside its sandbox), Claude with `--dangerously-skip-permissions`.
+ * Codex with `--yolo` (also outside its sandbox), Claude and Antigravity with `--dangerously-skip-permissions`.
  * `resume` continues that conversation instead of starting a new one. A durable agent's `executable`
  * is the runtime's Node, and its conversation is always `resume.transcriptPath`, a new file or not.
  */
@@ -171,6 +209,9 @@ export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks
       return [executable, '-e', hooks.piExtension, ...(session ? ['--session', session] : []),
         ...(model ? ['--model', model] : []), ...(effort ? ['--thinking', effort] : []), ...args]
     }
+    case 'agy':
+      return [executable, '--dangerously-skip-permissions', '--add-dir', hooks.agyWorkspace, ...(resume.id ? ['--conversation', resume.id] : []),
+        ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args.filter((arg) => !AGY_FLAGS.has(arg))]
     case 'durable':
       // A loop runs the worker, so it can restart on newer code without ending the session.
       return ['/bin/sh', '-c', DURABLE_LOOP, DURABLE_LOOP_NAME, executable, DURABLE_WORKER, '--storage', resume.transcriptPath ?? '',
@@ -180,7 +221,7 @@ export function agentArgv(kind: AgentKind, executable: string, hooks: AgentHooks
 
 /** The conversation an argv built by `agentArgv` resumes, if any. */
 export function resumedConversation(kind: AgentKind, argv: string[]): ProviderSession {
-  const flag = kind === 'codex' ? 'resume' : kind === 'claude' ? '--resume' : kind === 'durable' ? '--storage' : '--session'
+  const flag = kind === 'codex' ? 'resume' : kind === 'claude' ? '--resume' : kind === 'agy' ? '--conversation' : kind === 'durable' ? '--storage' : '--session'
   const index = argv.indexOf(flag)
   const value = index >= 0 ? argv[index + 1] : undefined
   if (!value || value.startsWith('-')) return {}
@@ -200,10 +241,11 @@ export function callerArguments(kind: AgentKind, argv: string[]): string[] {
     const word = words[index]
     const next = words[index + 1] ?? ''
     const ours = kind === 'codex' ? CODEX_FLAGS.has(word) || word === '--last'
-      : kind === 'claude' ? CLAUDE_FLAGS.has(word) : false
+      : kind === 'claude' ? CLAUDE_FLAGS.has(word) : kind === 'agy' ? AGY_FLAGS.has(word) : false
     if (ours) continue
     const withValue = kind === 'codex' ? (word === '-c' && /^hooks(\.state)?=/.test(next)) || (word === 'resume' && !next.startsWith('-'))
       : kind === 'claude' ? (word === '--settings' && next.includes('/agent-hooks/')) || word === '--resume'
+      : kind === 'agy' ? (word === '--add-dir' && next.includes('/agent-hooks/')) || word === '--conversation'
       : kind === 'durable' ? word === '--storage'
       : (word === '-e' && next.includes('/agent-hooks/')) || word === '--session'
     if (withValue) {

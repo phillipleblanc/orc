@@ -38,7 +38,7 @@ The app and CLI read session defaults from **`~/.config/orc/config.json`**:
 }
 ```
 
-`defaultSessionType` supports `codex`, `claude`, `pi`, and `terminal`. `defaultProject` accepts the same selectors as `--project`: a registered project name, absolute path, `path:/absolute/path`, or `id:ID`. An explicit CLI type or `--project` overrides the corresponding setting. The app initializes its New Session controls from both defaults and lets you choose another project or agent, and **Settings…** in the app edits them. A missing or ambiguous project produces an error instead of choosing another project.
+`defaultSessionType` supports `codex`, `claude`, `pi`, `agy` (Antigravity), and `terminal`. `defaultProject` accepts the same selectors as `--project`: a registered project name, absolute path, `path:/absolute/path`, or `id:ID`. An explicit CLI type or `--project` overrides the corresponding setting. The app initializes its New Session controls from both defaults and lets you choose another project or agent, and **Settings…** in the app edits them. A missing or ambiguous project produces an error instead of choosing another project.
 
 Installation creates this file if absent and preserves existing settings. The project must be registered before session creation. Defaults are read each time a session is created from the CLI or picker, and each time the app opens New Session. `ORC_CONFIG_DIR` changes the directory for configuration, connection credentials, and the default runtime profile.
 
@@ -72,4 +72,4 @@ A Rex tab leaves its session's size alone until you type in it; typing sizes the
 
 Run **`orc new`** in a Rex tab you named, and the session takes the tab's name, unless you pass `--name` or a session already has it. While Orc syncs, that tab becomes the session's tab: no second tab is made for it, it takes the session's name, including when you rename the session or when you hadn't named the tab, and it stays open when the session ends. The picker's **n** does the same.
 
-Rex picks a tab's icon from the program running in it, so an agent's tab runs `orc attach` under the agent's command name, `claude`, `codex` or `pi`, for Rex to show that agent's icon. The names are links to `orc` in the runtime profile's `rex-programs` folder, which is not on your PATH, so your own `claude`, `codex` and `pi` are unchanged. Tabs made before keep their icon until `orc rex clear` and `orc rex start` remake them.
+Rex picks a tab's icon from the program running in it, so an agent's tab runs `orc attach` under the agent's command name, `claude`, `codex`, `pi` or `agy`, for Rex to show that agent's icon. The names are links to `orc` in the runtime profile's `rex-programs` folder, which is not on your PATH, so your own `claude`, `codex`, `pi` and `agy` are unchanged. Tabs made before keep their icon until `orc rex clear` and `orc rex start` remake them.

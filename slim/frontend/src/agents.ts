@@ -93,7 +93,7 @@ export class AgentDirectory extends EventEmitter {
 
   /** Starts an agent in a new session, without waiting for it. */
   async launch(options: SpawnOptions): Promise<TerminalSession> {
-    if (!isAgentKind(options.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude, pi or durable')
+    if (!isAgentKind(options.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude, pi, durable or agy')
     const project = options.project ? this.projects.resolve(options.project) : options.cwd ? this.projects.containing(options.cwd) : undefined
     if (options.project && !project) throw new RpcError('not_found', `no project ${options.project}`)
     const cwd = options.cwd ?? project?.path
@@ -363,14 +363,18 @@ export class AgentDirectory extends EventEmitter {
     }
   }
 
-  /** The message to type now: the oldest while the agent is idle, the oldest not held for idle while it works. */
+  /**
+   * The message to type now: the oldest while the agent is idle, the oldest not held for idle while it works. Antigravity
+   * holds text typed during a turn and starts another turn with it after the turn's `Stop`, which would look finished, so
+   * it is typed to only while idle.
+   */
   private next(record: AgentRecord): QueuedMessage | undefined {
     const { monitor } = record
     if (!monitor.ready) return undefined
     if (monitor.kind === 'durable') return monitor.state === 'ended' ? undefined : record.queue[0]
     switch (monitor.effectiveState) {
       case 'idle': return record.queue[0]
-      case 'working': return record.queue.find((message) => !message.whenIdle)
+      case 'working': return monitor.kind === 'agy' ? undefined : record.queue.find((message) => !message.whenIdle)
       default: return undefined
     }
   }

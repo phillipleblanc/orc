@@ -112,12 +112,12 @@ import COrcSupport
             let customCommand = try value("--command")
             let mcp = try value("--mcp").map(SessionService.mcpNames) ?? []
             guard options.count <= 1, options.first?.hasPrefix("--") != true else {
-                throw OrcError("Usage: orc new [codex|claude|pi|durable|terminal] [--name NAME] [--project SELECTOR] [--mcp NAME[,NAME]] [--json]")
+                throw OrcError("Usage: orc new [codex|claude|pi|durable|agy|terminal] [--name NAME] [--project SELECTOR] [--mcp NAME[,NAME]] [--json]")
             }
             let type: SessionType?
             if let requestedType = options.first {
                 guard let parsed = SessionType(rawValue: requestedType) else {
-                    throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, durable, or terminal; use --name NAME to name it.")
+                    throw OrcError("Unknown session type '\(requestedType)'. Choose codex, claude, pi, durable, agy, or terminal; use --name NAME to name it.")
                 }
                 guard customCommand == nil else { throw OrcError("Choose a session type or --command, not both.") }
                 type = parsed
@@ -570,7 +570,7 @@ import COrcSupport
     orc projects [--json]                    List projects
     orc projects add PATH [--default]        Register a project folder
     orc projects remove SELECTOR [--json]    Forget a project with no sessions; its folder is unchanged
-    orc new [codex|claude|pi|durable|terminal] Create and attach (default: codex)
+    orc new [codex|claude|pi|durable|agy|terminal] Create and attach (default: codex)
             [--name NAME]                   Otherwise choose a short verb-noun name
             [--project SELECTOR] [--json]    Override the configured project
             [--mcp NAME[,NAME]]              Add the project's .mcp/NAME.json servers to the agent

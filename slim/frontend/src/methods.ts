@@ -57,7 +57,7 @@ const ENTER_DELAY_MS = 500
 
 const MAX_WAIT_MS = 10 * 60_000
 
-/** `codex …`, `claude …`, `pi …` or `durable …` commands start an agent with status reporting. */
+/** `codex …`, `claude …`, `pi …`, `durable …` or `agy …` commands start an agent with status reporting. */
 function agentCommand(command: string): { agent: AgentKind; args: string[] } | null {
   const words = command.trim().split(/\s+/)
   const agent = words[0]?.split('/').pop()
@@ -317,7 +317,7 @@ export function createHandlers(runtime: Runtime): Handlers {
     },
 
     'agent.spawn': (params) => {
-      if (!isAgentKind(params.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude, pi or durable')
+      if (!isAgentKind(params.agent)) throw new RpcError('invalid_argument', 'agent must be codex, claude, pi, durable or agy')
       if (typeof params.name !== 'string') throw new RpcError('invalid_argument', 'name is required')
       return agents.spawn({
         agent: params.agent, name: params.name,

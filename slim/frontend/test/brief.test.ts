@@ -88,6 +88,32 @@ test('a Codex digest stops at its latest compaction, keeping the requests it ret
   assert.deepEqual(digest.items.map((entry) => `${entry.role}: ${entry.text}`), ['tool: exec events_read()', 'result: 2 events', 'assistant: Acknowledged both events.'])
 })
 
+test('an Antigravity digest reads its requests, steps and results back to its latest compaction; without one it has the first request', async (t) => {
+  const directory = await temporary(t)
+  const path = join(directory, 'transcript_full.jsonl')
+  const step = (type: string, source: string, fields: Record<string, unknown>) => ({ step_index: 0, source, type, status: 'DONE', created_at: 'x', ...fields })
+  const request = (text: string) => step('USER_INPUT', 'USER_EXPLICIT', { content: `<USER_REQUEST>\n${text}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>` })
+  const later = [
+    request('Fix the failing test'),
+    step('SYSTEM_MESSAGE', 'SYSTEM', { content: 'The following is a <SYSTEM_MESSAGE> not actually sent by the user.' }),
+    step('PLANNER_RESPONSE', 'MODEL', { content: 'Running the tests.', thinking: 'hidden', tool_calls: [{ name: 'run_command', args: { CommandLine: 'npm test' } }] }),
+    step('GENERIC', 'MODEL', { content: 'Created At: x\nCompleted At: y\nCommand exited with code 1.' }),
+    step('GENERIC', 'MODEL', { status: 'ERROR', error: 'tool call denied', content: 'Created At: x' }),
+    step('PLANNER_RESPONSE', 'MODEL', { content: 'One test fails.' })
+  ]
+  await writeFile(path, jsonl([request('Old work'), step('CHECKPOINT', 'SYSTEM', { content: '# Resuming from a compaction\nThe old work is done.' }), ...later]))
+  const digest = await transcriptDigest('agy', path)
+  assert.equal(digest.summary, '# Resuming from a compaction\nThe old work is done.')
+  assert.deepEqual(digest.items.map((entry) => `${entry.role}: ${entry.text}`), [
+    'user: Fix the failing test', 'assistant: Running the tests.', 'tool: run_command {"CommandLine":"npm test"}',
+    'result: Command exited with code 1.', 'error: tool call denied', 'assistant: One test fails.'
+  ])
+
+  const fresh = join(directory, 'fresh.jsonl')
+  await writeFile(fresh, jsonl(later))
+  assert.equal((await transcriptDigest('agy', fresh)).firstPrompt, 'Fix the failing test')
+})
+
 test('a digest keeps the newest log within its budget and still finds the summary before it', async (t) => {
   const directory = await temporary(t)
   const path = join(directory, 'pi.jsonl')

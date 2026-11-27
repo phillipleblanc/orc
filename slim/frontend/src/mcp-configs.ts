@@ -68,7 +68,7 @@ function readServers(name: string, path: string): Record<string, McpServer> {
 /** The project's configs with these names, for an agent of `kind`; an unknown or unusable name is an error. */
 export function resolveMcpConfigs(projectDir: string, names: string[], kind: AgentKind): { name: string; path: string; servers: Record<string, McpServer> }[] {
   if (names.length === 0) return []
-  if (kind === 'durable') throw new RpcError('invalid_argument', 'durable agents cannot use MCP servers')
+  if (kind === 'durable' || kind === 'agy') throw new RpcError('invalid_argument', `${kind === 'agy' ? 'Antigravity' : 'durable'} agents cannot use MCP servers`)
   const available = listMcpConfigs(projectDir)
   return [...new Set(names)].map((name) => {
     const config = available.find((candidate) => candidate.name === name)
@@ -92,7 +92,8 @@ export function mcpArguments(kind: AgentKind, configs: { path: string; servers: 
     case 'claude': return configs.flatMap(({ path }) => ['--mcp-config', path])
     case 'pi': return ['--orc-mcp', JSON.stringify(configs.map(({ path }) => path))]
     case 'codex': return configs.flatMap(({ servers }) => Object.entries(servers).flatMap(([name, server]) => codexServer(name, server)))
-    case 'durable': throw new RpcError('invalid_argument', 'durable agents cannot use MCP servers')
+    case 'durable':
+    case 'agy': throw new RpcError('invalid_argument', `${kind === 'agy' ? 'Antigravity' : 'durable'} agents cannot use MCP servers`)
   }
 }
 

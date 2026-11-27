@@ -112,6 +112,18 @@ test('a queued message saved without whenIdle waits for idle', async (t) => {
   assert.equal(session.messages()[1], 'from before')
 })
 
+test('a working Antigravity agent is typed a message only once its turn ends, and wait covers the turn the message starts', async (t) => {
+  const { agents, session, event } = await agentRuntime(t, ['SessionStart', 'UserPromptSubmit'], undefined, 'agy')
+  assert.equal((await agents.send('worker', 'steer', { from: 'lead' })).delivered, false)
+  const waiting = agents.wait('worker', 5000)
+  await event('Stop')
+  await until(async () => session.messages().length === 1, 2000, 'the message once the turn ends')
+  assert.equal(session.messages()[0], '[from lead]\nsteer')
+  await event('UserPromptSubmit')
+  await event('Stop')
+  assert.equal((await waiting).done, true)
+})
+
 test('a waiting mark lasts until the agent next starts working, through a frontend restart', async (t) => {
   const { agents, session, event } = await agentRuntime(t, ['SessionStart'])
   const marked = () => agents.isMarkedWaiting(session as any)

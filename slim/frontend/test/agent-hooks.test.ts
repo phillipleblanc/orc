@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentArgv, callerArguments } from '../src/agent-hooks.ts'
+import { agentArgv, callerArguments, installAgentHooks, payloadConversation } from '../src/agent-hooks.ts'
 
-const hooks = { script: '/p/agent-hooks/1/orc-agent-hook', claudeSettings: '/p/agent-hooks/1/claude-settings.json', piExtension: '/p/agent-hooks/1/orc-agent-status.ts' }
+const hooks = { script: '/p/agent-hooks/1/orc-agent-hook', claudeSettings: '/p/agent-hooks/1/claude-settings.json', piExtension: '/p/agent-hooks/1/orc-agent-status.ts', agyWorkspace: '/p/agent-hooks/1/agy' }
 const count = (argv: string[], flag: string) => argv.filter((arg) => arg === flag).length
 
-test('Codex and Claude agents start without approval prompts, each flag once', () => {
+test('Codex, Claude and Antigravity agents start without approval prompts, each flag once', () => {
   const codex = agentArgv('codex', '/bin/codex', hooks, { args: ['--yolo', '--no-daemon', '--dangerously-bypass-approvals-and-sandbox', '-c', 'x=1'] })
   assert.deepEqual(codex.slice(0, 3), ['/bin/codex', '--no-daemon', '--yolo'])
   assert.equal(count(codex, '--yolo'), 1)
@@ -15,6 +19,9 @@ test('Codex and Claude agents start without approval prompts, each flag once', (
 
   const claude = agentArgv('claude', '/bin/claude', hooks, { model: 'haiku', args: ['--dangerously-skip-permissions'] })
   assert.deepEqual(claude, ['/bin/claude', '--dangerously-skip-permissions', '--settings', hooks.claudeSettings, '--model', 'haiku'])
+
+  const agy = agentArgv('agy', '/bin/agy', hooks, { model: 'm', args: ['--dangerously-skip-permissions'] })
+  assert.deepEqual(agy, ['/bin/agy', '--dangerously-skip-permissions', '--add-dir', hooks.agyWorkspace, '--model', 'm'])
 
   assert.deepEqual(agentArgv('pi', '/bin/pi', hooks), ['/bin/pi', '-e', hooks.piExtension])
 })
@@ -27,9 +34,11 @@ test('a resumed agent continues its conversation with the arguments it was start
   assert.deepEqual(claude.slice(-4), ['--resume', 'abc-123', '--model', 'haiku'])
   const pi = agentArgv('pi', '/bin/pi', hooks, { effort: 'low', resume })
   assert.deepEqual(pi, ['/bin/pi', '-e', hooks.piExtension, '--session', '/sessions/abc-123.jsonl', '--thinking', 'low'])
+  const agy = agentArgv('agy', '/bin/agy', hooks, { effort: 'high', resume })
+  assert.deepEqual(agy, ['/bin/agy', '--dangerously-skip-permissions', '--add-dir', hooks.agyWorkspace, '--conversation', 'abc-123', '--effort', 'high'])
 
   // Recovering the caller's arguments from an argv, resumed or not, gives back model, effort and extra arguments.
-  for (const kind of ['codex', 'claude', 'pi'] as const) {
+  for (const kind of ['codex', 'claude', 'pi', 'agy'] as const) {
     const fresh = agentArgv(kind, `/bin/${kind}`, hooks, { model: 'm', effort: 'e', args: ['--extra', 'value'] })
     const resumed = agentArgv(kind, `/bin/${kind}`, hooks, { model: 'm', effort: 'e', args: ['--extra', 'value'], resume })
     assert.deepEqual(callerArguments(kind, resumed), callerArguments(kind, fresh), kind)
@@ -38,4 +47,27 @@ test('a resumed agent continues its conversation with the arguments it was start
   // Argv from before Orc passed the approval flags, and a caller's own resume request.
   assert.deepEqual(callerArguments('codex', ['/bin/codex', '--no-daemon', '-c', 'hooks={}', '-c', 'hooks.state={}', '-m', 'gpt', 'resume', '--last']), ['-m', 'gpt'])
   assert.deepEqual(callerArguments('claude', ['/bin/claude', '--settings', hooks.claudeSettings, '--settings', '/mine.json']), ['--settings', '/mine.json'])
+})
+
+test('Antigravity reads its hooks from one folder, which names the current script; the hooks answer it and record the conversation', async (t) => {
+  const profile = await mkdtemp(join(tmpdir(), 'slim-hooks-'))
+  t.after(() => rm(profile, { recursive: true, force: true }))
+  const installed = await installAgentHooks(profile)
+  assert.equal(installed.agyWorkspace, join(profile, 'agent-hooks', 'agy'))
+  const config = JSON.parse(await readFile(join(installed.agyWorkspace, '.agents', 'hooks.json'), 'utf8'))['orc-status']
+  // No tool hooks: Antigravity reads a PreToolUse hook's empty answer as a denial.
+  assert.deepEqual(Object.keys(config), ['SessionStart', 'PreInvocation', 'Stop'])
+  assert.equal(config.PreInvocation[0].command, `'${installed.script}' agy UserPromptSubmit`)
+
+  const events = join(profile, 'events.jsonl')
+  const payload = { conversationId: 'g-1', transcriptPath: '/t/g-1.jsonl', hookEventName: 'PreInvocation' }
+  const stdout = await new Promise<string>((resolve, reject) => {
+    const child = execFile('/bin/sh', ['-c', config.PreInvocation[0].command], { env: { PATH: '/usr/bin:/bin', ORC_AGENT_EVENTS: events } },
+      (error, out) => (error ? reject(error) : resolve(out)))
+    child.stdin!.end(JSON.stringify(payload))
+  })
+  assert.equal(stdout, '{}\n', 'Antigravity requires a JSON object answer')
+  const recorded = JSON.parse(await readFile(events, 'utf8'))
+  assert.equal(recorded.event, 'UserPromptSubmit')
+  assert.deepEqual(payloadConversation(recorded.payload), { id: 'g-1', transcriptPath: '/t/g-1.jsonl' })
 })

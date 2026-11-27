@@ -184,6 +184,7 @@ struct SettingsView: View {
         case .codex: "Codex"
         case .claude: "Claude"
         case .pi: "Pi"
+        case .agy: "Antigravity"
         case .durable: "Durable (experimental)"
         case .terminal: "Terminal"
         }

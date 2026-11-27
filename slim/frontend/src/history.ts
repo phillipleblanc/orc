@@ -1,6 +1,6 @@
 import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { callerArguments, isAgentKind, resumedConversation, type AgentKind, type ProviderSession } from './agent-hooks.ts'
+import { callerArguments, isAgentKind, payloadConversation, resumedConversation, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import type { AgentDirectory } from './agents.ts'
 import type { Conversation, ConversationIndex } from './conversations.ts'
 import { createTerminal, write } from './emulator.ts'
@@ -274,12 +274,13 @@ async function agentRecord(meta: AgentMeta): Promise<{ conversation: ProviderSes
   for (const line of (await readFile(meta.events, 'utf8').catch(() => '')).split('\n')) {
     try {
       const payload = JSON.parse(line)?.payload
-      if (typeof payload?.session_id === 'string' && conversation.id && payload.session_id !== conversation.id) {
+      const named = payloadConversation(payload)
+      if (named.id && conversation.id && named.id !== conversation.id) {
         lastMessage = undefined
         delete conversation.transcriptPath
       }
-      if (typeof payload?.session_id === 'string') conversation.id = payload.session_id
-      if (typeof payload?.transcript_path === 'string') conversation.transcriptPath = payload.transcript_path
+      if (named.id) conversation.id = named.id
+      if (named.transcriptPath) conversation.transcriptPath = named.transcriptPath
       if (typeof payload?.last_assistant_message === 'string') lastMessage = payload.last_assistant_message.slice(0, MESSAGE_CHARS)
     } catch {}
   }

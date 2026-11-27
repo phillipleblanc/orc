@@ -41,10 +41,10 @@ public struct SessionAgentCommand {
         switch action {
         case .spawn:
             var rest = positional[...]
-            if let kind = rest.first, ["codex", "claude", "pi", "durable"].contains(kind) { agent = kind; rest = rest.dropFirst() }
-            guard rest.count <= 1 else { throw OrcError("Choose codex, claude, pi or durable, then the name.") }
+            if let kind = rest.first, ["codex", "claude", "pi", "durable", "agy"].contains(kind) { agent = kind; rest = rest.dropFirst() }
+            guard rest.count <= 1 else { throw OrcError("Choose codex, claude, pi, durable or agy, then the name.") }
             if let given = rest.first { guard name == nil else { throw OrcError("Give the name once.") }; name = given }
-            guard name != nil else { throw OrcError("Usage: orc agent spawn [codex|claude|pi|durable] NAME [--prompt-file FILE]") }
+            guard name != nil else { throw OrcError("Usage: orc agent spawn [codex|claude|pi|durable|agy] NAME [--prompt-file FILE]") }
         case .list:
             guard positional.isEmpty else { throw OrcError("Usage: orc agent list [--json]") }
         case .send, .status, .wait:
@@ -60,7 +60,7 @@ public struct SessionAgentCommand {
     /// The agent spawn starts when none is given: the default session type, as for `orc new`, when it is an agent.
     public static func defaultAgent(_ config: OrcConfiguration) throws -> String {
         guard config.defaultSessionType != .terminal else {
-            throw OrcError("The default session type is terminal, which is not an agent. Choose codex, claude, pi or durable, or make an agent the default in Orc's Settings.")
+            throw OrcError("The default session type is terminal, which is not an agent. Choose codex, claude, pi, durable or agy, or make an agent the default in Orc's Settings.")
         }
         return config.defaultSessionType.rawValue
     }
@@ -86,7 +86,7 @@ public struct SessionAgentCommand {
     }
 
     public static let help = """
-    orc agent spawn [codex|claude|pi|durable] NAME [--project SELECTOR] [--prompt-file FILE]
+    orc agent spawn [codex|claude|pi|durable|agy] NAME [--project SELECTOR] [--prompt-file FILE]
         [--model MODEL] [--effort LEVEL] [--mcp NAME[,NAME]] [--grant PATH] [--timeout-seconds SECONDS] [--json]
     orc agent send NAME [--file FILE] [--when-idle] [--json]
     orc agent list [--json]

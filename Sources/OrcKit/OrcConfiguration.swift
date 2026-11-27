@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum SessionType: String, Codable, CaseIterable {
-    case codex, claude, pi, durable, terminal
+    case codex, claude, pi, durable, agy, terminal
     public var command: String? {
         switch self {
         case .codex: return "codex --no-daemon"
@@ -56,7 +56,7 @@ public struct OrcConfiguration: Decodable {
         guard FileManager.default.fileExists(atPath: file.path) else { return OrcConfiguration() }
         do { return try JSONDecoder().decode(Self.self, from: Data(contentsOf: file)) }
         catch {
-            throw OrcError("Cannot read \(file.path). Use a JSON object with defaultSessionType set to codex, claude, pi, or terminal, and defaultProject set to a non-empty project name, absolute path, path:PATH, or id:ID. \(error.localizedDescription)")
+            throw OrcError("Cannot read \(file.path). Use a JSON object with defaultSessionType set to codex, claude, pi, durable, agy, or terminal, and defaultProject set to a non-empty project name, absolute path, path:PATH, or id:ID. \(error.localizedDescription)")
         }
     }
 }

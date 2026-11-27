@@ -237,6 +237,42 @@ async function codexDigest(path: string): Promise<Digest> {
   return finish(collector, summary, () => firstPrompt(path, (line) => line?.type === 'response_item' && line.payload?.type === 'message' && line.payload.role === 'user' ? textOf(line.payload.content) : undefined))
 }
 
+function agyRequest(step: any): string | undefined {
+  if (step?.type !== 'USER_INPUT' || typeof step.content !== 'string') return undefined
+  return /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/.exec(step.content)?.[1]
+}
+
+function agyItems(step: any): DigestItem[] {
+  const content = typeof step?.content === 'string' ? step.content : ''
+  if (step?.type === 'USER_INPUT') return item('user', agyRequest(step))
+  if (step?.type === 'PLANNER_RESPONSE') {
+    const calls: any[] = Array.isArray(step.tool_calls) ? step.tool_calls : []
+    return [...item('assistant', content), ...calls.flatMap((call) => item('tool', `${call?.name} ${json(call?.args)}`))]
+  }
+  if (step?.source !== 'MODEL') return []
+  if (step.status === 'ERROR') return item('error', typeof step.error === 'string' && step.error ? step.error : content)
+  return item('result', content.replace(/^(Created|Completed) At: .*\n/gm, ''))
+}
+
+/**
+ * An Antigravity transcript: one step per line, read back to its latest compaction checkpoint, which summarizes the
+ * conversation before it. Requests are the user's input steps; the model's other steps are tool results.
+ */
+async function agyDigest(path: string): Promise<Digest> {
+  const collector = new Collector()
+  let summary: string | undefined
+  for await (const line of linesFromEnd(path)) {
+    if (collector.truncated && !line.includes('"CHECKPOINT"')) continue
+    const step = parse(line)
+    if (step?.type === 'CHECKPOINT') {
+      summary = typeof step.content === 'string' ? step.content : undefined
+      break
+    }
+    collector.add(agyItems(step))
+  }
+  return finish(collector, summary, () => firstPrompt(path, agyRequest))
+}
+
 async function finish(collector: Collector, summary: string | undefined, first: () => Promise<string | undefined>): Promise<Digest> {
   return {
     ...(summary ? { summary: clip(summary, SUMMARY_CHARS) } : { firstPrompt: await first() }),
@@ -274,9 +310,9 @@ export function durableDigest(entries: readonly any[]): Digest {
   return { ...(summary ? { summary: clip(summary, SUMMARY_CHARS) } : { firstPrompt: clip(textOf(first?.model?.[0]?.content), LIMITS.user * 2) || undefined }), items: collector.items(), truncated: collector.truncated }
 }
 
-/** The digest of a Codex, Claude or Pi transcript. */
+/** The digest of a Codex, Claude, Pi or Antigravity transcript. */
 export function transcriptDigest(kind: Exclude<AgentKind, 'durable'>, path: string): Promise<Digest> {
-  return kind === 'pi' ? piDigest(path) : kind === 'claude' ? claudeDigest(path) : codexDigest(path)
+  return kind === 'pi' ? piDigest(path) : kind === 'claude' ? claudeDigest(path) : kind === 'agy' ? agyDigest(path) : codexDigest(path)
 }
 
 /** A transcript's size and modification time, which change when the agent writes to it. */

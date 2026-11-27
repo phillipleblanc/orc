@@ -169,8 +169,8 @@ export function overallState(records: ProgramRecord[]): ProgramState | null {
 /** What Orc's hooks say an agent in a session is doing. */
 export type AgentActivity = { kind: string; state: 'starting' | 'idle' | 'working' | 'permission' | 'ended'; lastIdleAt: number; dialog: string | null }
 
-// The names Claude Code and Codex report for themselves.
-const AGENT_APPS: Record<string, string> = { claude: 'claude-code', durable: 'pi-durable' }
+// The names agents report for themselves, where they differ from their kind.
+const AGENT_APPS: Record<string, string> = { claude: 'claude-code', durable: 'pi-durable', agy: 'antigravity' }
 
 /**
  * The records a terminal attached to a session shows: the program's own, and, when it reports no root record, a root

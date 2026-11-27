@@ -16,7 +16,7 @@ const SYNC_DELAY_MS = 300
 const POLL_MS = 3000
 const SYNC_TIMEOUT_MS = 60_000
 // Rex picks a tab's icon from the name its program was started by; an agent's tab starts `orc` under the agent's.
-const AGENT_PROGRAMS: Record<string, string> = { claude: 'claude', codex: 'codex', pi: 'pi', durable: 'pi' }
+const AGENT_PROGRAMS: Record<string, string> = { claude: 'claude', codex: 'codex', pi: 'pi', durable: 'pi', agy: 'agy' }
 
 /** How to reach a Rex server, as `orc rex start` found it in the Rex terminal it ran in. */
 export type RexLink = { rex: string; server: string | null; orc: string; config: string | null }

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A native macOS home for your coding agents.</strong><br>
-  Run Codex, Claude Code and Pi side by side, see at a glance which ones need you,<br>
+  Run Codex, Claude Code, Pi and Antigravity side by side, see at a glance which ones need you,<br>
   and pick any of them up from the app, the terminal or your phone.
 </p>
 
@@ -64,7 +64,7 @@ bash scripts/install.sh
 open /Applications/Orc.app
 ```
 
-The installer puts Orc in `/Applications` and links the `orc` command at `~/.local/bin/orc`. Install the agents you want to run (Codex, Claude Code, Pi) so your login shell can find them.
+The installer puts Orc in `/Applications` and links the `orc` command at `~/.local/bin/orc`. Install the agents you want to run (Codex, Claude Code, Pi, the Antigravity CLI `agy`) so your login shell can find them.
 
 ## Quick start
 

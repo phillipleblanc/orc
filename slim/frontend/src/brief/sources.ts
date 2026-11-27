@@ -8,9 +8,9 @@ import type { BriefSource } from './service.ts'
 import { durableDigest, transcriptDigest, transcriptMark } from './transcript.ts'
 
 /**
- * The running agent sessions as brief sources. Codex, Claude and Pi transcripts are the files their hooks report
- * (Pi's also from its command line); a durable agent's conversation comes from its worker, and its SQLite file and
- * write-ahead log mark changes.
+ * The running agent sessions as brief sources. Codex, Claude, Pi and Antigravity transcripts are the files their hooks
+ * report (Pi's also from its command line); a durable agent's conversation comes from its worker, and its SQLite file
+ * and write-ahead log mark changes.
  */
 export function briefSources(store: SessionStore, agents: AgentDirectory): () => BriefSource[] {
   return () => store.list().flatMap((session): BriefSource[] => {

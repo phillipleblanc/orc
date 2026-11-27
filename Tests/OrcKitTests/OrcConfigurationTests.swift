@@ -31,7 +31,7 @@ final class OrcConfigurationTests: XCTestCase {
             try Data("{\"defaultSessionType\":\"\(type.rawValue)\"}".utf8).write(to: file)
             let config = try OrcConfiguration.load(from: file)
             XCTAssertEqual(config.defaultSessionType, type)
-            let expected: [SessionType: String] = [.codex: "codex --no-daemon", .claude: "claude", .pi: "pi", .durable: "durable"]
+            let expected: [SessionType: String] = [.codex: "codex --no-daemon", .claude: "claude", .pi: "pi", .durable: "durable", .agy: "agy"]
             XCTAssertEqual(config.defaultSessionType.command, expected[type])
         }
     }
@@ -71,7 +71,7 @@ final class OrcConfigurationTests: XCTestCase {
             try Data(contents.utf8).write(to: file)
             XCTAssertThrowsError(try OrcConfiguration.load(from: file)) { error in
                 XCTAssertTrue(error.localizedDescription.contains(file.path))
-                XCTAssertTrue(error.localizedDescription.contains("codex, claude, pi, or terminal"))
+                XCTAssertTrue(error.localizedDescription.contains("codex, claude, pi, durable, agy, or terminal"))
                 XCTAssertTrue(error.localizedDescription.contains("defaultProject"))
             }
         }

@@ -1,6 +1,6 @@
 # Agents
 
-Orc runs Codex, Claude Code and Pi, and its own experimental [durable agent](#durable-agents-experimental). Agents never stop to ask for approval: Codex launches with `--yolo`, which also turns off its sandbox, and Claude with `--dangerously-skip-permissions`. Codex sessions launch with `--no-daemon` so tool processes inherit their session's environment and identity; the installed Codex CLI must support that flag.
+Orc runs Codex, Claude Code, Pi and Antigravity (`agy`), and its own experimental [durable agent](#durable-agents-experimental). Agents never stop to ask for approval: Codex launches with `--yolo`, which also turns off its sandbox, and Claude and Antigravity with `--dangerously-skip-permissions`. Codex sessions launch with `--no-daemon` so tool processes inherit their session's environment and identity; the installed Codex CLI must support that flag.
 
 ## Spawning and messaging agents
 
@@ -16,7 +16,9 @@ orc agent status fix-ci
 orc close fix-ci
 ```
 
-Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Without an agent (`orc agent spawn fix-ci`), it starts the default agent, as `orc new` does. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`). A working agent reads it at its next step, after the tool call it is running; an idle agent starts a turn with it. With `--when-idle`, the message waits until the agent is idle and starts a turn of its own. Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent has finished everything sent to it. `orc close NAME` ends a session, agent or shell; a closed agent session can be [reopened](sessions.md#recently-closed-agents). Codex and Claude accept `--model` and `--effort`. See `orc agent --help`.
+Spawn starts the agent in `--project` (or the current directory), waits until it is ready, and types the prompt exactly as given. Without an agent (`orc agent spawn fix-ci`), it starts the default agent, as `orc new` does. Send types a message that begins with a line naming the sender (`[from NAME]`, from the calling session's `ORC_SESSION_NAME`). A working agent reads it at its next step, after the tool call it is running; an idle agent starts a turn with it. With `--when-idle`, the message waits until the agent is idle and starts a turn of its own. Messages wait while the agent is at a permission prompt or dialog. Wait returns once the agent has finished everything sent to it. `orc close NAME` ends a session, agent or shell; a closed agent session can be [reopened](sessions.md#recently-closed-agents). Codex, Claude and Antigravity accept `--model` and `--effort`. See `orc agent --help`.
+
+Antigravity asks whether to trust a folder the first time it runs there; answer in its terminal. Until you do, Orc shows the session as needing you and holds its prompt and messages. A message to a working Antigravity agent waits until the turn ends and then starts a turn of its own, and Orc can't add a project's MCP servers to Antigravity (`--mcp`).
 
 ## Wakes
 

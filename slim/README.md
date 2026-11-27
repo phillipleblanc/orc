@@ -110,30 +110,34 @@ After the child exits, the holder serves its final output and exit status until 
 ## Agents
 
 An agent is a session started with Orc's status reporting. Its session name is its identity.
-`agent.spawn` and `terminal.create` with a `codex`, `claude` or `pi` command start one; programs run
-with the login shell's environment, without variables that mark the frontend's own host session.
-Codex starts with `--yolo` (no approval prompts and no sandbox) and Claude with
-`--dangerously-skip-permissions`; a copy of either flag in the caller's arguments is dropped.
+`agent.spawn` and `terminal.create` with a `codex`, `claude`, `pi` or `agy` (Antigravity) command start one;
+programs run with the login shell's environment, without variables that mark the frontend's own host session.
+Codex starts with `--yolo` (no approval prompts and no sandbox) and Claude and Antigravity with
+`--dangerously-skip-permissions`; a copy of any of these flags in the caller's arguments is dropped.
 
 `mcp` (names) on `agent.spawn` and on an agent's `terminal.create` adds the servers of the project's
 `.mcp/NAME.json` files (`mcpServers` objects; `mcp-configs.ts`) to the agent's own: Claude gets
 `--mcp-config FILE`, Pi `--orc-mcp` with the files as a JSON array, which Orc's Pi extension
 registers with `pi.registerMcpServer` when the session starts, and Codex `-c mcp_servers.NAME.KEY=…`
 for `command`, `args`, `env`, `cwd`, `url` and `headers` (as `http_headers`). These are caller
-arguments, so a restarted or reopened agent keeps them. A durable agent, a session that is not an
+arguments, so a restarted or reopened agent keeps them. A durable or Antigravity agent, a session that is not an
 agent, an unknown name and a file without valid servers are refused. `mcp.list` (`project` or `cwd`)
 returns a project's configs, each with its servers or the reason it cannot be used.
 
-Status reporting is supplied per launch; nothing is written to `~/.codex`, `~/.claude` or `~/.pi`:
+Status reporting is supplied per launch; nothing is written to `~/.codex`, `~/.claude`, `~/.pi` or `~/.gemini`:
 
 | Agent | Mechanism |
 |---|---|
 | Codex | `-c hooks=…` plus `-c hooks.state=…` with the trust hash of each of Orc's hooks, so Codex's review stays in force for every other hook. Codex caps the `Interrupt` hook's timeout at 3 s and hashes the capped value. |
 | Claude | `--settings <agent-hooks>/claude-settings.json` |
 | Pi | `-e <agent-hooks>/orc-agent-status.ts` |
+| Antigravity | `--add-dir <profile>/agent-hooks/agy`, whose `.agents/hooks.json` it reads as a workspace folder's hooks. It keeps a conversation's folders and adds them back when it resumes, so this folder's path never changes and its hooks are rewritten to name the current script. |
 
 Hooks run `orc-agent-hook`, which appends one line per event to `$ORC_AGENT_EVENTS` and prints
-nothing. The frontend's `AgentMonitor` replays the file when it starts and follows it afterwards:
+nothing but the empty answer (`{}`) Antigravity requires. Antigravity's `PreInvocation` (each model call) is
+recorded as `UserPromptSubmit`, and its payloads name the conversation `conversationId` and `transcriptPath`. It
+has no tool hooks: Antigravity reads a `PreToolUse` hook's empty answer as a denial. The frontend's `AgentMonitor`
+replays the file when it starts and follows it afterwards:
 
 | Events | State |
 |---|---|
@@ -144,9 +148,10 @@ nothing. The frontend's `AgentMonitor` replays the file when it starts and follo
 | `SessionEnd`, program exit | `ended` |
 
 Codex fires no hook before its first prompt, so it counts as ready once its title settles without a
-spinner. Claude fires no hook for an interrupted turn, so a `working` Claude whose title shows its
-idle mark for 1.5 s without new events becomes `idle`. A trust or hook-review dialog on screen
-reports `permission` whatever the hooks say, because a typed Enter would answer it.
+spinner; Antigravity fires none either, and counts as ready once it reports itself idle (OSC 7501).
+Claude fires no hook for an interrupted turn, so a `working` Claude whose title shows its idle mark
+for 1.5 s without new events becomes `idle`. A trust or hook-review dialog on screen reports
+`permission` whatever the hooks say, because a typed Enter would answer it.
 
 Claude fires `UserPromptSubmit` when it queues text submitted during a turn, not when it reads it.
 Text still queued when the turn ends starts another turn, which fires no hook until its `Stop`. So
@@ -157,7 +162,9 @@ reports it, so the transcript is read no sooner than 1 s after that hook.
 
 Messages wait in the agent's queue until it can take them, and are typed as a bracketed paste, then
 Enter. A working agent is typed every message not sent with `whenIdle`: Codex, Claude and Pi hold
-text submitted mid-turn and read it at their next step, after the tool call they are running. An
+text submitted mid-turn and read it at their next step, after the tool call they are running.
+Antigravity holds such text until the turn ends and starts another turn with it after the turn's `Stop`,
+so a working Antigravity agent is typed nothing until it is idle. An
 idle agent is typed the oldest message, which starts a turn; the next waits until a hook shows the
 turn started, or 20 s. Nothing is typed while the agent is starting, at a permission prompt or in a
 dialog. Claude reports `SessionStart` before it probes the terminal, then returns the terminal to
@@ -288,7 +295,7 @@ A restart ends every session. The first frontend after it starts the sessions th
 again, under their names:
 
 - An agent continues its last conversation (`codex resume ID`, `claude --resume ID`,
-  `pi --session FILE`) with the model, effort and other arguments it was started with, and keeps its
+  `pi --session FILE`, `agy --conversation ID`) with the model, effort and other arguments it was started with, and keeps its
   undelivered messages and wakes. A process or script wake fires on its first check, since the
   process is gone.
 - A shell starts again in the same directory. A session that ran any other command stays ended.
@@ -420,7 +427,7 @@ ends or the session order changes, and every 3 s otherwise, one sync at a time. 
 running sessions and what earlier syncs made on stdin. The script keeps one Rex session per project (a session's
 worktree), labeled with its name, with a tab per Orc session, labeled with the session's name, that runs
 `orc attach NAME --no-session-switch --client-id rex-HANDLE --viewport-ownership`, started directly
-(`login: false`) and, for an agent, through `rex-programs/claude`, `codex` or `pi` in the profile, symlinks to the
+(`login: false`) and, for an agent, through `rex-programs/claude`, `codex`, `pi` or `agy` in the profile, symlinks to the
 linked `orc`: Rex picks a tab's icon from its program's path and argv0. The script's client gives the tab up, so
 the app showing it sizes it. It relabels renamed sessions and projects, closes the tabs of ended
 sessions, and removes a Rex session it made or closed a tab in once no windows are left in it. A tab or project

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
-import type { AgentKind, ProviderSession } from './agent-hooks.ts'
+import { payloadConversation, type AgentKind, type ProviderSession } from './agent-hooks.ts'
 import { ClaudeQueue } from './claude-queue.ts'
 import type { TerminalSession } from './terminal-session.ts'
 
@@ -31,7 +31,8 @@ const BLOCKING_DIALOGS: Record<AgentKind, RegExp[]> = {
   codex: [/Trust this folder\?/, /Hooks need review/],
   claude: [/Quick safety check/, /Do you trust the files in this folder\?/],
   pi: [],
-  durable: []
+  durable: [],
+  agy: [/Do you trust the contents of this project\?/]
 }
 
 /**
@@ -70,6 +71,7 @@ export class AgentMonitor extends EventEmitter {
   private screenTimer: NodeJS.Timeout | null = null
   private reading: Promise<void> | null = null
   private readonly onTitle = (title: string) => this.observeTitle(title)
+  private readonly onProgramStatus = () => this.observeProgramStatus()
   private readonly onApplied = () => this.scheduleScreenCheck()
   private readonly onExit = () => this.markExited()
 
@@ -83,10 +85,12 @@ export class AgentMonitor extends EventEmitter {
   async start(): Promise<void> {
     await this.read(false)
     this.session.on('title', this.onTitle)
+    this.session.on('program-status', this.onProgramStatus)
     this.session.on('applied', this.onApplied)
     this.session.on('exit', this.onExit)
     if (this.session.exit) this.markExited()
     if (this.kind === 'codex' && !this.ready) this.observeTitle(this.session.title)
+    this.observeProgramStatus()
     this.poll = setInterval(() => void this.read(true), POLL_MS)
     this.scheduleScreenCheck()
   }
@@ -96,6 +100,7 @@ export class AgentMonitor extends EventEmitter {
     if (this.titleTimer) clearTimeout(this.titleTimer)
     if (this.screenTimer) clearTimeout(this.screenTimer)
     this.session.off('title', this.onTitle)
+    this.session.off('program-status', this.onProgramStatus)
     this.session.off('applied', this.onApplied)
     this.session.off('exit', this.onExit)
   }
@@ -146,8 +151,9 @@ export class AgentMonitor extends EventEmitter {
     const at = live ? Date.now() : (record.time ?? 0) * 1000
     const payload = record.payload ?? {}
     this.lastEventAt = at
-    if (typeof payload.session_id === 'string') this.providerSession.id = payload.session_id
-    if (typeof payload.transcript_path === 'string') this.providerSession.transcriptPath = payload.transcript_path
+    const named = payloadConversation(payload)
+    if (named.id) this.providerSession.id = named.id
+    if (named.transcriptPath) this.providerSession.transcriptPath = named.transcriptPath
     if (typeof payload.last_assistant_message === 'string') this.lastAssistantMessage = payload.last_assistant_message
     switch (record.event) {
       case 'SessionStart':
@@ -243,6 +249,15 @@ export class AgentMonitor extends EventEmitter {
       if (this.state === 'starting') this.transition('idle')
       else this.emit('change', this)
     }, TITLE_SETTLE_MS)
+  }
+
+  /** Antigravity fires no hook until its first prompt; it reports itself idle (OSC 7501) once its prompt is up. */
+  private observeProgramStatus(): void {
+    if (this.kind !== 'agy' || this.ready || this.exited) return
+    if (!this.session.programStatus.list().some((record) => record.id === '' && record.state === 'idle')) return
+    this.ready = true
+    if (this.state === 'starting') this.transition('idle')
+    else this.emit('change', this)
   }
 
   private observeClaudeTitle(title: string): void {

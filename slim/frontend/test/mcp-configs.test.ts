@@ -6,7 +6,7 @@ import { agentArgv, callerArguments } from '../src/agent-hooks.ts'
 import { listMcpConfigs, mcpArguments, resolveMcpConfigs } from '../src/mcp-configs.ts'
 import { destroyProfile, Frontend, makeProfile } from './harness.ts'
 
-const hooks = { script: '/p/agent-hooks/1/orc-agent-hook', claudeSettings: '/p/agent-hooks/1/claude-settings.json', piExtension: '/p/agent-hooks/1/orc-agent-status.ts' }
+const hooks = { script: '/p/agent-hooks/1/orc-agent-hook', claudeSettings: '/p/agent-hooks/1/claude-settings.json', piExtension: '/p/agent-hooks/1/orc-agent-status.ts', agyWorkspace: '/p/agent-hooks/1/agy' }
 
 async function project(t: { after: (fn: () => unknown) => void }) {
   const dir = await makeProfile()

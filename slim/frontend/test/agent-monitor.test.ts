@@ -120,3 +120,33 @@ test('answering a prompt returns to what it interrupted: an idle agent stays idl
   await new Promise((resolve) => setTimeout(resolve, 400))
   assert.equal(monitor.state, 'idle')
 })
+
+test('Antigravity is ready once it reports itself idle, waits on its trust dialog, and names its conversation in camelCase', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'slim-monitor-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const file = join(directory, 'events.jsonl')
+  await writeFile(file, '')
+  let records: { id: string; state: string; app: string }[] = []
+  let screen = ['Do you trust the contents of this project?', '> Yes, I trust this folder']
+  const session = Object.assign(new StandInSession(), { programStatus: { list: () => records }, screenText: async () => screen })
+  const monitor = new AgentMonitor('agy', file, session as unknown as TerminalSession)
+  await monitor.start()
+  t.after(() => monitor.stop())
+  // It fires no hook until its first prompt.
+  assert.equal(monitor.ready, false)
+  assert.equal(monitor.state, 'starting')
+  await until(async () => monitor.effectiveState === 'permission', 2000, 'the trust dialog to hold messages')
+
+  screen = ['> ']
+  records = [{ id: '', state: 'idle', app: 'antigravity' }]
+  session.emit('program-status')
+  session.emit('applied')
+  await until(async () => monitor.ready && monitor.effectiveState === 'idle', 2000, 'ready and idle')
+
+  const event = (name: string) => JSON.stringify({ agent: 'agy', event: name, time: 1, payload: { conversationId: 'g-1', transcriptPath: '/t/g-1.jsonl' } }) + '\n'
+  await appendFile(file, event('SessionStart') + event('UserPromptSubmit'))
+  await until(async () => monitor.state === 'working', 2000, 'working')
+  assert.deepEqual(monitor.providerSession, { id: 'g-1', transcriptPath: '/t/g-1.jsonl' })
+  await appendFile(file, event('Stop'))
+  await until(async () => monitor.state === 'idle', 2000, 'idle after the turn')
+})
